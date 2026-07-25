@@ -8,3 +8,4 @@ export * from "./keys.js";
 export * from "./seal.js";
 export * from "./item.js";
 export * from "./recovery.js";
+export * from "./fingerprint.js";
