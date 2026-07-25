@@ -2,7 +2,7 @@ import { x25519 } from "@noble/curves/ed25519";
 import { hkdf } from "@noble/hashes/hkdf";
 import { sha256 } from "@noble/hashes/sha256";
 import { concatBytes, fromBase64, toBase64, utf8Encode } from "./encoding.js";
-import { MalformedEnvelopeError } from "./errors.js";
+import { DecryptionError, MalformedEnvelopeError } from "./errors.js";
 import { decryptBytes, encryptBytesWithNonce } from "./symmetric.js";
 import { generateKeyPair } from "./keys.js";
 import { randomBytes } from "./random.js";
@@ -30,6 +30,9 @@ function deriveSealKey(sharedSecret: Uint8Array, ephemeralPublicKey: Uint8Array,
   return hkdf(sha256, sharedSecret, undefined, info, 32);
 }
 
+/** Deterministic sealing. Exported only for tests and vector generation —
+ *  production callers must use sealToUser so the ephemeral key is always
+ *  fresh. Reusing an ephemeral key across seals breaks the construction. */
 export async function sealToUserWithEphemeral(
   secret: Uint8Array,
   recipientPublicKey: Uint8Array,
@@ -86,6 +89,17 @@ function parseSealed(serialized: string): SealedKey {
   if (typeof epk !== "string" || typeof n !== "string" || typeof ct !== "string") {
     throw new MalformedEnvelopeError("Sealed key is missing 'epk', 'n', or 'ct'");
   }
+  let ephemeralPublicKey: Uint8Array;
+  try {
+    ephemeralPublicKey = fromBase64(epk);
+  } catch {
+    throw new MalformedEnvelopeError("Sealed key 'epk' is not valid base64");
+  }
+  if (ephemeralPublicKey.length !== PUBLIC_KEY_BYTES) {
+    throw new MalformedEnvelopeError(
+      `Sealed key 'epk' must be ${PUBLIC_KEY_BYTES} bytes, received ${ephemeralPublicKey.length}`,
+    );
+  }
   return { v: 1, alg: SEAL_ALG, epk, n, ct };
 }
 
@@ -95,8 +109,13 @@ export async function openSealed(
 ): Promise<Uint8Array> {
   const parsed = parseSealed(sealed);
   const ephemeralPublicKey = fromBase64(parsed.epk);
-  const recipientPublicKey = x25519.getPublicKey(recipientPrivateKey);
-  const sharedSecret = x25519.getSharedSecret(recipientPrivateKey, ephemeralPublicKey);
-  const sealKey = deriveSealKey(sharedSecret, ephemeralPublicKey, recipientPublicKey);
+  let sealKey: Uint8Array;
+  try {
+    const recipientPublicKey = x25519.getPublicKey(recipientPrivateKey);
+    const sharedSecret = x25519.getSharedSecret(recipientPrivateKey, ephemeralPublicKey);
+    sealKey = deriveSealKey(sharedSecret, ephemeralPublicKey, recipientPublicKey);
+  } catch {
+    throw new DecryptionError();
+  }
   return decryptBytes(sealKey, { v: 1, alg: "A256GCM", n: parsed.n, ct: parsed.ct });
 }

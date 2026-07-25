@@ -77,4 +77,22 @@ describe("sealToUser / openSealed", () => {
       /32 bytes/,
     );
   });
+
+  it("rejects a sealed blob whose epk is the wrong length", async () => {
+    const recipient = generateKeyPair();
+    const sealed = JSON.parse(await sealToUser(generateCollectionKey(), recipient.publicKey));
+    const tampered = JSON.stringify({ ...sealed, epk: toBase64(new Uint8Array(16)) });
+    await expect(openSealed(tampered, recipient.privateKey)).rejects.toThrow(
+      MalformedEnvelopeError,
+    );
+  });
+
+  it("rejects a sealed blob whose epk is not valid base64", async () => {
+    const recipient = generateKeyPair();
+    const sealed = JSON.parse(await sealToUser(generateCollectionKey(), recipient.publicKey));
+    const tampered = JSON.stringify({ ...sealed, epk: "not-valid-base64!!" });
+    await expect(openSealed(tampered, recipient.privateKey)).rejects.toThrow(
+      MalformedEnvelopeError,
+    );
+  });
 });
