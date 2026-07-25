@@ -459,7 +459,7 @@ export * from "./memory.js";
 - [ ] **Step 7: Run the tests to verify they pass**
 
 Run: `pnpm --filter @keyhole/crypto test`
-Expected: PASS — 3 test files, 13 tests.
+Expected: PASS — 3 test files, 14 tests.
 
 - [ ] **Step 8: Verify types**
 
@@ -562,9 +562,13 @@ describe("deriveMasterKey", () => {
   });
 
   it("normalizes Unicode passwords to NFC so equivalent inputs agree", async () => {
-    // "é" as a single code point vs. "e" + combining acute.
-    const composed = await deriveMasterKey("café", SALT);
-    const decomposed = await deriveMasterKey("café", SALT);
+    // U+00E9 (precomposed é) vs. "e" + U+0301 (combining acute) — different byte
+    // sequences a user cannot tell apart, and different platforms emit different
+    // ones for the same keystrokes. The decomposed form MUST stay a \u escape:
+    // editors and file writers silently normalize the literal, which makes this
+    // test vacuously pass while verifying nothing.
+    const composed = await deriveMasterKey("caf\u00e9", SALT);
+    const decomposed = await deriveMasterKey("cafe\u0301", SALT);
     expect(toBase64(composed)).toBe(toBase64(decomposed));
   });
 
