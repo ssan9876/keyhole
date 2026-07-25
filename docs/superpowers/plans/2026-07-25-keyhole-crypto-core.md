@@ -1830,13 +1830,20 @@ git commit -m "feat(crypto): encrypt vault items under per-item keys"
 ### Task 7: Recovery codes
 
 **Files:**
+- Create: `packages/crypto/src/crockford.ts`
 - Create: `packages/crypto/src/recovery.ts`
 - Modify: `packages/crypto/src/index.ts`
+- Test: `packages/crypto/src/crockford.test.ts`
 - Test: `packages/crypto/src/recovery.test.ts`
 
 **Interfaces:**
 - Consumes: `randomBytes` (Task 1), `deriveMasterKey`-style Argon2id via `hash-wasm`, `generateKdfSalt`/`KdfParams`/`DEFAULT_KDF_PARAMS` (Task 2), `wrapKey`/`unwrapKey` (Task 4), `InvalidRecoveryCodeError` (Task 1).
-- Produces:
+- Produces, from `crockford.ts` — **internal module, deliberately NOT re-exported from `index.ts`**, because it is an implementation detail shared by Tasks 7 and 8 rather than part of the package's public surface:
+  - `const CROCKFORD_ALPHABET: string`
+  - `encodeCrockford(bytes: Uint8Array): string` — one character per byte, from the low 5 bits
+  - `groupChars(text: string, size: number): string` — hyphen-separated groups
+  - `normalizeCrockford(input: string): string` — uppercase, strip spaces and hyphens, map `I`/`L`→`1` and `O`→`0`
+- Produces, from `recovery.ts`:
   - `generateRecoveryCode(): string` — 25 Crockford Base32 characters, formatted `XXXXX-XXXXX-XXXXX-XXXXX-XXXXX`
   - `normalizeRecoveryCode(input: string): string` — 25 unformatted characters
   - `deriveRecoveryKey(code: string, salt: Uint8Array, params?: KdfParams): Promise<Uint8Array>`
@@ -1844,6 +1851,53 @@ git commit -m "feat(crypto): encrypt vault items under per-item keys"
   - `recoverUserKey(recoveryProtectedUserKey: string, code: string, recoverySalt: Uint8Array, params?: KdfParams): Promise<Uint8Array>`
 
 - [ ] **Step 1: Write the failing tests**
+
+`packages/crypto/src/crockford.test.ts`:
+
+```typescript
+import { describe, expect, it } from "vitest";
+import {
+  CROCKFORD_ALPHABET,
+  encodeCrockford,
+  groupChars,
+  normalizeCrockford,
+} from "./crockford.js";
+
+describe("CROCKFORD_ALPHABET", () => {
+  it("is 32 characters and excludes the ambiguous ones", () => {
+    expect(CROCKFORD_ALPHABET).toHaveLength(32);
+    expect(CROCKFORD_ALPHABET).not.toMatch(/[ILOU]/u);
+  });
+});
+
+describe("encodeCrockford", () => {
+  // Alphabet index 0 is "0", index 1 is "1", index 31 is "Z".
+  it("emits one alphabet character per input byte", () => {
+    expect(encodeCrockford(new Uint8Array([0, 1, 31]))).toBe("01Z");
+  });
+
+  it("uses only the low five bits, so 0 and 32 collide", () => {
+    expect(encodeCrockford(new Uint8Array([0]))).toBe(encodeCrockford(new Uint8Array([32])));
+  });
+});
+
+describe("groupChars", () => {
+  it("splits into hyphenated groups", () => {
+    expect(groupChars("ABCDEFGH", 4)).toBe("ABCD-EFGH");
+    expect(groupChars("ABCDE", 5)).toBe("ABCDE");
+  });
+});
+
+describe("normalizeCrockford", () => {
+  it("uppercases and strips spaces and hyphens", () => {
+    expect(normalizeCrockford("ab cd-ef")).toBe("ABCDEF");
+  });
+
+  it("maps the transcription-ambiguous characters", () => {
+    expect(normalizeCrockford("ILOilo")).toBe("110110");
+  });
+});
+```
 
 `packages/crypto/src/recovery.test.ts`:
 
@@ -1947,6 +2001,48 @@ Expected: FAIL — `Failed to resolve import "./recovery.js"`.
 
 - [ ] **Step 3: Implement the recovery module**
 
+`packages/crypto/src/crockford.ts`:
+
+```typescript
+/**
+ * Crockford Base32 — the alphabet omits I, L, O, and U so that a human reading
+ * a code off a screen and typing it somewhere else cannot confuse characters.
+ *
+ * Internal module: shared by recovery codes and key fingerprints, and
+ * deliberately not re-exported from index.ts. It is an implementation detail,
+ * not part of the package's public surface.
+ */
+export const CROCKFORD_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/** One character per byte, taken from the low five bits. 256 is divisible by
+ *  32, so masking is uniform — there is no modulo bias to correct for. */
+export function encodeCrockford(bytes: Uint8Array): string {
+  let out = "";
+  for (const byte of bytes) {
+    // charAt, not [], because noUncheckedIndexedAccess types [] as possibly undefined.
+    out += CROCKFORD_ALPHABET.charAt(byte & 0x1f);
+  }
+  return out;
+}
+
+export function groupChars(text: string, size: number): string {
+  const groups: string[] = [];
+  for (let i = 0; i < text.length; i += size) {
+    groups.push(text.slice(i, i + size));
+  }
+  return groups.join("-");
+}
+
+/** Undoes formatting and the transcription substitutions Crockford anticipates. */
+export function normalizeCrockford(input: string): string {
+  return input
+    .toUpperCase()
+    .replace(/[\s-]/gu, "")
+    .replace(/[IL]/gu, "1")
+    .replace(/O/gu, "0");
+}
+```
+
 `packages/crypto/src/recovery.ts`:
 
 ```typescript
@@ -1955,40 +2051,29 @@ import { InvalidRecoveryCodeError } from "./errors.js";
 import { randomBytes } from "./random.js";
 import { DEFAULT_KDF_PARAMS, generateKdfSalt, type KdfParams } from "./kdf.js";
 import { unwrapKey, wrapKey } from "./keys.js";
+import {
+  CROCKFORD_ALPHABET,
+  encodeCrockford,
+  groupChars,
+  normalizeCrockford,
+} from "./crockford.js";
 
-/** Crockford Base32: no I, L, O, or U, because a human transcribes this by hand. */
-const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_LENGTH = 25; // 25 chars x 5 bits = 125 bits of entropy
 const GROUP_SIZE = 5;
 
 export function generateRecoveryCode(): string {
-  // 256 is divisible by 32, so masking the low 5 bits is uniform — no modulo bias.
-  const bytes = randomBytes(CODE_LENGTH);
-  let code = "";
-  for (const byte of bytes) {
-    // charAt, not [], because noUncheckedIndexedAccess types [] as possibly undefined.
-    code += ALPHABET.charAt(byte & 0x1f);
-  }
-  const groups: string[] = [];
-  for (let i = 0; i < code.length; i += GROUP_SIZE) {
-    groups.push(code.slice(i, i + GROUP_SIZE));
-  }
-  return groups.join("-");
+  return groupChars(encodeCrockford(randomBytes(CODE_LENGTH)), GROUP_SIZE);
 }
 
 export function normalizeRecoveryCode(input: string): string {
-  const cleaned = input
-    .toUpperCase()
-    .replace(/[\s-]/gu, "")
-    .replace(/[IL]/gu, "1")
-    .replace(/O/gu, "0");
+  const cleaned = normalizeCrockford(input);
   if (cleaned.length !== CODE_LENGTH) {
     throw new InvalidRecoveryCodeError(
       `Recovery code must be ${CODE_LENGTH} characters, received ${cleaned.length}`,
     );
   }
   for (const char of cleaned) {
-    if (!ALPHABET.includes(char)) {
+    if (!CROCKFORD_ALPHABET.includes(char)) {
       throw new InvalidRecoveryCodeError(`Invalid character in recovery code: ${char}`);
     }
   }
@@ -2046,13 +2131,13 @@ export * from "./recovery.js";
 
 - [ ] **Step 5: Run the tests to verify they pass**
 
-Run: `pnpm --filter @keyhole/crypto test src/recovery.test.ts`
-Expected: PASS — 10 tests.
+Run: `pnpm --filter @keyhole/crypto test src/crockford.test.ts src/recovery.test.ts`
+Expected: PASS — 16 tests (6 crockford, 10 recovery).
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/crypto/src/recovery.ts packages/crypto/src/recovery.test.ts packages/crypto/src/index.ts
+git add packages/crypto/src/crockford.ts packages/crypto/src/crockford.test.ts packages/crypto/src/recovery.ts packages/crypto/src/recovery.test.ts packages/crypto/src/index.ts
 git commit -m "feat(crypto): add Crockford Base32 recovery codes"
 ```
 
@@ -2066,7 +2151,7 @@ git commit -m "feat(crypto): add Crockford Base32 recovery codes"
 - Test: `packages/crypto/src/fingerprint.test.ts`
 
 **Interfaces:**
-- Consumes: `concatBytes`/`utf8Encode` (Task 1), `sha256` from `@noble/hashes`.
+- Consumes: `concatBytes`/`utf8Encode` (Task 1), `encodeCrockford`/`groupChars` from `./crockford.js` (Task 7), `sha256` from `@noble/hashes`.
 - Produces:
   - `publicKeyFingerprint(publicKey: Uint8Array, email: string): string` — `XXXX-XXXX-XXXX-XXXX`
 
@@ -2130,8 +2215,8 @@ Expected: FAIL — `Failed to resolve import "./fingerprint.js"`.
 ```typescript
 import { sha256 } from "@noble/hashes/sha256";
 import { concatBytes, utf8Encode } from "./encoding.js";
+import { encodeCrockford, groupChars } from "./crockford.js";
 
-const ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const FINGERPRINT_CHARS = 16;
 const GROUP_SIZE = 4;
 
@@ -2143,17 +2228,7 @@ const GROUP_SIZE = 4;
 export function publicKeyFingerprint(publicKey: Uint8Array, email: string): string {
   const normalizedEmail = utf8Encode(email.trim().toLowerCase());
   const digest = sha256(concatBytes(normalizedEmail, publicKey));
-
-  let out = "";
-  for (let i = 0; i < FINGERPRINT_CHARS; i += 1) {
-    out += ALPHABET.charAt((digest[i] as number) & 0x1f);
-  }
-
-  const groups: string[] = [];
-  for (let i = 0; i < out.length; i += GROUP_SIZE) {
-    groups.push(out.slice(i, i + GROUP_SIZE));
-  }
-  return groups.join("-");
+  return groupChars(encodeCrockford(digest.slice(0, FINGERPRINT_CHARS)), GROUP_SIZE);
 }
 ```
 
@@ -2505,7 +2580,7 @@ operation that at least one independent implementation agrees with.
 - [ ] **Step 6: Run the whole suite**
 
 Run: `pnpm --filter @keyhole/crypto test`
-Expected: PASS — 12 test files, all green. Total runtime 60–120 seconds, dominated by Argon2id.
+Expected: PASS — 13 test files, all green. Total runtime 60–120 seconds, dominated by Argon2id.
 
 - [ ] **Step 7: Verify types across the package**
 
