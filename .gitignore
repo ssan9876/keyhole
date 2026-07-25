@@ -1,0 +1,32 @@
+# Brainstorming companion output
+.superpowers/
+
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+apps/web/dist/
+
+# Go
+/keyhole
+/keyhole.exe
+*.test
+
+# Local data — never commit a vault database
+*.db
+*.db-wal
+*.db-shm
+/data/
+config.yml
+
+# Env / secrets
+.env
+.env.*
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
