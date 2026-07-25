@@ -64,9 +64,13 @@ describe("deriveMasterKey", () => {
   });
 
   it("normalizes Unicode passwords to NFC so equivalent inputs agree", async () => {
-    // "é" as a single code point vs. "e" + combining acute.
-    const composed = await deriveMasterKey("café", SALT);
-    const decomposed = await deriveMasterKey("café", SALT);
+    // U+00E9 (precomposed é) vs. "e" + U+0301 (combining acute) — different byte
+    // sequences a user cannot tell apart, and different platforms emit different
+    // ones for the same keystrokes. Both literals MUST stay \u escapes: editors
+    // and file writers silently normalize the characters, which makes this test
+    // vacuously pass while verifying nothing.
+    const composed = await deriveMasterKey("caf\u00e9", SALT);
+    const decomposed = await deriveMasterKey("cafe\u0301", SALT);
     expect(toBase64(composed)).toBe(toBase64(decomposed));
   });
 
@@ -99,6 +103,12 @@ describe("HKDF derivation", () => {
   });
 
   it("matches RFC 5869 test case 1, proving the HKDF construction itself", () => {
+    // This pins the library, not our wrappers — deliberately. Our functions
+    // hardcode their own info strings and a 32-byte length, so they cannot
+    // reproduce RFC 5869's vector (different salt, different info, 42-byte
+    // output). Correctness of our code path is established in two asserted
+    // hops: the test above proves our functions agree with nobleHkdf using the
+    // spec's info strings, and this one proves nobleHkdf agrees with the RFC.
     const ikm = new Uint8Array(22).fill(0x0b);
     const salt = Uint8Array.from([
       0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,

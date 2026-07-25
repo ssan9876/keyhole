@@ -12,12 +12,12 @@ export interface KdfParams {
 }
 
 /** Fixed by the spec. Stored per user so they can be raised later without a flag day. */
-export const DEFAULT_KDF_PARAMS: KdfParams = {
+export const DEFAULT_KDF_PARAMS: Readonly<KdfParams> = Object.freeze({
   algorithm: "argon2id",
   memoryKiB: 65536,
   iterations: 3,
   parallelism: 4,
-};
+});
 
 const KDF_SALT_BYTES = 16;
 const DERIVED_KEY_BYTES = 32;
