@@ -5,3 +5,4 @@ export * from "./memory.js";
 export * from "./kdf.js";
 export * from "./symmetric.js";
 export * from "./keys.js";
+export * from "./seal.js";

@@ -1,0 +1,102 @@
+import { x25519 } from "@noble/curves/ed25519";
+import { hkdf } from "@noble/hashes/hkdf";
+import { sha256 } from "@noble/hashes/sha256";
+import { concatBytes, fromBase64, toBase64, utf8Encode } from "./encoding.js";
+import { MalformedEnvelopeError } from "./errors.js";
+import { decryptBytes, encryptBytesWithNonce } from "./symmetric.js";
+import { generateKeyPair } from "./keys.js";
+import { randomBytes } from "./random.js";
+
+export interface SealedKey {
+  v: 1;
+  alg: "X25519-HKDF-SHA256-A256GCM";
+  epk: string;
+  n: string;
+  ct: string;
+}
+
+const SEAL_ALG = "X25519-HKDF-SHA256-A256GCM";
+const SEAL_INFO_PREFIX = utf8Encode("keyhole:seal:v1");
+const PUBLIC_KEY_BYTES = 32;
+const NONCE_BYTES = 12;
+
+/**
+ * The HKDF info binds both public keys into the derived key. Without that
+ * binding, a shared secret could be reinterpreted in a different context;
+ * with it, a blob sealed for one recipient cannot be replayed at another.
+ */
+function deriveSealKey(sharedSecret: Uint8Array, ephemeralPublicKey: Uint8Array, recipientPublicKey: Uint8Array): Uint8Array {
+  const info = concatBytes(SEAL_INFO_PREFIX, ephemeralPublicKey, recipientPublicKey);
+  return hkdf(sha256, sharedSecret, undefined, info, 32);
+}
+
+export async function sealToUserWithEphemeral(
+  secret: Uint8Array,
+  recipientPublicKey: Uint8Array,
+  ephemeralPrivateKey: Uint8Array,
+  nonce: Uint8Array,
+): Promise<string> {
+  if (recipientPublicKey.length !== PUBLIC_KEY_BYTES) {
+    throw new Error(
+      `Recipient public key must be ${PUBLIC_KEY_BYTES} bytes, received ${recipientPublicKey.length}`,
+    );
+  }
+  const ephemeralPublicKey = x25519.getPublicKey(ephemeralPrivateKey);
+  const sharedSecret = x25519.getSharedSecret(ephemeralPrivateKey, recipientPublicKey);
+  const sealKey = deriveSealKey(sharedSecret, ephemeralPublicKey, recipientPublicKey);
+  const envelope = await encryptBytesWithNonce(sealKey, secret, nonce);
+  const sealed: SealedKey = {
+    v: 1,
+    alg: SEAL_ALG,
+    epk: toBase64(ephemeralPublicKey),
+    n: envelope.n,
+    ct: envelope.ct,
+  };
+  return JSON.stringify(sealed);
+}
+
+export async function sealToUser(
+  secret: Uint8Array,
+  recipientPublicKey: Uint8Array,
+): Promise<string> {
+  const ephemeral = generateKeyPair();
+  return sealToUserWithEphemeral(
+    secret,
+    recipientPublicKey,
+    ephemeral.privateKey,
+    randomBytes(NONCE_BYTES),
+  );
+}
+
+function parseSealed(serialized: string): SealedKey {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(serialized);
+  } catch {
+    throw new MalformedEnvelopeError("Sealed key is not valid JSON");
+  }
+  if (typeof raw !== "object" || raw === null) {
+    throw new MalformedEnvelopeError("Sealed key must be an object");
+  }
+  const { v, alg, epk, n, ct } = raw as Record<string, unknown>;
+  if (v !== 1) throw new MalformedEnvelopeError(`Unsupported sealed key version: ${String(v)}`);
+  if (alg !== SEAL_ALG) {
+    throw new MalformedEnvelopeError(`Unsupported sealed key algorithm: ${String(alg)}`);
+  }
+  if (typeof epk !== "string" || typeof n !== "string" || typeof ct !== "string") {
+    throw new MalformedEnvelopeError("Sealed key is missing 'epk', 'n', or 'ct'");
+  }
+  return { v: 1, alg: SEAL_ALG, epk, n, ct };
+}
+
+export async function openSealed(
+  sealed: string,
+  recipientPrivateKey: Uint8Array,
+): Promise<Uint8Array> {
+  const parsed = parseSealed(sealed);
+  const ephemeralPublicKey = fromBase64(parsed.epk);
+  const recipientPublicKey = x25519.getPublicKey(recipientPrivateKey);
+  const sharedSecret = x25519.getSharedSecret(recipientPrivateKey, ephemeralPublicKey);
+  const sealKey = deriveSealKey(sharedSecret, ephemeralPublicKey, recipientPublicKey);
+  return decryptBytes(sealKey, { v: 1, alg: "A256GCM", n: parsed.n, ct: parsed.ct });
+}
