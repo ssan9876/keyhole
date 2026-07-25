@@ -1025,7 +1025,7 @@ export * from "./symmetric.js";
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `pnpm --filter @keyhole/crypto test src/symmetric.test.ts`
-Expected: PASS — 16 tests.
+Expected: PASS — 17 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -1484,7 +1484,7 @@ import { x25519 } from "@noble/curves/ed25519";
 import { hkdf } from "@noble/hashes/hkdf";
 import { sha256 } from "@noble/hashes/sha256";
 import { concatBytes, fromBase64, toBase64, utf8Encode } from "./encoding.js";
-import { MalformedEnvelopeError } from "./errors.js";
+import { DecryptionError, MalformedEnvelopeError } from "./errors.js";
 import { decryptBytes, encryptBytesWithNonce } from "./symmetric.js";
 import { generateKeyPair } from "./keys.js";
 import { randomBytes } from "./random.js";
@@ -1568,6 +1568,20 @@ function parseSealed(serialized: string): SealedKey {
   if (typeof epk !== "string" || typeof n !== "string" || typeof ct !== "string") {
     throw new MalformedEnvelopeError("Sealed key is missing 'epk', 'n', or 'ct'");
   }
+  // A sealed blob is stored on the server, so treat it as attacker-influenceable.
+  // Validate epk here rather than letting a bad value reach the curve library,
+  // which would throw a raw error outside this package's error taxonomy.
+  let ephemeralPublicKey: Uint8Array;
+  try {
+    ephemeralPublicKey = fromBase64(epk);
+  } catch {
+    throw new MalformedEnvelopeError("Sealed key 'epk' is not valid base64");
+  }
+  if (ephemeralPublicKey.length !== PUBLIC_KEY_BYTES) {
+    throw new MalformedEnvelopeError(
+      `Sealed key 'epk' must be ${PUBLIC_KEY_BYTES} bytes, received ${ephemeralPublicKey.length}`,
+    );
+  }
   return { v: 1, alg: SEAL_ALG, epk, n, ct };
 }
 
@@ -1575,11 +1589,20 @@ export async function openSealed(
   sealed: string,
   recipientPrivateKey: Uint8Array,
 ): Promise<Uint8Array> {
+  // Parse OUTSIDE the try: a MalformedEnvelopeError must not be recaught and
+  // re-emitted as a DecryptionError. The two mean different things.
   const parsed = parseSealed(sealed);
   const ephemeralPublicKey = fromBase64(parsed.epk);
   const recipientPublicKey = x25519.getPublicKey(recipientPrivateKey);
-  const sharedSecret = x25519.getSharedSecret(recipientPrivateKey, ephemeralPublicKey);
-  const sealKey = deriveSealKey(sharedSecret, ephemeralPublicKey, recipientPublicKey);
+
+  let sealKey: Uint8Array;
+  try {
+    const sharedSecret = x25519.getSharedSecret(recipientPrivateKey, ephemeralPublicKey);
+    sealKey = deriveSealKey(sharedSecret, ephemeralPublicKey, recipientPublicKey);
+  } catch {
+    throw new DecryptionError();
+  }
+
   return decryptBytes(sealKey, { v: 1, alg: "A256GCM", n: parsed.n, ct: parsed.ct });
 }
 ```
@@ -1595,7 +1618,7 @@ export * from "./seal.js";
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `pnpm --filter @keyhole/crypto test src/seal.test.ts`
-Expected: PASS — 8 tests.
+Expected: PASS — 10 tests.
 
 - [ ] **Step 6: Commit**
 
