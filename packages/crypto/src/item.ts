@@ -1,3 +1,4 @@
+import { DecryptionError, KeyholeCryptoError } from "./errors.js";
 import { randomBytes } from "./random.js";
 import { decryptString, encryptString } from "./symmetric.js";
 import { unwrapKey, wrapKey } from "./keys.js";
@@ -56,12 +57,85 @@ export async function encryptItem(
   };
 }
 
+function isString(value: unknown): boolean {
+  return typeof value === "string";
+}
+
+function isStringOrNull(value: unknown): boolean {
+  return value === null || typeof value === "string";
+}
+
+function isStringArray(value: unknown): boolean {
+  return Array.isArray(value) && value.every(isString);
+}
+
+function isPasswordHistory(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (entry) =>
+        typeof entry === "object" &&
+        entry !== null &&
+        isString((entry as Record<string, unknown>)["password"]) &&
+        isString((entry as Record<string, unknown>)["changedAt"]),
+    )
+  );
+}
+
+/**
+ * Checks the decrypted body really is an ItemPlaintext before the cast.
+ *
+ * The AEAD tag is not sufficient authority here: `parentKey` can be
+ * attacker-chosen. A compromised server can seal arbitrary bytes to a user as a
+ * "collection key" and serve a ciphertext that verifies under it, at which
+ * point fully attacker-controlled JSON would reach the web app typed as
+ * `ItemPlaintext`. This is the only thing standing between that and the UI.
+ *
+ * Failure raises DecryptionError rather than a new type: the caller's recovery
+ * is identical to any other decryption failure — the item cannot be shown.
+ */
+function assertItemPlaintext(value: unknown): asserts value is ItemPlaintext {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new DecryptionError();
+  }
+  const item = value as Record<string, unknown>;
+
+  const common =
+    isString(item["name"]) &&
+    isString(item["notes"]) &&
+    typeof item["favorite"] === "boolean" &&
+    isStringOrNull(item["folderId"]);
+
+  const valid =
+    item["type"] === "note"
+      ? common
+      : item["type"] === "login"
+        ? common &&
+          isString(item["username"]) &&
+          isString(item["password"]) &&
+          isStringArray(item["urls"]) &&
+          isPasswordHistory(item["passwordHistory"])
+        : false;
+
+  if (!valid) throw new DecryptionError();
+}
+
 export async function decryptItem(
   encrypted: EncryptedItem,
   parentKey: Uint8Array,
 ): Promise<ItemPlaintext> {
   const itemKey = await unwrapKey(encrypted.wrappedItemKey, parentKey);
-  return JSON.parse(await decryptString(encrypted.ciphertext, itemKey)) as ItemPlaintext;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(await decryptString(encrypted.ciphertext, itemKey));
+  } catch (error) {
+    // A KeyholeCryptoError from decryptString is already the right answer;
+    // only JSON.parse's SyntaxError needs translating.
+    if (error instanceof KeyholeCryptoError) throw error;
+    throw new DecryptionError();
+  }
+  assertItemPlaintext(parsed);
+  return parsed;
 }
 
 export async function rewrapItem(

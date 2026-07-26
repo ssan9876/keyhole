@@ -4,10 +4,12 @@ import {
   encryptItem,
   generateItemKey,
   rewrapItem,
+  type EncryptedItem,
   type LoginItem,
   type NoteItem,
 } from "./item.js";
-import { generateCollectionKey, generateUserKey } from "./keys.js";
+import { generateCollectionKey, generateUserKey, wrapKey } from "./keys.js";
+import { encryptString } from "./symmetric.js";
 import { DecryptionError } from "./errors.js";
 
 const login: LoginItem = {
@@ -67,6 +69,66 @@ describe("encryptItem / decryptItem", () => {
   it("cannot be decrypted with the wrong parent key", async () => {
     const encrypted = await encryptItem(login, generateUserKey());
     await expect(decryptItem(encrypted, generateUserKey())).rejects.toThrow(DecryptionError);
+  });
+});
+
+// The AEAD tag does not make the plaintext trustworthy, because parentKey can
+// be attacker-chosen: a compromised server can seal arbitrary bytes to a user
+// as a "collection key" and serve a ciphertext that verifies under it. Without
+// a runtime check, fully attacker-controlled JSON reaches the web app typed as
+// ItemPlaintext.
+describe("decryptItem shape validation", () => {
+  async function sealForged(body: unknown): Promise<[EncryptedItem, Uint8Array]> {
+    const parentKey = generateUserKey();
+    const itemKey = generateItemKey();
+    return [
+      {
+        ciphertext: await encryptString(JSON.stringify(body), itemKey),
+        wrappedItemKey: await wrapKey(itemKey, parentKey),
+      },
+      parentKey,
+    ];
+  }
+
+  it("rejects an unknown type", async () => {
+    const [forged, key] = await sealForged({ ...note, type: "card" });
+    await expect(decryptItem(forged, key)).rejects.toThrow(DecryptionError);
+  });
+
+  it("rejects a missing required field", async () => {
+    const { urls: _dropped, ...withoutUrls } = login;
+    const [forged, key] = await sealForged(withoutUrls);
+    await expect(decryptItem(forged, key)).rejects.toThrow(DecryptionError);
+  });
+
+  it("rejects a field of the wrong type", async () => {
+    const [forged, key] = await sealForged({ ...login, favorite: "yes" });
+    await expect(decryptItem(forged, key)).rejects.toThrow(DecryptionError);
+  });
+
+  it("rejects urls that is not an array of strings", async () => {
+    const [forged, key] = await sealForged({ ...login, urls: ["https://ok", 7] });
+    await expect(decryptItem(forged, key)).rejects.toThrow(DecryptionError);
+  });
+
+  it("rejects a malformed passwordHistory entry", async () => {
+    const [forged, key] = await sealForged({
+      ...login,
+      passwordHistory: [{ password: "x" }],
+    });
+    await expect(decryptItem(forged, key)).rejects.toThrow(DecryptionError);
+  });
+
+  it("rejects a plaintext that is not an object at all", async () => {
+    const [forged, key] = await sealForged("just a string");
+    await expect(decryptItem(forged, key)).rejects.toThrow(DecryptionError);
+  });
+
+  it("still accepts both well-formed variants", async () => {
+    const [validLogin, loginKey] = await sealForged(login);
+    const [validNote, noteKey] = await sealForged(note);
+    expect(await decryptItem(validLogin, loginKey)).toEqual(login);
+    expect(await decryptItem(validNote, noteKey)).toEqual(note);
   });
 });
 
