@@ -69,6 +69,20 @@ func TestWriteJSONLogsAnEncodeFailureToTheConfiguredLogger(t *testing.T) {
 	}
 }
 
+func TestNewPointsWriteJSONAtTheServersLogger(t *testing.T) {
+	// The test above sets the logger by hand, so it would still pass if New had
+	// never been taught to. Build a real server and check the wiring end to end.
+	var sink bytes.Buffer
+	newTestServerWithLogger(t, slog.New(slog.NewTextHandler(&sink, nil)))
+
+	rec := httptest.NewRecorder()
+	WriteJSON(rec, http.StatusOK, map[string]any{"unencodable": make(chan int)})
+
+	if !strings.Contains(sink.String(), "encode response") {
+		t.Errorf("New did not point WriteJSON at the logger it was given; the logger saw:\n%s", sink.String())
+	}
+}
+
 func TestDecodeJSONAcceptsValidBody(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"name":"x"}`))

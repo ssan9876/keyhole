@@ -17,6 +17,13 @@ import (
 // newTestServer builds a server over a fresh migrated database.
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
+	return newTestServerWithLogger(t, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+// newTestServerWithLogger is newTestServer for the one test that needs to read
+// back what the server logged.
+func newTestServerWithLogger(t *testing.T, logger *slog.Logger) *Server {
+	t.Helper()
 
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
@@ -29,7 +36,6 @@ func newTestServer(t *testing.T) *Server {
 
 	cfg := config.Default()
 	cfg.BaseURL = "http://test.local"
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	srv := New(cfg, st, make([]byte, 32), logger)
 	// Every server starts a sweeper goroutine holding a ten-minute ticker.
