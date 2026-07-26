@@ -62,17 +62,21 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		RecoveryProtectedUserKey: req.RecoveryProtectedUserKey,
 		RecoveryKDFParams:        req.RecoveryKDFParams,
 	})
+	var validationErr *store.ValidationError
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		// Unknown, expired, and already-used links are indistinguishable, so a
 		// caller cannot probe which tokens ever existed.
 		WriteError(w, http.StatusNotFound, CodeNotFound, "this setup link is no longer valid")
 		return
+	case errors.As(err, &validationErr):
+		// The client's payload was wrong; its own error text is safe to echo.
+		WriteError(w, http.StatusBadRequest, CodeBadRequest, validationErr.Error())
+		return
 	case err != nil:
-		// A validation failure from the store is the client's fault; log the
-		// detail and tell them without echoing the body back.
-		s.logger.Warn("enrollment rejected", "id", RequestIDFrom(r.Context()), "error", err)
-		WriteError(w, http.StatusBadRequest, CodeBadRequest, err.Error())
+		// Anything else is ours, not theirs. Log the detail, tell them nothing.
+		s.logger.Error("enrollment failed", "id", RequestIDFrom(r.Context()), "error", err)
+		WriteError(w, http.StatusInternalServerError, CodeInternal, "could not complete setup")
 		return
 	}
 

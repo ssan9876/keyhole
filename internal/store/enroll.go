@@ -2,7 +2,6 @@ package store
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 )
@@ -36,10 +35,21 @@ func (in EnrollmentInput) validate() error {
 	}
 	for name, value := range required {
 		if value == "" {
-			return fmt.Errorf("enrollment field %q is required", name)
+			return &ValidationError{Field: name}
 		}
 	}
 	return nil
+}
+
+// ValidationError means the client's enrollment payload was incomplete or
+// malformed. It is the caller's fault and is safe to report back to them —
+// unlike a database failure, whose text must never reach a client.
+type ValidationError struct {
+	Field string
+}
+
+func (e *ValidationError) Error() string {
+	return fmt.Sprintf("enrollment field %q is required", e.Field)
 }
 
 // CompleteEnrollment consumes the invite and activates the account in one
@@ -107,13 +117,20 @@ func (s *Store) CompleteEnrollment(ctx context.Context, token string, in Enrollm
 		return User{}, ErrNotFound
 	}
 
+	// Read the activated row inside the transaction, before Commit. A reload
+	// after Commit would leave a window where the account is active in the
+	// database but the client is told enrollment failed, with no way to
+	// retry: the invite is spent and a second attempt gets ErrNotFound.
+	// Reading here means any failure rolls back cleanly instead.
+	user, err := scanUser(tx.QueryRowContext(ctx,
+		`SELECT `+userColumns+` FROM users WHERE id = ?`, invite.UserID))
+	if err != nil {
+		return User{}, fmt.Errorf("reload enrolled user: %w", err)
+	}
+
 	if err := tx.Commit(); err != nil {
 		return User{}, fmt.Errorf("commit enrollment: %w", err)
 	}
 
-	user, err := s.UserByID(ctx, invite.UserID)
-	if err != nil {
-		return User{}, errors.Join(errors.New("enrollment committed but reload failed"), err)
-	}
 	return user, nil
 }
