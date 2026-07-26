@@ -176,6 +176,20 @@ func (s *Store) UpdateItem(ctx context.Context, id string, expectedRevision int6
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// The revision bump is deliberately the FIRST statement. BeginTx opens a
+	// deferred transaction: a SELECT would take a WAL read snapshot, and if
+	// another connection commits before this transaction's first write, SQLite
+	// fails that write with SQLITE_BUSY_SNAPSHOT — a code for which the busy
+	// handler is NOT invoked, so busy_timeout(5000) never applies. Writing
+	// first takes the write lock up front, where busy_timeout does apply.
+	//
+	// Nothing is leaked by bumping early: the deferred Rollback below discards
+	// the increment on every not-found and conflict path.
+	revision, err := nextRevision(ctx, tx)
+	if err != nil {
+		return Item{}, err
+	}
+
 	current, err := scanItem(tx.QueryRowContext(ctx,
 		`SELECT `+itemColumns+` FROM items WHERE id = ?`, id))
 	if err != nil {
@@ -190,10 +204,6 @@ func (s *Store) UpdateItem(ctx context.Context, id string, expectedRevision int6
 		return current, ErrRevisionConflict
 	}
 
-	revision, err := nextRevision(ctx, tx)
-	if err != nil {
-		return Item{}, err
-	}
 	now := time.Now().UTC()
 
 	if _, err := tx.ExecContext(ctx,
@@ -228,6 +238,16 @@ func (s *Store) DeleteItem(ctx context.Context, id string) (Item, error) {
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// First statement, for the same reason as UpdateItem: a deferred
+	// transaction whose first statement is a SELECT takes a read snapshot and
+	// then fails its first write with SQLITE_BUSY_SNAPSHOT, which the busy
+	// handler does not retry. The deferred Rollback discards the increment on
+	// the not-found path.
+	revision, err := nextRevision(ctx, tx)
+	if err != nil {
+		return Item{}, err
+	}
+
 	current, err := scanItem(tx.QueryRowContext(ctx,
 		`SELECT `+itemColumns+` FROM items WHERE id = ?`, id))
 	if err != nil {
@@ -239,10 +259,6 @@ func (s *Store) DeleteItem(ctx context.Context, id string) (Item, error) {
 		return Item{}, ErrNotFound
 	}
 
-	revision, err := nextRevision(ctx, tx)
-	if err != nil {
-		return Item{}, err
-	}
 	now := time.Now().UTC()
 	stamp := now.Format(time.RFC3339)
 

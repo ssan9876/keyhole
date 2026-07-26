@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -297,6 +299,75 @@ func TestCreateItemsBulkNumbersEveryRowDistinctly(t *testing.T) {
 			t.Fatalf("revision %d appears twice in one batch", item.Revision)
 		}
 		seen[item.Revision] = true
+	}
+}
+
+// TestConcurrentUpdatesAndDeletesDoNotReturnBusy is a regression test for the
+// deferred-transaction ordering bug.
+//
+// A deferred transaction that runs its SELECT first takes a WAL read snapshot
+// before it ever asks for the write lock. If another connection commits in the
+// gap, SQLite fails the first write with SQLITE_BUSY_SNAPSHOT — and the busy
+// handler is deliberately NOT invoked for that code, so the DSN's
+// busy_timeout(5000) never applies and no amount of waiting helps. Open sets
+// SetMaxOpenConns(4), so this is production-reachable: two phones in one
+// household editing different items at the same moment.
+//
+// Every operation below targets a distinct item at its own current revision, so
+// every one of them is valid. Any error at all is the bug.
+func TestConcurrentUpdatesAndDeletesDoNotReturnBusy(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	userID := enrolledUserID(t, st, "owner@example.com")
+
+	const n = 180
+	ins := make([]ItemInput, n)
+	for i := range ins {
+		ins[i] = ItemInput{Ciphertext: "body", WrappedItemKey: "k"}
+	}
+	created, err := st.CreateItemsBulk(ctx, userID, ins)
+	if err != nil {
+		t.Fatalf("CreateItemsBulk: %v", err)
+	}
+
+	var mu sync.Mutex
+	var failures []string
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	for i := range created {
+		wg.Add(1)
+		go func(i int, item Item) {
+			defer wg.Done()
+			<-start
+			var err error
+			var op string
+			if i%2 == 0 {
+				op = "UpdateItem"
+				_, err = st.UpdateItem(ctx, item.ID, item.Revision,
+					ItemInput{Ciphertext: "edited", WrappedItemKey: "k"})
+			} else {
+				op = "DeleteItem"
+				_, err = st.DeleteItem(ctx, item.ID)
+			}
+			if err != nil {
+				mu.Lock()
+				failures = append(failures, fmt.Sprintf("%s(%s): %v", op, item.ID, err))
+				mu.Unlock()
+			}
+		}(i, created[i])
+	}
+	close(start)
+	wg.Wait()
+
+	if len(failures) > 0 {
+		shown := failures
+		if len(shown) > 5 {
+			shown = shown[:5]
+		}
+		t.Fatalf("%d of %d concurrent writes failed; a valid edit must not become "+
+			"an unclassified 500. First failures:\n%s",
+			len(failures), n, strings.Join(shown, "\n"))
 	}
 }
 
