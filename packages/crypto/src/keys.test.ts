@@ -2,17 +2,17 @@ import { describe, expect, it } from "vitest";
 import { createPrivateKey, createPublicKey, diffieHellman } from "node:crypto";
 import { x25519 } from "@noble/curves/ed25519";
 import {
+  beginUnlock,
   enrollUser,
   generateCollectionKey,
   generateKeyPair,
   generateUserKey,
   publicKeyFor,
   rotateMasterPassword,
-  unlockUser,
   unwrapKey,
   wrapKey,
 } from "./keys.js";
-import { DecryptionError } from "./errors.js";
+import { DecryptionError, KeyholeCryptoError } from "./errors.js";
 import { toBase64 } from "./encoding.js";
 
 const PASSWORD = "correct horse battery staple";
@@ -93,24 +93,62 @@ describe("enrollUser", () => {
   });
 });
 
-describe("unlockUser", () => {
+describe("beginUnlock", () => {
+  // The login protocol is: derive -> POST authHash -> receive the wrapped keys
+  // -> unwrap. The session exists so the Argon2id derivation happens once, not
+  // once for the auth hash and again for the blobs.
+  it("yields the authHash before the wrapped blobs are known", async () => {
+    const enrolled = await enrollUser(PASSWORD);
+    const session = await beginUnlock(PASSWORD, enrolled.kdfSalt);
+    expect(toBase64(session.authHash)).toBe(toBase64(enrolled.authHash));
+    session.destroy();
+  });
+
   it("recovers the same userKey and private key", async () => {
     const enrolled = await enrollUser(PASSWORD);
-    const unlocked = await unlockUser(
-      PASSWORD,
-      enrolled.kdfSalt,
+    const session = await beginUnlock(PASSWORD, enrolled.kdfSalt);
+    const unlocked = await session.finish(
       enrolled.protectedUserKey,
       enrolled.encryptedPrivateKey,
     );
     expect(toBase64(unlocked.userKey)).toBe(toBase64(enrolled.userKey));
     expect(toBase64(unlocked.privateKey)).toBe(toBase64(enrolled.keyPair.privateKey));
+    session.destroy();
   });
 
   it("throws DecryptionError under the wrong master password", async () => {
     const enrolled = await enrollUser(PASSWORD);
+    const session = await beginUnlock("wrong password", enrolled.kdfSalt);
     await expect(
-      unlockUser("wrong password", enrolled.kdfSalt, enrolled.protectedUserKey, enrolled.encryptedPrivateKey),
+      session.finish(enrolled.protectedUserKey, enrolled.encryptedPrivateKey),
     ).rejects.toThrow(DecryptionError);
+    session.destroy();
+  });
+
+  it("produces a different authHash under the wrong master password", async () => {
+    const enrolled = await enrollUser(PASSWORD);
+    const session = await beginUnlock("wrong password", enrolled.kdfSalt);
+    expect(toBase64(session.authHash)).not.toBe(toBase64(enrolled.authHash));
+    session.destroy();
+  });
+
+  it("refuses to finish after destroy rather than deriving garbage", async () => {
+    const enrolled = await enrollUser(PASSWORD);
+    const session = await beginUnlock(PASSWORD, enrolled.kdfSalt);
+    session.destroy();
+    await expect(
+      session.finish(enrolled.protectedUserKey, enrolled.encryptedPrivateKey),
+    ).rejects.toThrow(KeyholeCryptoError);
+    await expect(
+      session.finish(enrolled.protectedUserKey, enrolled.encryptedPrivateKey),
+    ).rejects.toThrow(/destroyed/u);
+  });
+
+  it("is safe to destroy twice", async () => {
+    const enrolled = await enrollUser(PASSWORD);
+    const session = await beginUnlock(PASSWORD, enrolled.kdfSalt);
+    session.destroy();
+    expect(() => session.destroy()).not.toThrow();
   });
 });
 
@@ -119,12 +157,12 @@ describe("rotateMasterPassword", () => {
     const enrolled = await enrollUser(PASSWORD);
     const rotated = await rotateMasterPassword("a brand new password", enrolled.userKey);
 
-    const unlocked = await unlockUser(
-      "a brand new password",
-      rotated.kdfSalt,
+    const session = await beginUnlock("a brand new password", rotated.kdfSalt);
+    const unlocked = await session.finish(
       rotated.protectedUserKey,
       enrolled.encryptedPrivateKey,
     );
+    session.destroy();
     expect(toBase64(unlocked.userKey)).toBe(toBase64(enrolled.userKey));
     expect(toBase64(unlocked.privateKey)).toBe(toBase64(enrolled.keyPair.privateKey));
   });
@@ -135,8 +173,10 @@ describe("rotateMasterPassword", () => {
 
     expect(toBase64(rotated.kdfSalt)).not.toBe(toBase64(enrolled.kdfSalt));
     expect(toBase64(rotated.authHash)).not.toBe(toBase64(enrolled.authHash));
+    const session = await beginUnlock(PASSWORD, rotated.kdfSalt);
     await expect(
-      unlockUser(PASSWORD, rotated.kdfSalt, rotated.protectedUserKey, enrolled.encryptedPrivateKey),
+      session.finish(rotated.protectedUserKey, enrolled.encryptedPrivateKey),
     ).rejects.toThrow(DecryptionError);
+    session.destroy();
   });
 });

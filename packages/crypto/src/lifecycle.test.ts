@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { enrollUser, generateCollectionKey, rotateMasterPassword, unlockUser } from "./keys.js";
+import { beginUnlock, enrollUser, generateCollectionKey, rotateMasterPassword } from "./keys.js";
 import { openSealed, sealToUser } from "./seal.js";
 import { decryptItem, encryptItem, type LoginItem } from "./item.js";
 import { createRecoveryBlob, generateRecoveryCode, recoverUserKey } from "./recovery.js";
@@ -32,13 +32,12 @@ describe("end-to-end lifecycle", () => {
     const aliceCollectionKey = await openSealed(aliceSealed, alice.keyPair.privateKey);
     const bobSealed = await sealToUser(aliceCollectionKey, bob.publicKey);
 
-    // Bob logs in on a fresh device and reads the item.
-    const bobUnlocked = await unlockUser(
-      "bob-master-password",
-      bob.kdfSalt,
-      bob.protectedUserKey,
-      bob.encryptedPrivateKey,
-    );
+    // Bob logs in on a fresh device: derive once, send the auth hash, then
+    // unwrap the blobs the login response carried back.
+    const bobSession = await beginUnlock("bob-master-password", bob.kdfSalt);
+    expect(toBase64(bobSession.authHash)).toBe(toBase64(bob.authHash));
+    const bobUnlocked = await bobSession.finish(bob.protectedUserKey, bob.encryptedPrivateKey);
+    bobSession.destroy();
     const bobCollectionKey = await openSealed(bobSealed, bobUnlocked.privateKey);
     expect(await decryptItem(encryptedItem, bobCollectionKey)).toEqual(netflix);
   });
@@ -62,12 +61,9 @@ describe("end-to-end lifecycle", () => {
 
     // Unlocking with the new password must reach the same userKey, and the item
     // ciphertext must be byte-identical — nothing was re-encrypted.
-    const unlocked = await unlockUser(
-      "brand-new-password",
-      rotated.kdfSalt,
-      rotated.protectedUserKey,
-      user.encryptedPrivateKey,
-    );
+    const session = await beginUnlock("brand-new-password", rotated.kdfSalt);
+    const unlocked = await session.finish(rotated.protectedUserKey, user.encryptedPrivateKey);
+    session.destroy();
     expect(toBase64(unlocked.userKey)).toBe(toBase64(user.userKey));
     expect(await decryptItem(item, unlocked.userKey)).toEqual(netflix);
   });
