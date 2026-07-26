@@ -71,13 +71,14 @@ describe("end-to-end lifecycle", () => {
   it("recovers a vault from the recovery code after the master password is lost", async () => {
     const user = await enrollUser("forgotten-password");
     const code = generateRecoveryCode();
-    const blob = await createRecoveryBlob(user.userKey, code);
+    const blob = await createRecoveryBlob(user.userKey, code, user.params);
     const item = await encryptItem(netflix, user.userKey);
 
     const recoveredUserKey = await recoverUserKey(
       blob.recoveryProtectedUserKey,
       code,
       blob.recoverySalt,
+      blob.params,
     );
     expect(toBase64(recoveredUserKey)).toBe(toBase64(user.userKey));
     expect(await decryptItem(item, recoveredUserKey)).toEqual(netflix);

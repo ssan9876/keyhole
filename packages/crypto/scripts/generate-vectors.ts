@@ -9,7 +9,7 @@
 import { writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { deriveAuthHash, deriveMasterKey, deriveWrapKey } from "../src/kdf.js";
+import { DEFAULT_KDF_PARAMS, deriveAuthHash, deriveMasterKey, deriveWrapKey } from "../src/kdf.js";
 import { encryptBytesWithNonce } from "../src/symmetric.js";
 import { sealToUserWithEphemeral } from "../src/seal.js";
 import { publicKeyFor } from "../src/keys.js";
@@ -67,7 +67,9 @@ async function main(): Promise<void> {
     recovery: {
       code: RECOVERY_CODE,
       recoverySaltBase64: toBase64(RECOVERY_SALT),
-      recoveryKeyBase64: toBase64(await deriveRecoveryKey(RECOVERY_CODE, RECOVERY_SALT)),
+      recoveryKeyBase64: toBase64(
+        await deriveRecoveryKey(RECOVERY_CODE, RECOVERY_SALT, DEFAULT_KDF_PARAMS),
+      ),
     },
     fingerprint: {
       email: FINGERPRINT_EMAIL,

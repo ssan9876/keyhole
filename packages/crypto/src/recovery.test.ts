@@ -8,6 +8,7 @@ import {
 } from "./recovery.js";
 import { generateUserKey } from "./keys.js";
 import { DecryptionError, InvalidRecoveryCodeError } from "./errors.js";
+import { DEFAULT_KDF_PARAMS } from "./kdf.js";
 import { toBase64 } from "./encoding.js";
 
 describe("generateRecoveryCode", () => {
@@ -53,8 +54,16 @@ describe("normalizeRecoveryCode", () => {
 describe("deriveRecoveryKey", () => {
   it("is insensitive to how the user typed the code", async () => {
     const salt = new Uint8Array(16).fill(0x21);
-    const formatted = await deriveRecoveryKey("ABCDE-FGHJK-MNPQR-STVWX-YZ234", salt);
-    const messy = await deriveRecoveryKey("abcde fghjk mnpqr stvwx yz234", salt);
+    const formatted = await deriveRecoveryKey(
+      "ABCDE-FGHJK-MNPQR-STVWX-YZ234",
+      salt,
+      DEFAULT_KDF_PARAMS,
+    );
+    const messy = await deriveRecoveryKey(
+      "abcde fghjk mnpqr stvwx yz234",
+      salt,
+      DEFAULT_KDF_PARAMS,
+    );
     expect(toBase64(formatted)).toBe(toBase64(messy));
   });
 });
@@ -63,28 +72,54 @@ describe("recovery round trip", () => {
   it("recovers the userKey from the code alone", async () => {
     const userKey = generateUserKey();
     const code = generateRecoveryCode();
-    const blob = await createRecoveryBlob(userKey, code);
+    const blob = await createRecoveryBlob(userKey, code, DEFAULT_KDF_PARAMS);
     const recovered = await recoverUserKey(
       blob.recoveryProtectedUserKey,
       code,
       blob.recoverySalt,
+      blob.params,
     );
     expect(toBase64(recovered)).toBe(toBase64(userKey));
+  });
+
+  // The blob's params must come back out, or the caller cannot persist the
+  // recovery_kdf_params column that spec 4.2 keeps separate from kdf_params.
+  it("returns the params the blob was wrapped under", async () => {
+    const blob = await createRecoveryBlob(
+      generateUserKey(),
+      generateRecoveryCode(),
+      DEFAULT_KDF_PARAMS,
+    );
+    expect(blob.params).toEqual(DEFAULT_KDF_PARAMS);
   });
 
   it("accepts the code typed in lower case without separators", async () => {
     const userKey = generateUserKey();
     const code = generateRecoveryCode();
-    const blob = await createRecoveryBlob(userKey, code);
+    const blob = await createRecoveryBlob(userKey, code, DEFAULT_KDF_PARAMS);
     const messy = code.replace(/-/gu, "").toLowerCase();
-    const recovered = await recoverUserKey(blob.recoveryProtectedUserKey, messy, blob.recoverySalt);
+    const recovered = await recoverUserKey(
+      blob.recoveryProtectedUserKey,
+      messy,
+      blob.recoverySalt,
+      blob.params,
+    );
     expect(toBase64(recovered)).toBe(toBase64(userKey));
   });
 
   it("fails on the wrong code", async () => {
-    const blob = await createRecoveryBlob(generateUserKey(), generateRecoveryCode());
+    const blob = await createRecoveryBlob(
+      generateUserKey(),
+      generateRecoveryCode(),
+      DEFAULT_KDF_PARAMS,
+    );
     await expect(
-      recoverUserKey(blob.recoveryProtectedUserKey, generateRecoveryCode(), blob.recoverySalt),
+      recoverUserKey(
+        blob.recoveryProtectedUserKey,
+        generateRecoveryCode(),
+        blob.recoverySalt,
+        blob.params,
+      ),
     ).rejects.toThrow(DecryptionError);
   });
 });

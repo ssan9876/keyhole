@@ -46,6 +46,9 @@ export async function unwrapKey(wrapped: string, wrappingKey: Uint8Array): Promi
 
 export interface EnrollmentResult {
   kdfSalt: Uint8Array;
+  /** The params the salt and blobs were produced under. Persist alongside the
+   *  salt: deriving with different params yields a different key. */
+  params: Readonly<KdfParams>;
   authHash: Uint8Array;
   protectedUserKey: string;
   publicKey: Uint8Array;
@@ -63,7 +66,7 @@ export interface EnrollmentResult {
  */
 export async function enrollUser(
   masterPassword: string,
-  params: KdfParams = DEFAULT_KDF_PARAMS,
+  params: Readonly<KdfParams> = DEFAULT_KDF_PARAMS,
 ): Promise<EnrollmentResult> {
   const kdfSalt = generateKdfSalt();
   const masterKey = await deriveMasterKey(masterPassword, kdfSalt, params);
@@ -75,6 +78,7 @@ export async function enrollUser(
 
   return {
     kdfSalt,
+    params,
     authHash,
     protectedUserKey: await wrapKey(userKey, wrappingKey),
     publicKey: keyPair.publicKey,
@@ -145,6 +149,9 @@ export async function beginUnlock(
 
 export interface RotationResult {
   kdfSalt: Uint8Array;
+  /** The params the new salt and blob were produced under. Persist alongside
+   *  the salt, for the same reason as EnrollmentResult.params. */
+  params: Readonly<KdfParams>;
   authHash: Uint8Array;
   protectedUserKey: string;
 }
@@ -161,13 +168,15 @@ export interface RotationResult {
 export async function rotateMasterPassword(
   newMasterPassword: string,
   userKey: Uint8Array,
-  params: KdfParams = DEFAULT_KDF_PARAMS,
+  params: Readonly<KdfParams> = DEFAULT_KDF_PARAMS,
 ): Promise<RotationResult> {
   const kdfSalt = generateKdfSalt();
   const masterKey = await deriveMasterKey(newMasterPassword, kdfSalt, params);
+  const wrappingKey = deriveWrapKey(masterKey);
   return {
     kdfSalt,
+    params,
     authHash: deriveAuthHash(masterKey),
-    protectedUserKey: await wrapKey(userKey, deriveWrapKey(masterKey)),
+    protectedUserKey: await wrapKey(userKey, wrappingKey),
   };
 }

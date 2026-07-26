@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import vectors from "../vectors/vectors.json" with { type: "json" };
-import { deriveAuthHash, deriveMasterKey, deriveWrapKey } from "./kdf.js";
+import { DEFAULT_KDF_PARAMS, deriveAuthHash, deriveMasterKey, deriveWrapKey } from "./kdf.js";
 import { decryptBytes, encryptBytesWithNonce, type Envelope } from "./symmetric.js";
 import { openSealed, sealToUserWithEphemeral } from "./seal.js";
 import { publicKeyFor } from "./keys.js";
@@ -62,6 +62,7 @@ describe("frozen vectors", () => {
     const key = await deriveRecoveryKey(
       vectors.recovery.code,
       fromBase64(vectors.recovery.recoverySaltBase64),
+      DEFAULT_KDF_PARAMS,
     );
     expect(toBase64(key)).toBe(vectors.recovery.recoveryKeyBase64);
   });

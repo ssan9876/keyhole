@@ -13,9 +13,17 @@ import {
   wrapKey,
 } from "./keys.js";
 import { DecryptionError, KeyholeCryptoError } from "./errors.js";
+import { DEFAULT_KDF_PARAMS, type KdfParams } from "./kdf.js";
 import { toBase64 } from "./encoding.js";
 
 const PASSWORD = "correct horse battery staple";
+
+const RAISED_PARAMS: Readonly<KdfParams> = Object.freeze({
+  algorithm: "argon2id",
+  memoryKiB: 131072,
+  iterations: 4,
+  parallelism: 4,
+});
 
 describe("key generation", () => {
   it("produces 32-byte symmetric keys", () => {
@@ -83,6 +91,13 @@ describe("enrollUser", () => {
     // The wrapped blobs must not contain the plaintext key material.
     expect(result.protectedUserKey).not.toContain(toBase64(result.userKey));
     expect(result.encryptedPrivateKey).not.toContain(toBase64(result.keyPair.privateKey));
+  });
+
+  // Without this, an app that raises a user's params has no way to learn from
+  // the result which params the salt belongs to, and can persist the wrong ones.
+  it("reports the params it actually used", async () => {
+    expect((await enrollUser(PASSWORD)).params).toEqual(DEFAULT_KDF_PARAMS);
+    expect((await enrollUser(PASSWORD, RAISED_PARAMS)).params).toEqual(RAISED_PARAMS);
   });
 
   it("produces different key material for two users with the same password", async () => {
@@ -165,6 +180,11 @@ describe("rotateMasterPassword", () => {
     session.destroy();
     expect(toBase64(unlocked.userKey)).toBe(toBase64(enrolled.userKey));
     expect(toBase64(unlocked.privateKey)).toBe(toBase64(enrolled.keyPair.privateKey));
+  });
+
+  it("reports the params it actually used", async () => {
+    const userKey = generateUserKey();
+    expect((await rotateMasterPassword("new", userKey)).params).toEqual(DEFAULT_KDF_PARAMS);
   });
 
   it("issues a fresh salt and auth hash so the old password stops working", async () => {

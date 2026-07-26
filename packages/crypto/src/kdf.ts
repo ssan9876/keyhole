@@ -38,7 +38,7 @@ export function generateKdfSalt(): Uint8Array {
 export async function deriveMasterKey(
   masterPassword: string,
   salt: Uint8Array,
-  params: KdfParams = DEFAULT_KDF_PARAMS,
+  params: Readonly<KdfParams> = DEFAULT_KDF_PARAMS,
 ): Promise<Uint8Array> {
   if (masterPassword.length === 0) {
     throw new Error("Master password must not be empty");
