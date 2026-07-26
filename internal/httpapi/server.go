@@ -3,18 +3,21 @@ package httpapi
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
+	"github.com/ssan9876/keyhole/internal/auth"
 	"github.com/ssan9876/keyhole/internal/config"
 	"github.com/ssan9876/keyhole/internal/store"
 )
 
 // Server owns the routing table and the dependencies handlers need.
 type Server struct {
-	cfg    config.Config
-	store  *store.Store
-	secret []byte
-	logger *slog.Logger
-	mux    *http.ServeMux
+	cfg     config.Config
+	store   *store.Store
+	secret  []byte
+	logger  *slog.Logger
+	mux     *http.ServeMux
+	limiter *auth.Limiter
 }
 
 // New builds the server and registers every route.
@@ -29,9 +32,26 @@ func New(cfg config.Config, st *store.Store, secret []byte, logger *slog.Logger)
 		secret: secret,
 		logger: logger,
 		mux:    http.NewServeMux(),
+		// Five free attempts, then 2s, 4s, 8s… capped at five minutes. Generous
+		// enough that a user mistyping their password never notices, harsh
+		// enough that online guessing against a 64 MiB Argon2id is hopeless.
+		limiter: auth.NewLimiter(5, 2*time.Second, 5*time.Minute),
 	}
 	s.routes()
+	go s.sweepLimiter()
 	return s
+}
+
+// sweepLimiter discards stale rate-limit entries. Without it, an attacker
+// cycling source addresses grows the entries map without bound. Runs for the
+// life of the process; the server is a long-lived singleton, so there is
+// nothing to stop.
+func (s *Server) sweepLimiter() {
+	ticker := time.NewTicker(10 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		s.limiter.Sweep(time.Hour)
+	}
 }
 
 func (s *Server) routes() {

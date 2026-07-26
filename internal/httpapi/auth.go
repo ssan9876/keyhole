@@ -4,11 +4,26 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ssan9876/keyhole/internal/auth"
 	"github.com/ssan9876/keyhole/internal/store"
 )
+
+// tooManyAttempts reports the throttle. Retry-After is advisory: an honest
+// client can back off politely, and an attacker learns only what the timing
+// already tells them.
+func tooManyAttempts(w http.ResponseWriter, retryAfter time.Duration) {
+	seconds := int(retryAfter.Seconds())
+	if seconds < 1 {
+		seconds = 1
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(seconds))
+	WriteError(w, http.StatusTooManyRequests, CodeRateLimited,
+		"too many attempts; please wait before trying again")
+}
 
 const userContextKey contextKey = "user"
 
@@ -30,6 +45,17 @@ type preloginRequest struct {
 func (s *Server) handlePrelogin(w http.ResponseWriter, r *http.Request) {
 	var req preloginRequest
 	if !DecodeJSON(w, r, &req) {
+		return
+	}
+
+	// Prelogin is unauthenticated and would otherwise be a free enumeration
+	// probe. It records no failures of its own — every address gets an answer,
+	// so it has no notion of failure — but it spends the same per-IP budget
+	// that failed logins consume, which is the intent: an attacker walking a
+	// list of addresses pays either way.
+	ipKey := "ip:" + ClientIP(r)
+	if allowed, retryAfter := s.limiter.Allow(ipKey); !allowed {
+		tooManyAttempts(w, retryAfter)
 		return
 	}
 
@@ -70,6 +96,20 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Two independent keys. The IP limit stops one host grinding through many
+	// accounts; the account limit stops a distributed attempt on one account.
+	// Both must pass, and the account key uses the normalized address so case
+	// variations cannot buy extra attempts.
+	ipKey := "ip:" + ClientIP(r)
+	accountKey := "account:" + store.NormalizeEmail(req.Email)
+
+	for _, key := range []string{ipKey, accountKey} {
+		if allowed, retryAfter := s.limiter.Allow(key); !allowed {
+			tooManyAttempts(w, retryAfter)
+			return
+		}
+	}
+
 	user, err := s.store.UserByEmail(r.Context(), req.Email)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.logger.Error("login lookup", "id", RequestIDFrom(r.Context()), "error", err)
@@ -87,6 +127,8 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ok := auth.VerifyAuthHash(req.AuthHash, stored)
 
 	if err != nil || !ok || user.Status != "active" {
+		s.limiter.RecordFailure(ipKey)
+		s.limiter.RecordFailure(accountKey)
 		invalidCredentials(w)
 		return
 	}
@@ -97,6 +139,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, CodeInternal, "could not start a session")
 		return
 	}
+
+	// A success clears both counters, so a user who mistypes a few times and
+	// then gets it right is not still throttled on their next sign-in.
+	s.limiter.Reset(ipKey)
+	s.limiter.Reset(accountKey)
 
 	// The wrapped keys ride along with the tokens: the client derived its auth
 	// hash before it had them, and needs them now to finish unlocking.
