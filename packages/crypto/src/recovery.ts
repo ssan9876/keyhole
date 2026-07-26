@@ -1,5 +1,6 @@
 import { argon2id } from "hash-wasm";
 import { InvalidRecoveryCodeError } from "./errors.js";
+import { zeroize } from "./memory.js";
 import { randomBytes } from "./random.js";
 import { assertKdfSalt, generateKdfSalt, type KdfParams } from "./kdf.js";
 import { unwrapKey, wrapKey } from "./keys.js";
@@ -73,11 +74,16 @@ export async function createRecoveryBlob(
 ): Promise<RecoveryBlob> {
   const recoverySalt = generateKdfSalt();
   const recoveryKey = await deriveRecoveryKey(code, recoverySalt, params);
-  return {
-    recoverySalt,
-    recoveryProtectedUserKey: await wrapKey(userKey, recoveryKey),
-    params,
-  };
+  try {
+    return {
+      recoverySalt,
+      recoveryProtectedUserKey: await wrapKey(userKey, recoveryKey),
+      params,
+    };
+  } finally {
+    // The recovery key is reconstructible from the code and never returned.
+    zeroize(recoveryKey);
+  }
 }
 
 /** `params` must be the ones the blob was created under — see deriveRecoveryKey. */
@@ -88,5 +94,9 @@ export async function recoverUserKey(
   params: Readonly<KdfParams>,
 ): Promise<Uint8Array> {
   const recoveryKey = await deriveRecoveryKey(code, recoverySalt, params);
-  return unwrapKey(recoveryProtectedUserKey, recoveryKey);
+  try {
+    return await unwrapKey(recoveryProtectedUserKey, recoveryKey);
+  } finally {
+    zeroize(recoveryKey);
+  }
 }

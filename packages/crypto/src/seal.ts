@@ -5,6 +5,7 @@ import { concatBytes, fromBase64, toBase64, utf8Encode } from "./encoding.js";
 import { DecryptionError, InvalidKeyError, MalformedEnvelopeError } from "./errors.js";
 import { decryptBytes, encryptBytesWithNonce } from "./symmetric.js";
 import { generateKeyPair } from "./keys.js";
+import { zeroize } from "./memory.js";
 import { randomBytes } from "./random.js";
 
 export interface SealedKey {
@@ -49,15 +50,21 @@ export async function sealToUserWithEphemeral(
   const ephemeralPublicKey = x25519.getPublicKey(ephemeralPrivateKey);
   const sharedSecret = x25519.getSharedSecret(ephemeralPrivateKey, recipientPublicKey);
   const sealKey = deriveSealKey(sharedSecret, ephemeralPublicKey, recipientPublicKey);
-  const envelope = await encryptBytesWithNonce(secret, sealKey, nonce);
-  const sealed: SealedKey = {
-    v: 1,
-    alg: SEAL_ALG,
-    epk: toBase64(ephemeralPublicKey),
-    n: envelope.n,
-    ct: envelope.ct,
-  };
-  return JSON.stringify(sealed);
+  try {
+    const envelope = await encryptBytesWithNonce(secret, sealKey, nonce);
+    const sealed: SealedKey = {
+      v: 1,
+      alg: SEAL_ALG,
+      epk: toBase64(ephemeralPublicKey),
+      n: envelope.n,
+      ct: envelope.ct,
+    };
+    return JSON.stringify(sealed);
+  } finally {
+    // ephemeralPrivateKey came from the caller, so it is the caller's to clear
+    // — sealToUser, which generated it, does so below.
+    zeroize(sharedSecret, sealKey);
+  }
 }
 
 export async function sealToUser(
@@ -65,12 +72,16 @@ export async function sealToUser(
   recipientPublicKey: Uint8Array,
 ): Promise<string> {
   const ephemeral = generateKeyPair();
-  return sealToUserWithEphemeral(
-    secret,
-    recipientPublicKey,
-    ephemeral.privateKey,
-    randomBytes(NONCE_BYTES),
-  );
+  try {
+    return await sealToUserWithEphemeral(
+      secret,
+      recipientPublicKey,
+      ephemeral.privateKey,
+      randomBytes(NONCE_BYTES),
+    );
+  } finally {
+    zeroize(ephemeral.privateKey);
+  }
 }
 
 function parseSealed(serialized: string): SealedKey {
@@ -111,21 +122,30 @@ export async function openSealed(
 ): Promise<Uint8Array> {
   const parsed = parseSealed(sealed);
   const ephemeralPublicKey = fromBase64(parsed.epk);
+  let sharedSecret: Uint8Array;
   let sealKey: Uint8Array;
   try {
     const recipientPublicKey = x25519.getPublicKey(recipientPrivateKey);
-    const sharedSecret = x25519.getSharedSecret(recipientPrivateKey, ephemeralPublicKey);
+    sharedSecret = x25519.getSharedSecret(recipientPrivateKey, ephemeralPublicKey);
     sealKey = deriveSealKey(sharedSecret, ephemeralPublicKey, recipientPublicKey);
   } catch {
     throw new DecryptionError();
   }
-  const opened = await decryptBytes({ v: 1, alg: "A256GCM", n: parsed.n, ct: parsed.ct }, sealKey);
-  // Everything this opens is a 32-byte symmetric key. Returning anything else
-  // is how an attacker-chosen "collection key" of the wrong length reaches
-  // decryptItem and surfaces as a bare Error from importKey instead of a typed
-  // failure the caller can handle.
-  if (opened.length !== SEALED_SECRET_BYTES) {
-    throw new DecryptionError();
+  try {
+    const opened = await decryptBytes(
+      { v: 1, alg: "A256GCM", n: parsed.n, ct: parsed.ct },
+      sealKey,
+    );
+    // Everything this opens is a 32-byte symmetric key. Returning anything else
+    // is how an attacker-chosen "collection key" of the wrong length reaches
+    // decryptItem and surfaces as a bare Error from importKey instead of a
+    // typed failure the caller can handle.
+    if (opened.length !== SEALED_SECRET_BYTES) {
+      throw new DecryptionError();
+    }
+    return opened;
+  } finally {
+    // recipientPrivateKey is the caller's unlocked key and is left alone.
+    zeroize(sharedSecret, sealKey);
   }
-  return opened;
 }

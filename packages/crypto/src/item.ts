@@ -1,4 +1,5 @@
 import { DecryptionError, KeyholeCryptoError } from "./errors.js";
+import { zeroize } from "./memory.js";
 import { randomBytes } from "./random.js";
 import { decryptString, encryptString } from "./symmetric.js";
 import { unwrapKey, wrapKey } from "./keys.js";
@@ -51,10 +52,15 @@ export async function encryptItem(
   parentKey: Uint8Array,
 ): Promise<EncryptedItem> {
   const itemKey = generateItemKey();
-  return {
-    ciphertext: await encryptString(JSON.stringify(item), itemKey),
-    wrappedItemKey: await wrapKey(itemKey, parentKey),
-  };
+  try {
+    return {
+      ciphertext: await encryptString(JSON.stringify(item), itemKey),
+      wrappedItemKey: await wrapKey(itemKey, parentKey),
+    };
+  } finally {
+    // parentKey is the caller's; the itemKey exists only for this call.
+    zeroize(itemKey);
+  }
 }
 
 function isString(value: unknown): boolean {
@@ -133,6 +139,8 @@ export async function decryptItem(
     // only JSON.parse's SyntaxError needs translating.
     if (error instanceof KeyholeCryptoError) throw error;
     throw new DecryptionError();
+  } finally {
+    zeroize(itemKey);
   }
   assertItemPlaintext(parsed);
   return parsed;
@@ -144,8 +152,12 @@ export async function rewrapItem(
   toParentKey: Uint8Array,
 ): Promise<EncryptedItem> {
   const itemKey = await unwrapKey(encrypted.wrappedItemKey, fromParentKey);
-  return {
-    ciphertext: encrypted.ciphertext,
-    wrappedItemKey: await wrapKey(itemKey, toParentKey),
-  };
+  try {
+    return {
+      ciphertext: encrypted.ciphertext,
+      wrappedItemKey: await wrapKey(itemKey, toParentKey),
+    };
+  } finally {
+    zeroize(itemKey);
+  }
 }

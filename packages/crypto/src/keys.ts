@@ -71,21 +71,27 @@ export async function enrollUser(
   const kdfSalt = generateKdfSalt();
   const masterKey = await deriveMasterKey(masterPassword, kdfSalt, params);
   const wrappingKey = deriveWrapKey(masterKey);
-  const authHash = deriveAuthHash(masterKey);
+  try {
+    const authHash = deriveAuthHash(masterKey);
 
-  const userKey = generateUserKey();
-  const keyPair = generateKeyPair();
+    const userKey = generateUserKey();
+    const keyPair = generateKeyPair();
 
-  return {
-    kdfSalt,
-    params,
-    authHash,
-    protectedUserKey: await wrapKey(userKey, wrappingKey),
-    publicKey: keyPair.publicKey,
-    encryptedPrivateKey: await wrapKey(keyPair.privateKey, userKey),
-    userKey,
-    keyPair,
-  };
+    return {
+      kdfSalt,
+      params,
+      authHash,
+      protectedUserKey: await wrapKey(userKey, wrappingKey),
+      publicKey: keyPair.publicKey,
+      encryptedPrivateKey: await wrapKey(keyPair.privateKey, userKey),
+      userKey,
+      keyPair,
+    };
+  } finally {
+    // userKey and keyPair are returned, so clearing them is the caller's job at
+    // lock time. These two are created here and never leave.
+    zeroize(masterKey, wrappingKey);
+  }
 }
 
 export interface UnlockedKeys {
@@ -173,10 +179,15 @@ export async function rotateMasterPassword(
   const kdfSalt = generateKdfSalt();
   const masterKey = await deriveMasterKey(newMasterPassword, kdfSalt, params);
   const wrappingKey = deriveWrapKey(masterKey);
-  return {
-    kdfSalt,
-    params,
-    authHash: deriveAuthHash(masterKey),
-    protectedUserKey: await wrapKey(userKey, wrappingKey),
-  };
+  try {
+    return {
+      kdfSalt,
+      params,
+      authHash: deriveAuthHash(masterKey),
+      protectedUserKey: await wrapKey(userKey, wrappingKey),
+    };
+  } finally {
+    // userKey belongs to the caller and is deliberately untouched.
+    zeroize(masterKey, wrappingKey);
+  }
 }
