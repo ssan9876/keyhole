@@ -196,6 +196,39 @@ func TestRefreshRotatesAndInvalidatesTheOldToken(t *testing.T) {
 	}
 }
 
+func TestRefreshRejectsADisabledAccount(t *testing.T) {
+	srv := newTestServer(t)
+	user, authHash := enrollTestUser(t, srv, "person@example.com")
+
+	login := postJSON(t, srv, "/api/auth/login", map[string]string{
+		"email": "person@example.com", "authHash": authHash,
+	})
+	var body struct {
+		RefreshToken string `json:"refreshToken"`
+	}
+	if login.Code != http.StatusOK {
+		t.Fatalf("login status = %d, want %d; body %s", login.Code, http.StatusOK, login.Body.String())
+	}
+	if err := json.Unmarshal(login.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := srv.store.DB().Exec(`UPDATE users SET status = 'disabled' WHERE id = ?`, user.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// RotateSession touches only the sessions table, so before this fix a
+	// disabled account's refresh token kept minting fresh access tokens with a
+	// 200 for the full 30 days. Those tokens failed at requireAuth, so nothing
+	// was readable — but refresh was the one path that broke the uniform-401
+	// taxonomy, and it meant disabling an account did not end its sessions.
+	rec := postJSON(t, srv, "/api/auth/refresh", map[string]string{"refreshToken": body.RefreshToken})
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("refresh status = %d for a disabled account, want %d; body %s",
+			rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+}
+
 func TestRequireAuthGuardsProtectedRoutes(t *testing.T) {
 	srv := newTestServer(t)
 	_, authHash := enrollTestUser(t, srv, "person@example.com")

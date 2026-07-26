@@ -112,6 +112,36 @@ func TestSessionLookupRejectsUnknownRevokedAndExpired(t *testing.T) {
 	})
 }
 
+func TestSessionByAccessTokenEnforcesTheAbsoluteLifetime(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	u := enrolledUser(t, s, "person@example.com")
+
+	sess, access, _, err := s.CreateSession(ctx, u.ID, "cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// created_at past the 30-day bound, expires_at deliberately left in the
+	// FUTURE. That combination is the whole point: TouchSession pushes
+	// expires_at to now+30min on every authenticated request, so a client that
+	// makes any request more often than that never reaches its sliding expiry
+	// and, without an absolute bound, stays signed in forever. A stolen access
+	// token kept warm by a script polling every five minutes would never expire.
+	// Backdating expires_at too would only re-test the sliding check.
+	oldCreated := time.Now().UTC().Add(-RefreshTokenLifetime - time.Hour).Format(time.RFC3339)
+	future := time.Now().UTC().Add(AccessTokenLifetime).Format(time.RFC3339)
+	if _, err := s.DB().Exec(
+		`UPDATE sessions SET created_at = ?, expires_at = ? WHERE id = ?`,
+		oldCreated, future, sess.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := s.SessionByAccessToken(ctx, access); !errors.Is(err, ErrNotFound) {
+		t.Errorf("error = %v, want ErrNotFound: a session older than RefreshTokenLifetime is live despite a future expires_at", err)
+	}
+}
+
 func TestRotateSessionInvalidatesTheOldTokens(t *testing.T) {
 	s := openTemp(t)
 	ctx := context.Background()

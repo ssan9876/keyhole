@@ -175,7 +175,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"accessToken":         accessToken,
 		"refreshToken":        refreshToken,
-		"expiresAt":           session.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
+		"expiresAt":           session.ExpiresAt.Format(time.RFC3339),
 		"protectedUserKey":    user.ProtectedUserKey.String,
 		"encryptedPrivateKey": user.EncryptedPrivateKey.String,
 		"user": map[string]string{
@@ -208,10 +208,30 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// RotateSession touches only the sessions table, so the account behind it
+	// has to be checked separately. Without this a disabled account keeps
+	// minting fresh access tokens with a 200 for the full refresh lifetime:
+	// they fail at requireAuth, so nothing is readable, but "disable this
+	// account" would not end that account's sessions and refresh would be the
+	// one path that answers differently from every other. Same 401 as an
+	// invalid session, for the same reason.
+	//
+	// Rotating first and rejecting after is deliberate: the old refresh token
+	// is spent and the new pair is never handed out, so the session dies here
+	// instead of lingering until its absolute expiry.
+	user, err := s.store.UserByID(r.Context(), session.UserID)
+	if err != nil || user.Status != "active" {
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			s.logger.Error("refresh user lookup", "id", RequestIDFrom(r.Context()), "error", err)
+		}
+		WriteError(w, http.StatusUnauthorized, CodeUnauthorized, "this session is no longer valid")
+		return
+	}
+
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"accessToken":  accessToken,
 		"refreshToken": refreshToken,
-		"expiresAt":    session.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
+		"expiresAt":    session.ExpiresAt.Format(time.RFC3339),
 	})
 }
 

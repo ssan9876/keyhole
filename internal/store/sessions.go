@@ -14,7 +14,10 @@ const (
 	// AccessTokenLifetime is short and slides on use, so an intercepted token
 	// stops working quickly once the legitimate client goes quiet.
 	AccessTokenLifetime = 30 * time.Minute
-	// RefreshTokenLifetime bounds how long a device stays signed in.
+	// RefreshTokenLifetime is the absolute bound on how long a device stays
+	// signed in, measured from created_at and never extended. Both
+	// SessionByAccessToken and RotateSession enforce it, so neither the sliding
+	// access expiry nor a refresh can carry a session past it.
 	RefreshTokenLifetime = 30 * 24 * time.Hour
 )
 
@@ -108,6 +111,12 @@ func (s *Store) SessionByAccessToken(ctx context.Context, token string) (Session
 		return Session{}, err
 	}
 	if time.Now().UTC().After(sess.ExpiresAt) {
+		return Session{}, ErrNotFound
+	}
+	// The sliding expiry above must not outlive the absolute bound. Without
+	// this, a session touched more often than every 30 minutes never expires at
+	// all, and the 30-day limit users are told about does nothing.
+	if time.Now().UTC().After(sess.CreatedAt.Add(RefreshTokenLifetime)) {
 		return Session{}, ErrNotFound
 	}
 	return sess, nil
