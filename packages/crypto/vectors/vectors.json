@@ -1,5 +1,75 @@
 {
   "_comment": "Frozen cross-language test vectors for Keyhole. Any client implementation must reproduce these exactly. Regenerate only with a deliberate format change.",
+  "params": {
+    "argon2id": {
+      "algorithm": "Argon2id",
+      "version": 19,
+      "versionHex": "0x13",
+      "note": "Version 0x13 (19). Argon2 0x10 produces different output for identical parameters.",
+      "memoryKiB": 65536,
+      "iterations": 3,
+      "parallelism": 4,
+      "outputBytes": 32,
+      "saltBytes": 16,
+      "passwordEncoding": "UTF-8 bytes of the password after Unicode NFC normalization. Normalize first, then encode.",
+      "secondaryUse": "The recovery key uses the same Argon2id parameters over the normalized recovery code."
+    },
+    "hkdf": {
+      "hash": "SHA-256",
+      "salt": "absent",
+      "saltNote": "No salt is supplied. RFC 5869 substitutes HashLen (32) zero bytes; passing a zero-length salt is equivalent, because HMAC zero-pads a short key to the block size.",
+      "outputBytes": 32,
+      "info": {
+        "wrap": {
+          "utf8": "keyhole:wrap:v1",
+          "base64": "a2V5aG9sZTp3cmFwOnYx"
+        },
+        "auth": {
+          "utf8": "keyhole:auth:v1",
+          "base64": "a2V5aG9sZTphdXRoOnYx"
+        },
+        "seal": {
+          "utf8": "keyhole:seal:v1",
+          "base64": "a2V5aG9sZTpzZWFsOnYx"
+        }
+      }
+    },
+    "seal": {
+      "kem": "X25519",
+      "infoConcatenation": "\"keyhole:seal:v1\" || ephemeralPublicKey || recipientPublicKey",
+      "infoNote": "Raw 32-byte public keys, concatenated in that order with no separators and no length prefixes. Both keys are bound in so a blob sealed for one recipient cannot be replayed at another.",
+      "secretBytes": 32,
+      "secretNote": "Sealing carries 32-byte symmetric keys only; anything else must be rejected."
+    },
+    "aesGcm": {
+      "cipher": "AES-256-GCM",
+      "keyBytes": 32,
+      "nonceBits": 96,
+      "tagBits": 128,
+      "tagPlacement": "appended to the ciphertext, as WebCrypto does",
+      "envelope": "{\"v\":1,\"alg\":\"A256GCM\",\"n\":\"<base64 nonce>\",\"ct\":\"<base64 ciphertext||tag>\"}",
+      "nonceNote": "A fresh random nonce per operation. Never reuse a nonce with a key."
+    },
+    "keyLengths": {
+      "userKey": 32,
+      "collectionKey": 32,
+      "itemKey": 32,
+      "x25519PrivateKey": 32,
+      "x25519PublicKey": 32,
+      "kdfSalt": 16
+    },
+    "crockford": {
+      "alphabet": "0123456789ABCDEFGHJKMNPQRSTVWXYZ",
+      "encoding": "one output character per input byte, from the low five bits (byte & 0x1f)",
+      "warning": "This is NOT standard Base32. It does not pack 5 bits per character across a byte stream, and it emits no padding. A Crockford Base32 library will produce different output for the same bytes. Implement the byte-to-character mapping literally.",
+      "inputNormalization": "On input, uppercase, strip whitespace and hyphens, then map I and L to 1 and O to 0.",
+      "usedBy": "recovery codes (25 characters, 5 groups of 5) and public key fingerprints"
+    },
+    "fingerprint": {
+      "construction": "SHA-256(utf8(email.trim().toLowerCase()) || publicKey), first 16 bytes",
+      "rendering": "encodeCrockford over those 16 bytes, grouped 4-4-4-4 with hyphens"
+    }
+  },
   "kdf": {
     "masterPassword": "correct horse battery staple",
     "kdfSaltBase64": "QkJCQkJCQkJCQkJCQkJCQg==",
@@ -12,6 +82,43 @@
     "masterKeyBase64": "3eZKsmYKDe3USfoEFFh70EB+aOvko/FZXywWfx9/880=",
     "wrapKeyBase64": "bxTTuHjfXbEfNy2KQC8lMPu8Zrmb3+eGHoz1UarBTJY=",
     "authHashBase64": "SM2ag692RTYuz0zD0VMdDXLklqC3SIfEnQHp4XKEiyM="
+  },
+  "normalization": {
+    "_comment": "Unicode forms are written as \\u escapes on purpose. Decode them, do not retype them: an editor will silently normalize the literal characters and the vector will then verify nothing.",
+    "password": {
+      "note": "Argon2id runs over the NFC form. Both spellings of the same word must derive the same master key.",
+      "precomposedUtf8": "caf\u00e9",
+      "precomposedCodepoints": [
+        "U+0063",
+        "U+0061",
+        "U+0066",
+        "U+00E9"
+      ],
+      "decomposedUtf8": "cafe\u0301",
+      "decomposedCodepoints": [
+        "U+0063",
+        "U+0061",
+        "U+0066",
+        "U+0065",
+        "U+0301"
+      ],
+      "saltBase64": "Nzc3Nzc3Nzc3Nzc3Nzc3Nw==",
+      "masterKeyBase64": "zKCXvKdOPd/pveokDCzo1UBvgSOQtg5cnuCATOZzycw="
+    },
+    "email": {
+      "note": "Fingerprints bind the email, trimmed and lowercased. Untrimmed input must not change the fingerprint.",
+      "canonical": "user@example.com",
+      "asTyped": "  User@EXAMPLE.com  ",
+      "publicKeyBase64": "93/0sQeIv9ymLKC7Fg1CfPV2LYXytcrWgH7Jw/673gk=",
+      "fingerprint": "7VWW-E1XX-87GF-RDS7"
+    },
+    "recoveryCode": {
+      "note": "Recovery codes are normalized before Argon2id: uppercase, strip spaces and hyphens, map I/L to 1 and O to 0.",
+      "canonical": "ABCDE-FGHJK-MNPQR-STVWX-YZ234",
+      "asTyped": "abcde fghjk mnpqr stvwx yz234",
+      "recoverySaltBase64": "ISEhISEhISEhISEhISEhIQ==",
+      "recoveryKeyBase64": "8rx2ex2vcppUBHkXNil5TIjbtlKJ5CJ9FFbz6/lIs3o="
+    }
   },
   "aesGcm": {
     "keyBase64": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
@@ -44,8 +151,51 @@
     "recoveryKeyBase64": "8rx2ex2vcppUBHkXNil5TIjbtlKJ5CJ9FFbz6/lIs3o="
   },
   "fingerprint": {
-    "email": "seth@gmail.com",
+    "email": "user@example.com",
     "publicKeyBase64": "93/0sQeIv9ymLKC7Fg1CfPV2LYXytcrWgH7Jw/673gk=",
-    "fingerprint": "M988-Z7H1-Q06P-BG0N"
+    "fingerprint": "7VWW-E1XX-87GF-RDS7"
+  },
+  "itemPlaintext": {
+    "login": {
+      "object": {
+        "type": "login",
+        "name": "GitHub",
+        "username": "user@example.com",
+        "password": "s3cret",
+        "urls": [
+          "https://github.com"
+        ],
+        "notes": "personal account",
+        "favorite": true,
+        "folderId": null,
+        "passwordHistory": [
+          {
+            "password": "old-one",
+            "changedAt": "2026-01-01T00:00:00.000Z"
+          }
+        ]
+      },
+      "json": "{\"type\":\"login\",\"name\":\"GitHub\",\"username\":\"user@example.com\",\"password\":\"s3cret\",\"urls\":[\"https://github.com\"],\"notes\":\"personal account\",\"favorite\":true,\"folderId\":null,\"passwordHistory\":[{\"password\":\"old-one\",\"changedAt\":\"2026-01-01T00:00:00.000Z\"}]}"
+    },
+    "note": {
+      "object": {
+        "type": "note",
+        "name": "Wifi",
+        "notes": "ssid: keyhole\npsk: hunter2",
+        "favorite": false,
+        "folderId": "folder-1"
+      },
+      "json": "{\"type\":\"note\",\"name\":\"Wifi\",\"notes\":\"ssid: keyhole\\npsk: hunter2\",\"favorite\":false,\"folderId\":\"folder-1\"}"
+    }
+  },
+  "composed": {
+    "_comment": "masterPassword -> masterKey -> wrappingKey -> protectedUserKey -> userKey -> wrappedItemKey -> itemKey.",
+    "wrappingKeyBase64": "bxTTuHjfXbEfNy2KQC8lMPu8Zrmb3+eGHoz1UarBTJY=",
+    "userKeyBase64": "MTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTE=",
+    "protectedUserKeyNonceBase64": "MzMzMzMzMzMzMzMz",
+    "protectedUserKey": "{\"v\":1,\"alg\":\"A256GCM\",\"n\":\"MzMzMzMzMzMzMzMz\",\"ct\":\"6x1SR8O1hbycdMLlTWPQ1fCyplplRxB50d2MeLCypBMfEI/0Q2RFhbM4DDuF7He5\"}",
+    "itemKeyBase64": "NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ=",
+    "wrappedItemKeyNonceBase64": "NTU1NTU1NTU1NTU1",
+    "wrappedItemKey": "{\"v\":1,\"alg\":\"A256GCM\",\"n\":\"NTU1NTU1NTU1NTU1\",\"ct\":\"o1mPGhIoDDKy5569Sub6dqAOugzVr9i3d+HtFjDc1iZVzpsup2pWwGsc3wC0KlaF\"}"
   }
 }
