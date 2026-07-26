@@ -3992,8 +3992,15 @@ func (s *Store) CreateSession(ctx context.Context, userID, deviceLabel string) (
 func scanSession(row interface{ Scan(...any) error }) (Session, error) {
 	var sess Session
 	var createdAt, lastSeenAt, expiresAt string
+	// revoked_at must be scanned as text, not straight into the NullTime.
+	// The column is TEXT holding RFC3339, and modernc's driver rejects that
+	// with "unsupported Scan, storing driver.Value type string into type
+	// *time.Time". It never fires for the two lookups below, which filter
+	// revoked_at IS NULL — but the first caller that reads a revoked session
+	// would get a raw scan error instead of a session.
+	var revokedAt sql.NullString
 	err := row.Scan(&sess.ID, &sess.UserID, &sess.DeviceLabel,
-		&createdAt, &lastSeenAt, &expiresAt, &sess.RevokedAt)
+		&createdAt, &lastSeenAt, &expiresAt, &revokedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Session{}, ErrNotFound
 	}
@@ -4008,6 +4015,13 @@ func scanSession(row interface{ Scan(...any) error }) (Session, error) {
 	}
 	if sess.ExpiresAt, err = time.Parse(time.RFC3339, expiresAt); err != nil {
 		return Session{}, fmt.Errorf("parse expires_at: %w", err)
+	}
+	if revokedAt.Valid {
+		parsed, err := time.Parse(time.RFC3339, revokedAt.String)
+		if err != nil {
+			return Session{}, fmt.Errorf("parse revoked_at: %w", err)
+		}
+		sess.RevokedAt = sql.NullTime{Time: parsed, Valid: true}
 	}
 	return sess, nil
 }
