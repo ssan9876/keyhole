@@ -30,8 +30,40 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// This route is unauthenticated and its only input is a caller-chosen
+	// token, so it is throttled per source address exactly as login is.
+	// Without this it was the one open endpoint that would run Argon2id on
+	// demand, for free, as often as asked.
+	ipKey := "ip:" + ClientIP(r)
+	if allowed, retryAfter := s.limiter.Allow(ipKey); !allowed {
+		tooManyAttempts(w, retryAfter)
+		return
+	}
+
 	var req enrollRequest
 	if !DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if req.AuthHash == "" {
+		// Hashing an empty string succeeds and costs exactly as much as hashing
+		// a real one, so this has to be checked before the hash, not after.
+		WriteError(w, http.StatusBadRequest, CodeBadRequest, "enrollment field \"authHash\" is required")
+		return
+	}
+
+	// Establish that the token is live before paying for Argon2id. This is an
+	// optimisation, not the security boundary: CompleteEnrollment re-checks the
+	// invite inside its transaction, which is what actually makes a link
+	// one-time under concurrency. Both checks stay.
+	if _, err := s.store.InviteByToken(r.Context(), token); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			s.limiter.RecordFailure(ipKey)
+			WriteError(w, http.StatusNotFound, CodeNotFound, "this setup link is no longer valid")
+			return
+		}
+		s.logger.Error("invite lookup", "id", RequestIDFrom(r.Context()), "error", err)
+		WriteError(w, http.StatusInternalServerError, CodeInternal, "could not complete setup")
 		return
 	}
 
@@ -42,12 +74,6 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.logger.Error("hash auth hash", "id", RequestIDFrom(r.Context()), "error", err)
 		WriteError(w, http.StatusInternalServerError, CodeInternal, "could not complete setup")
-		return
-	}
-	if req.AuthHash == "" {
-		// Hashing an empty string succeeds, so check explicitly rather than
-		// relying on the store to notice.
-		WriteError(w, http.StatusBadRequest, CodeBadRequest, "enrollment field \"authHash\" is required")
 		return
 	}
 
@@ -66,7 +92,9 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		// Unknown, expired, and already-used links are indistinguishable, so a
-		// caller cannot probe which tokens ever existed.
+		// caller cannot probe which tokens ever existed. Reachable despite the
+		// pre-check above when two enrollments race for the same link.
+		s.limiter.RecordFailure(ipKey)
 		WriteError(w, http.StatusNotFound, CodeNotFound, "this setup link is no longer valid")
 		return
 	case errors.As(err, &validationErr):

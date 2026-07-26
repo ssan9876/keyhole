@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"runtime"
 	"strings"
+	"sync/atomic"
 
 	"golang.org/x/crypto/argon2"
 )
@@ -46,11 +47,25 @@ const (
 // must share one budget, or a second endpoint reintroduces the whole problem.
 var argon2Semaphore = make(chan struct{}, runtime.NumCPU())
 
+// argon2Calls counts every Argon2id computation this process has performed.
+//
+// It exists because "this request did not hash" is otherwise only observable by
+// timing, and a timing ceiling gets *less* reliable under load — exactly when a
+// test suite is most likely to run. A counter is exact and free: one atomic add
+// per 50 ms computation.
+var argon2Calls atomic.Uint64
+
+// Argon2Calls reports how many Argon2id computations this process has run. It
+// is a cheap operational signal, and it lets a handler test assert that a
+// rejected request cost no Argon2id at all.
+func Argon2Calls() uint64 { return argon2Calls.Load() }
+
 // argon2Key is the single point at which this package performs Argon2id, so the
 // bound above cannot be bypassed by a new caller forgetting to take a slot.
 func argon2Key(password, salt []byte, keyLen uint32) []byte {
 	argon2Semaphore <- struct{}{}
 	defer func() { <-argon2Semaphore }()
+	argon2Calls.Add(1)
 	return argon2.IDKey(password, salt, argonTime, argonMemory, argonThreads, keyLen)
 }
 
