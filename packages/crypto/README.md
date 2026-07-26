@@ -50,7 +50,34 @@ const recovery = await createRecoveryBlob(
 
 Upload: `kdfSalt`, `params`, `authHash`, `protectedUserKey`, `publicKey`,
 `encryptedPrivateKey`, `recoverySalt`, `recoveryProtectedUserKey`, and
-`recovery.params` as `recovery_kdf_params`.
+`recovery.params` as **`recoveryKdfParams`**.
+
+That last name is the *wire* field. `POST /api/enroll/{token}` rejects unknown
+fields, so sending the database column name — `recovery_kdf_params`, which is
+what spec §4.2 calls it — gets you a 400 and no account. The column and the
+JSON field are spelled differently on purpose; only the JSON spelling ever
+leaves the client.
+
+### `params` goes on the wire as a string
+
+`enrollUser` and `createRecoveryBlob` return `params` as a `KdfParams` **object**,
+but the server stores it as an opaque TEXT column and hands it back verbatim at
+prelogin. The wire representation is a JSON-encoded **string**, not a nested
+object:
+
+```ts
+// Enrollment: stringify on the way out.
+body.params            = JSON.stringify(enrolled.params);
+body.recoveryKdfParams = JSON.stringify(recovery.params);
+
+// Prelogin: parse on the way back in.
+const { kdfSalt, params } = await preloginResponse.json();
+const session = await beginUnlock(masterPassword, kdfSalt, JSON.parse(params));
+```
+
+The server never parses the contents, so it will happily store `"[object Object]"`
+and give it back to you months later, at unlock, when the vault is the only copy
+of anything.
 
 Never upload: `userKey`, `keyPair.privateKey`, the master password, or the
 recovery code.

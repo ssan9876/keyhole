@@ -28,6 +28,11 @@ CREATE TABLE users (
 
 -- Case-insensitive uniqueness: a user considers Person@example.com and
 -- person@example.com the same address, so the database must too.
+--
+-- classifyUserInsertError in internal/store/users.go maps SQLITE_CONSTRAINT_UNIQUE
+-- from a users insert straight to ErrEmailTaken, which is only sound while this
+-- is the sole UNIQUE constraint on the table. Adding a second one means teaching
+-- that function to tell them apart first.
 CREATE UNIQUE INDEX users_email_unique ON users (lower(email));
 
 CREATE TABLE invites (
