@@ -29,6 +29,7 @@
 - **There is no registration endpoint.** Accounts come into existence only via `keyhole admin create` or an admin-issued invite.
 - **Logs never contain** ciphertext, tokens, auth hashes, or email addresses above `slog.LevelDebug`.
 - **Package is `internal/httpapi`, not `internal/http`.** Spec §4.1 writes `internal/http/`, but a package named `http` shadows the stdlib import at every call site. This is a deliberate, documented deviation.
+- **`gofmt -l ./internal ./cmd` must print nothing.** Transcribe this plan's code faithfully, but run `gofmt -w` on what you write: a formatting slip in this document is a slip, not a specification, and committing non-gofmt-clean Go would fail a standard CI gate.
 
 ---
 
@@ -2406,8 +2407,8 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
