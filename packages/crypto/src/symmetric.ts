@@ -1,3 +1,8 @@
+/**
+ * Argument order across this package is **key-last**: the data comes first, the
+ * key it is protected with comes last. Every argument here is a `Uint8Array`, so
+ * the compiler cannot catch a transposition — the convention is the only defence.
+ */
 import { DecryptionError, MalformedEnvelopeError } from "./errors.js";
 import { fromBase64, toBase64, utf8Decode, utf8Encode } from "./encoding.js";
 import { randomBytes } from "./random.js";
@@ -26,8 +31,8 @@ async function importKey(key: Uint8Array): Promise<CryptoKey> {
 /** Deterministic encryption. Exported only for tests and vector generation —
  *  production callers must use encryptBytes so the nonce is always fresh. */
 export async function encryptBytesWithNonce(
-  key: Uint8Array,
   plaintext: Uint8Array,
+  key: Uint8Array,
   nonce: Uint8Array,
 ): Promise<Envelope> {
   if (nonce.length !== NONCE_BYTES) {
@@ -42,11 +47,11 @@ export async function encryptBytesWithNonce(
   return { v: 1, alg: "A256GCM", n: toBase64(nonce), ct: toBase64(new Uint8Array(ciphertext)) };
 }
 
-export async function encryptBytes(key: Uint8Array, plaintext: Uint8Array): Promise<Envelope> {
-  return encryptBytesWithNonce(key, plaintext, randomBytes(NONCE_BYTES));
+export async function encryptBytes(plaintext: Uint8Array, key: Uint8Array): Promise<Envelope> {
+  return encryptBytesWithNonce(plaintext, key, randomBytes(NONCE_BYTES));
 }
 
-export async function decryptBytes(key: Uint8Array, envelope: Envelope): Promise<Uint8Array> {
+export async function decryptBytes(envelope: Envelope, key: Uint8Array): Promise<Uint8Array> {
   const cryptoKey = await importKey(key);
   try {
     const plaintext = await globalThis.crypto.subtle.decrypt(
@@ -87,10 +92,10 @@ export function parseEnvelope(serialized: string): Envelope {
   return { v: 1, alg: "A256GCM", n, ct };
 }
 
-export async function encryptString(key: Uint8Array, plaintext: string): Promise<string> {
-  return serializeEnvelope(await encryptBytes(key, utf8Encode(plaintext)));
+export async function encryptString(plaintext: string, key: Uint8Array): Promise<string> {
+  return serializeEnvelope(await encryptBytes(utf8Encode(plaintext), key));
 }
 
-export async function decryptString(key: Uint8Array, serialized: string): Promise<string> {
-  return utf8Decode(await decryptBytes(key, parseEnvelope(serialized)));
+export async function decryptString(serialized: string, key: Uint8Array): Promise<string> {
+  return utf8Decode(await decryptBytes(parseEnvelope(serialized), key));
 }

@@ -52,7 +52,7 @@ async function main(): Promise<void> {
       keyBase64: toBase64(AES_KEY),
       nonceBase64: toBase64(AES_NONCE),
       plaintextUtf8: "attack at dawn",
-      envelope: await encryptBytesWithNonce(AES_KEY, AES_PLAINTEXT, AES_NONCE),
+      envelope: await encryptBytesWithNonce(AES_PLAINTEXT, AES_KEY, AES_NONCE),
     },
     seal: {
       recipientPrivateKeyBase64: toBase64(RECIPIENT_PRIVATE),

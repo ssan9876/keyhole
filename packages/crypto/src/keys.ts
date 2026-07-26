@@ -35,11 +35,11 @@ export function generateKeyPair(): KeyPair {
 }
 
 export async function wrapKey(keyToWrap: Uint8Array, wrappingKey: Uint8Array): Promise<string> {
-  return serializeEnvelope(await encryptBytes(wrappingKey, keyToWrap));
+  return serializeEnvelope(await encryptBytes(keyToWrap, wrappingKey));
 }
 
 export async function unwrapKey(wrapped: string, wrappingKey: Uint8Array): Promise<Uint8Array> {
-  return decryptBytes(wrappingKey, parseEnvelope(wrapped));
+  return decryptBytes(parseEnvelope(wrapped), wrappingKey);
 }
 
 export interface EnrollmentResult {

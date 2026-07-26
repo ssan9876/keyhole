@@ -24,8 +24,8 @@ describe("frozen vectors", () => {
 
   it("reproduces the AES-GCM envelope", async () => {
     const envelope = await encryptBytesWithNonce(
-      fromBase64(vectors.aesGcm.keyBase64),
       new TextEncoder().encode(vectors.aesGcm.plaintextUtf8),
+      fromBase64(vectors.aesGcm.keyBase64),
       fromBase64(vectors.aesGcm.nonceBase64),
     );
     expect(envelope).toEqual(vectors.aesGcm.envelope);
@@ -33,11 +33,11 @@ describe("frozen vectors", () => {
 
   it("decrypts the frozen envelope back to the original plaintext", async () => {
     const plaintext = await decryptBytes(
-      fromBase64(vectors.aesGcm.keyBase64),
       // JSON module imports widen literal types (`v: 1` -> `v: number`), so the
       // frozen envelope needs a cast back to the exact wire shape it was
       // generated from.
       vectors.aesGcm.envelope as Envelope,
+      fromBase64(vectors.aesGcm.keyBase64),
     );
     expect(utf8Decode(plaintext)).toBe(vectors.aesGcm.plaintextUtf8);
   });

@@ -47,7 +47,7 @@ export async function sealToUserWithEphemeral(
   const ephemeralPublicKey = x25519.getPublicKey(ephemeralPrivateKey);
   const sharedSecret = x25519.getSharedSecret(ephemeralPrivateKey, recipientPublicKey);
   const sealKey = deriveSealKey(sharedSecret, ephemeralPublicKey, recipientPublicKey);
-  const envelope = await encryptBytesWithNonce(sealKey, secret, nonce);
+  const envelope = await encryptBytesWithNonce(secret, sealKey, nonce);
   const sealed: SealedKey = {
     v: 1,
     alg: SEAL_ALG,
@@ -117,5 +117,5 @@ export async function openSealed(
   } catch {
     throw new DecryptionError();
   }
-  return decryptBytes(sealKey, { v: 1, alg: "A256GCM", n: parsed.n, ct: parsed.ct });
+  return decryptBytes({ v: 1, alg: "A256GCM", n: parsed.n, ct: parsed.ct }, sealKey);
 }

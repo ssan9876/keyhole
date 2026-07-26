@@ -51,7 +51,7 @@ export async function encryptItem(
 ): Promise<EncryptedItem> {
   const itemKey = generateItemKey();
   return {
-    ciphertext: await encryptString(itemKey, JSON.stringify(item)),
+    ciphertext: await encryptString(JSON.stringify(item), itemKey),
     wrappedItemKey: await wrapKey(itemKey, parentKey),
   };
 }
@@ -61,7 +61,7 @@ export async function decryptItem(
   parentKey: Uint8Array,
 ): Promise<ItemPlaintext> {
   const itemKey = await unwrapKey(encrypted.wrappedItemKey, parentKey);
-  return JSON.parse(await decryptString(itemKey, encrypted.ciphertext)) as ItemPlaintext;
+  return JSON.parse(await decryptString(encrypted.ciphertext, itemKey)) as ItemPlaintext;
 }
 
 export async function rewrapItem(

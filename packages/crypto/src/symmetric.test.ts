@@ -18,7 +18,7 @@ const NONCE = new Uint8Array(12).fill(0x09);
 
 describe("encryptBytes", () => {
   it("produces a v1 A256GCM envelope with a 12-byte nonce", async () => {
-    const envelope = await encryptBytes(KEY, utf8Encode("hello"));
+    const envelope = await encryptBytes(utf8Encode("hello"), KEY);
     expect(envelope.v).toBe(1);
     expect(envelope.alg).toBe("A256GCM");
     expect(fromBase64(envelope.n)).toHaveLength(12);
@@ -27,19 +27,19 @@ describe("encryptBytes", () => {
   it("never reuses a nonce", async () => {
     const nonces = new Set<string>();
     for (let i = 0; i < 50; i += 1) {
-      nonces.add((await encryptBytes(KEY, utf8Encode("same"))).n);
+      nonces.add((await encryptBytes(utf8Encode("same"), KEY)).n);
     }
     expect(nonces.size).toBe(50);
   });
 
   it("appends the 16-byte GCM tag to the ciphertext", async () => {
     const plaintext = utf8Encode("hello");
-    const envelope = await encryptBytes(KEY, plaintext);
+    const envelope = await encryptBytes(plaintext, KEY);
     expect(fromBase64(envelope.ct)).toHaveLength(plaintext.length + 16);
   });
 
   it("rejects a key that is not 32 bytes", async () => {
-    await expect(encryptBytes(new Uint8Array(16), utf8Encode("x"))).rejects.toThrow(/32 bytes/);
+    await expect(encryptBytes(utf8Encode("x"), new Uint8Array(16))).rejects.toThrow(/32 bytes/);
   });
 });
 
@@ -49,7 +49,7 @@ describe("cross-implementation agreement", () => {
   // what makes the frozen vector worth anything.
   it("matches Node/OpenSSL AES-256-GCM", async () => {
     const plaintext = utf8Encode("attack at dawn");
-    const ours = await encryptBytesWithNonce(KEY, plaintext, NONCE);
+    const ours = await encryptBytesWithNonce(plaintext, KEY, NONCE);
 
     const cipher = createCipheriv("aes-256-gcm", Buffer.from(KEY), Buffer.from(NONCE));
     const body = Buffer.concat([cipher.update(Buffer.from(plaintext)), cipher.final()]);
@@ -62,48 +62,48 @@ describe("cross-implementation agreement", () => {
 describe("decryptBytes", () => {
   it("round-trips", async () => {
     const plaintext = utf8Encode("round trip");
-    const envelope = await encryptBytes(KEY, plaintext);
-    expect(Array.from(await decryptBytes(KEY, envelope))).toEqual(Array.from(plaintext));
+    const envelope = await encryptBytes(plaintext, KEY);
+    expect(Array.from(await decryptBytes(envelope, KEY))).toEqual(Array.from(plaintext));
   });
 
   it("round-trips arbitrary byte lengths", async () => {
     await fc.assert(
       fc.asyncProperty(fc.uint8Array({ maxLength: 2048 }), async (bytes) => {
-        const envelope = await encryptBytes(KEY, bytes);
-        expect(Array.from(await decryptBytes(KEY, envelope))).toEqual(Array.from(bytes));
+        const envelope = await encryptBytes(bytes, KEY);
+        expect(Array.from(await decryptBytes(envelope, KEY))).toEqual(Array.from(bytes));
       }),
       { numRuns: 25 },
     );
   });
 
   it("throws DecryptionError under the wrong key", async () => {
-    const envelope = await encryptBytes(KEY, utf8Encode("secret"));
-    await expect(decryptBytes(new Uint8Array(32).fill(0x08), envelope)).rejects.toThrow(
+    const envelope = await encryptBytes(utf8Encode("secret"), KEY);
+    await expect(decryptBytes(envelope, new Uint8Array(32).fill(0x08))).rejects.toThrow(
       DecryptionError,
     );
   });
 
   it("throws DecryptionError when the ciphertext is tampered with", async () => {
-    const envelope = await encryptBytes(KEY, utf8Encode("secret"));
+    const envelope = await encryptBytes(utf8Encode("secret"), KEY);
     const bytes = fromBase64(envelope.ct);
     bytes[0]! ^= 0xff;
-    await expect(decryptBytes(KEY, { ...envelope, ct: toBase64(bytes) })).rejects.toThrow(
+    await expect(decryptBytes({ ...envelope, ct: toBase64(bytes) }, KEY)).rejects.toThrow(
       DecryptionError,
     );
   });
 
   it("throws DecryptionError when the tag is tampered with", async () => {
-    const envelope = await encryptBytes(KEY, utf8Encode("secret"));
+    const envelope = await encryptBytes(utf8Encode("secret"), KEY);
     const bytes = fromBase64(envelope.ct);
     bytes[bytes.length - 1]! ^= 0xff;
-    await expect(decryptBytes(KEY, { ...envelope, ct: toBase64(bytes) })).rejects.toThrow(
+    await expect(decryptBytes({ ...envelope, ct: toBase64(bytes) }, KEY)).rejects.toThrow(
       DecryptionError,
     );
   });
 
   it("reveals nothing about why decryption failed", async () => {
-    const envelope = await encryptBytes(KEY, utf8Encode("secret"));
-    await expect(decryptBytes(new Uint8Array(32).fill(0x08), envelope)).rejects.toThrow(
+    const envelope = await encryptBytes(utf8Encode("secret"), KEY);
+    await expect(decryptBytes(envelope, new Uint8Array(32).fill(0x08))).rejects.toThrow(
       "Decryption failed: wrong key or corrupted data",
     );
   });
@@ -111,7 +111,7 @@ describe("decryptBytes", () => {
 
 describe("serializeEnvelope / parseEnvelope", () => {
   it("round-trips", async () => {
-    const envelope = await encryptBytes(KEY, utf8Encode("x"));
+    const envelope = await encryptBytes(utf8Encode("x"), KEY);
     expect(parseEnvelope(serializeEnvelope(envelope))).toEqual(envelope);
   });
 
@@ -139,6 +139,6 @@ describe("serializeEnvelope / parseEnvelope", () => {
 describe("string helpers", () => {
   it("round-trip non-ASCII text", async () => {
     const text = "pässwörd 🔑";
-    expect(await decryptString(KEY, await encryptString(KEY, text))).toBe(text);
+    expect(await decryptString(await encryptString(text, KEY), KEY)).toBe(text);
   });
 });
