@@ -15,7 +15,7 @@ import (
 
 func enrollBody() map[string]string {
 	return map[string]string{
-		"kdfSalt":                  "c2FsdHNhbHRzYWx0c2E=",
+		"kdfSalt":                  "c2FsdHNhbHRzYWx0c2FsdA==",
 		"params":                   `{"algorithm":"argon2id","memoryKiB":65536,"iterations":3,"parallelism":4}`,
 		"authHash":                 "YXV0aC1oYXNoLTMyLWJ5dGVzLWJhc2U2NA==",
 		"protectedUserKey":         `{"v":1,"alg":"A256GCM","n":"bm9uY2U=","ct":"Y2lwaGVy"}`,

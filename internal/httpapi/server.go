@@ -38,6 +38,11 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
 	s.mux.HandleFunc("POST /api/enroll/{token}", s.handleEnroll)
 
+	s.mux.HandleFunc("POST /api/auth/prelogin", s.handlePrelogin)
+	s.mux.HandleFunc("POST /api/auth/login", s.handleLogin)
+	s.mux.HandleFunc("POST /api/auth/refresh", s.handleRefresh)
+	s.mux.HandleFunc("POST /api/auth/logout", s.requireAuth(s.handleLogout))
+
 	// Anything unmatched is a 404 in the standard envelope rather than Go's
 	// plain-text default, so a client only ever parses one error shape.
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
