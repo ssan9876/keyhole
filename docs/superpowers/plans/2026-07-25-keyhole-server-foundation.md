@@ -1207,6 +1207,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	sqlited "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // User mirrors the users table. Every key-material field is nullable because
@@ -1291,14 +1294,37 @@ func (s *Store) CreatePendingUser(ctx context.Context, email, name, role string)
 		 VALUES (?, ?, ?, ?, 'pending', 0, ?, ?)`,
 		id, normalized, strings.TrimSpace(name), role, now, now)
 	if err != nil {
-		// modernc's driver reports constraint violations in the message; the
-		// unique index on lower(email) is the only one this insert can trip.
-		if strings.Contains(strings.ToLower(err.Error()), "unique") {
-			return User{}, ErrEmailTaken
-		}
-		return User{}, fmt.Errorf("insert user: %w", err)
+		return User{}, classifyUserInsertError(err)
 	}
 	return s.UserByID(ctx, id)
+}
+
+// classifyUserInsertError maps a failed users-table insert to ErrEmailTaken
+// when, and only when, it violated the users_email_unique index.
+//
+// The same INSERT can also violate the id PRIMARY KEY — astronomically
+// unlikely at 128 bits of random id, but a serious bug in its own right if it
+// ever happened, and reporting it as "email already registered" would send an
+// operator to debug entirely the wrong problem.
+//
+// modernc's driver reports both as *sqlite.Error with distinct extended result
+// codes, verified empirically:
+//
+//	email: constraint failed: UNIQUE constraint failed: index 'users_email_unique' (2067)
+//	id:    constraint failed: UNIQUE constraint failed: users.id (1555)
+//
+// so branch on the code rather than the message text, which is not a stable
+// interface.
+//
+// Note for whoever next changes this schema: if a second non-primary-key
+// UNIQUE constraint is added to users, SQLITE_CONSTRAINT_UNIQUE alone will no
+// longer identify which index tripped, and this needs to narrow further.
+func classifyUserInsertError(err error) error {
+	var sqliteErr *sqlited.Error
+	if errors.As(err, &sqliteErr) && sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
+		return ErrEmailTaken
+	}
+	return fmt.Errorf("insert user: %w", err)
 }
 
 func (s *Store) UserByID(ctx context.Context, id string) (User, error) {
