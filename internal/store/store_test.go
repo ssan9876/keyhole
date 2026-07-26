@@ -30,6 +30,7 @@ func TestMigrateCreatesEveryTable(t *testing.T) {
 		"users", "invites", "sessions", "items", "folders",
 		"collections", "collection_memberships", "pending_grants",
 		"audit_log", "server_settings", "schema_migrations",
+		"revision_sequence",
 	}
 	for _, table := range want {
 		var name string
@@ -139,5 +140,54 @@ func TestOpenCreatesTheParentDirectory(t *testing.T) {
 
 	if _, err := os.Stat(nested); err != nil {
 		t.Errorf("database file was not created: %v", err)
+	}
+}
+
+func TestMigration0002RemovesFolderIDAndSeedsTheSequence(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+
+	version, err := st.SchemaVersion(ctx)
+	if err != nil {
+		t.Fatalf("SchemaVersion: %v", err)
+	}
+	if version < 2 {
+		t.Fatalf("schema version = %d, want at least 2", version)
+	}
+
+	// folder_id in the clear would tell the server which items are grouped
+	// together — exactly what keeping `type` out of the schema avoided.
+	rows, err := st.DB().QueryContext(ctx, `SELECT name FROM pragma_table_info('items')`)
+	if err != nil {
+		t.Fatalf("table_info: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if name == "folder_id" {
+			t.Error("items.folder_id still exists; migration 0002 must remove it")
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+
+	var seq int64
+	if err := st.DB().QueryRowContext(ctx,
+		`SELECT value FROM revision_sequence WHERE id = 1`).Scan(&seq); err != nil {
+		t.Fatalf("the sequence row must exist after migration: %v", err)
+	}
+	if seq != 0 {
+		t.Errorf("seeded sequence = %d, want 0 on a fresh database", seq)
+	}
+
+	// A second row would make "the" sequence ambiguous and let two writers
+	// hand out the same revision.
+	if _, err := st.DB().ExecContext(ctx,
+		`INSERT INTO revision_sequence (id, value) VALUES (2, 0)`); err == nil {
+		t.Error("a second sequence row was accepted; the CHECK (id = 1) is missing")
 	}
 }

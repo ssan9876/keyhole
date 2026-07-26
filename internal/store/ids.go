@@ -16,6 +16,12 @@ var ErrNotFound = errors.New("not found")
 // ErrEmailTaken means an account already exists for that address.
 var ErrEmailTaken = errors.New("email already registered")
 
+// ErrRevisionConflict means the caller edited from a revision that is no
+// longer current. The write is refused rather than applied: the losing edit
+// still exists on the client that made it, which is what lets it become a
+// conflicted copy instead of silently vanishing.
+var ErrRevisionConflict = errors.New("row was modified by someone else")
+
 const idBytes = 16
 
 // NewID returns a 32-character lowercase hex identifier from 16 random bytes.
