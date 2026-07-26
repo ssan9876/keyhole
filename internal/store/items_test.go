@@ -5,37 +5,20 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/ssan9876/keyhole/internal/auth"
 )
 
-// enrolledUser creates an ACTIVE account with key material in place, and
-// returns its id.
+// enrolledUserID is enrolledUser (sessions_test.go) for the callers that want
+// only the id.
 //
-// Active, not pending, because several store methods added by this plan carry
-// `AND status = 'active'` in their WHERE clause and would silently report
-// ErrNotFound for a pending row. The key-material columns are populated for the
-// same reason: Task 6 asserts that rotating a password leaves the recovery
-// blob alone, which proves nothing if the blob was never there.
+// It delegates rather than seeding its own row, so there is one definition of
+// what an enrolled account looks like. That matters beyond tidiness: several
+// store methods added by this plan carry `AND status = 'active'` and would
+// report a misleading ErrNotFound for a pending row, and the account tests
+// assert that a password rotation leaves the recovery blob alone — which
+// proves nothing unless a real enrollment put one there.
 func enrolledUserID(t *testing.T, st *Store, email string) string {
 	t.Helper()
-	ctx := context.Background()
-
-	user, err := st.CreatePendingUser(ctx, email, "Test Person", "user")
-	if err != nil {
-		t.Fatalf("CreatePendingUser: %v", err)
-	}
-	if _, err := st.DB().ExecContext(ctx,
-		`UPDATE users SET status = 'active',
-			kdf_salt = 'c2FsdA==', kdf_params = ?, auth_hash = 'argon2id$stored$hash',
-			protected_user_key = 'puk', recovery_protected_user_key = 'rpuk',
-			recovery_salt = 'rsalt', recovery_kdf_params = ?,
-			public_key = 'pk', encrypted_private_key = 'epk'
-		 WHERE id = ?`,
-		auth.DefaultKDFParamsJSON, auth.DefaultKDFParamsJSON, user.ID); err != nil {
-		t.Fatalf("activate user: %v", err)
-	}
-	return user.ID
+	return enrolledUser(t, st, email).ID
 }
 
 func TestCreateItemStoresCiphertextVerbatimAndNumbersIt(t *testing.T) {

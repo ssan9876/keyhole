@@ -523,26 +523,23 @@ import (
 	"errors"
 	"strings"
 	"testing"
-
-	"github.com/ssan9876/keyhole/internal/auth"
 )
 
-// enrolledUser creates an ACTIVE account with key material in place, and
-// returns its id.
+// enrolledUserID is enrolledUser -- which already exists in sessions_test.go
+// and returns a User -- for the callers that want only the id.
 //
-// Active, not pending, because several store methods added by this plan carry
-// `AND status = 'active'` in their WHERE clause and would silently report
-// ErrNotFound for a pending row. The key-material columns are populated for the
-// same reason: Task 6 asserts that rotating a password leaves the recovery
-// blob alone, which proves nothing if the blob was never there.
-func enrolledUser(t *testing.T, st *Store, email string) string {
+// It delegates rather than seeding its own row, so there is one definition of
+// what an enrolled account looks like. That matters beyond tidiness: several
+// store methods added by this plan carry `AND status = 'active'` and would
+// report a misleading ErrNotFound for a pending row, and Task 6 asserts that a
+// password rotation leaves the recovery blob alone -- which proves nothing
+// unless a real enrollment put one there.
+//
+// NOTE: `enrolledUser` is taken. Naming this one the same is a compile error.
+func enrolledUserID(t *testing.T, st *Store, email string) string {
 	t.Helper()
-	ctx := context.Background()
-
-	user, err := st.CreatePendingUser(ctx, email, "Test Person", "user")
-	if err != nil {
-		t.Fatalf("CreatePendingUser: %v", err)
-	}
+	return enrolledUser(t, st, email).ID
+}
 	if _, err := st.DB().ExecContext(ctx,
 		`UPDATE users SET status = 'active',
 			kdf_salt = 'c2FsdA==', kdf_params = ?, auth_hash = 'argon2id$stored$hash',
@@ -559,7 +556,7 @@ func enrolledUser(t *testing.T, st *Store, email string) string {
 func TestCreateItemStoresCiphertextVerbatimAndNumbersIt(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	// A ciphertext the server must not touch: it is the crypto package's
 	// envelope, and anything the server did to it would corrupt the item.
@@ -595,7 +592,7 @@ func TestCreateItemStoresCiphertextVerbatimAndNumbersIt(t *testing.T) {
 func TestCreateItemRejectsEmptyCiphertextAndKey(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	// The server cannot check that a ciphertext decrypts — that is the whole
 	// point — so the one check it can make is that the client sent something.
@@ -622,7 +619,7 @@ func TestCreateItemRejectsEmptyCiphertextAndKey(t *testing.T) {
 func TestUpdateItemAdvancesTheRevisionAndReplacesTheBody(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	created, err := st.CreateItem(ctx, userID, ItemInput{Ciphertext: "v1", WrappedItemKey: "k1"})
 	if err != nil {
@@ -650,7 +647,7 @@ func TestUpdateItemAdvancesTheRevisionAndReplacesTheBody(t *testing.T) {
 func TestUpdateItemRefusesAStaleRevisionAndReturnsTheCurrentRow(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	created, err := st.CreateItem(ctx, userID, ItemInput{Ciphertext: "base", WrappedItemKey: "k"})
 	if err != nil {
@@ -691,7 +688,7 @@ func TestUpdateItemRefusesAStaleRevisionAndReturnsTheCurrentRow(t *testing.T) {
 func TestDeleteItemTombstonesAndDestroysTheCiphertext(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	created, err := st.CreateItem(ctx, userID,
 		ItemInput{Ciphertext: "secret-ciphertext", WrappedItemKey: "k"})
@@ -727,7 +724,7 @@ func TestDeleteItemTombstonesAndDestroysTheCiphertext(t *testing.T) {
 func TestDeletingAnAlreadyDeletedItemIsNotFound(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	created, err := st.CreateItem(ctx, userID, ItemInput{Ciphertext: "c", WrappedItemKey: "k"})
 	if err != nil {
@@ -747,7 +744,7 @@ func TestDeletingAnAlreadyDeletedItemIsNotFound(t *testing.T) {
 func TestUpdatingATombstoneIsNotFound(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	created, err := st.CreateItem(ctx, userID, ItemInput{Ciphertext: "c", WrappedItemKey: "k"})
 	if err != nil {
@@ -776,7 +773,7 @@ func TestUpdatingATombstoneIsNotFound(t *testing.T) {
 func TestCreateItemsBulkIsAllOrNothing(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	// An import of a thousand passwords that half-lands leaves the user with
 	// no way to tell which half. One transaction, or none.
@@ -810,7 +807,7 @@ func TestCreateItemsBulkIsAllOrNothing(t *testing.T) {
 func TestCreateItemsBulkNumbersEveryRowDistinctly(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	ins := make([]ItemInput, 50)
 	for i := range ins {
@@ -1228,7 +1225,7 @@ import (
 func TestCreateFolderStoresTheEncryptedNameVerbatim(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	// The folder name is ciphertext. A server that could read "Banking" would
 	// know more about the vault than the design permits.
@@ -1250,7 +1247,7 @@ func TestCreateFolderStoresTheEncryptedNameVerbatim(t *testing.T) {
 
 func TestCreateFolderRejectsAnEmptyName(t *testing.T) {
 	st := openTemp(t)
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	_, err := st.CreateFolder(context.Background(), userID, "")
 	var validation *ValidationError
@@ -1262,7 +1259,7 @@ func TestCreateFolderRejectsAnEmptyName(t *testing.T) {
 func TestFoldersAndItemsDrawFromTheSameRevisionSequence(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	item, err := st.CreateItem(ctx, userID, ItemInput{Ciphertext: "c", WrappedItemKey: "k"})
 	if err != nil {
@@ -1285,7 +1282,7 @@ func TestFoldersAndItemsDrawFromTheSameRevisionSequence(t *testing.T) {
 func TestUpdateFolderRefusesAStaleRevision(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	created, err := st.CreateFolder(ctx, userID, "v1")
 	if err != nil {
@@ -1307,7 +1304,7 @@ func TestUpdateFolderRefusesAStaleRevision(t *testing.T) {
 func TestDeleteFolderTombstonesAndDestroysTheName(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	created, err := st.CreateFolder(ctx, userID, "encrypted-name")
 	if err != nil {
@@ -1585,8 +1582,8 @@ func seedCollection(t *testing.T, st *Store, createdBy string, memberIDs ...stri
 func TestSyncReturnsOnlyTheCallersPersonalItems(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	mine := enrolledUser(t, st, "mine@example.com")
-	theirs := enrolledUser(t, st, "theirs@example.com")
+	mine := enrolledUserID(t, st, "mine@example.com")
+	theirs := enrolledUserID(t, st, "theirs@example.com")
 
 	own, err := st.CreateItem(ctx, mine, ItemInput{Ciphertext: "mine", WrappedItemKey: "k"})
 	if err != nil {
@@ -1611,9 +1608,9 @@ func TestSyncReturnsOnlyTheCallersPersonalItems(t *testing.T) {
 func TestSyncReturnsItemsInCollectionsTheCallerBelongsTo(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	owner := enrolledUser(t, st, "owner@example.com")
-	member := enrolledUser(t, st, "member@example.com")
-	outsider := enrolledUser(t, st, "outsider@example.com")
+	owner := enrolledUserID(t, st, "owner@example.com")
+	member := enrolledUserID(t, st, "member@example.com")
+	outsider := enrolledUserID(t, st, "outsider@example.com")
 
 	collectionID := seedCollection(t, st, owner, owner, member)
 	shared, err := st.CreateItem(ctx, owner, ItemInput{
@@ -1647,7 +1644,7 @@ func TestSyncReturnsItemsInCollectionsTheCallerBelongsTo(t *testing.T) {
 func TestSyncIsIncrementalFromTheReturnedCursor(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	if _, err := st.CreateItem(ctx, userID, ItemInput{Ciphertext: "first", WrappedItemKey: "k"}); err != nil {
 		t.Fatalf("CreateItem: %v", err)
@@ -1689,7 +1686,7 @@ func TestSyncIsIncrementalFromTheReturnedCursor(t *testing.T) {
 func TestSyncCarriesTombstonesSoDeletesPropagate(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	created, err := st.CreateItem(ctx, userID, ItemInput{Ciphertext: "c", WrappedItemKey: "k"})
 	if err != nil {
@@ -1723,8 +1720,8 @@ func TestSyncCarriesTombstonesSoDeletesPropagate(t *testing.T) {
 func TestSyncReturnsFoldersOnTheSameCursor(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	mine := enrolledUser(t, st, "mine@example.com")
-	theirs := enrolledUser(t, st, "theirs@example.com")
+	mine := enrolledUserID(t, st, "mine@example.com")
+	theirs := enrolledUserID(t, st, "theirs@example.com")
 
 	if _, err := st.CreateFolder(ctx, mine, "mine"); err != nil {
 		t.Fatalf("CreateFolder: %v", err)
@@ -1749,7 +1746,7 @@ func TestSyncReturnsFoldersOnTheSameCursor(t *testing.T) {
 func TestSyncNeverReportsACursorAheadOfItsRows(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "owner@example.com")
+	userID := enrolledUserID(t, st, "owner@example.com")
 
 	// The cursor and the rows must come from one snapshot. Reading the
 	// high-water mark outside the read transaction lets a row commit between
@@ -1780,9 +1777,9 @@ func TestSyncNeverReportsACursorAheadOfItsRows(t *testing.T) {
 func TestCanAccessItemFollowsOwnershipAndMembership(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	owner := enrolledUser(t, st, "owner@example.com")
-	member := enrolledUser(t, st, "member@example.com")
-	outsider := enrolledUser(t, st, "outsider@example.com")
+	owner := enrolledUserID(t, st, "owner@example.com")
+	member := enrolledUserID(t, st, "member@example.com")
+	outsider := enrolledUserID(t, st, "outsider@example.com")
 
 	personal, err := st.CreateItem(ctx, owner, ItemInput{Ciphertext: "c", WrappedItemKey: "k"})
 	if err != nil {
@@ -3484,7 +3481,7 @@ import (
 func TestAppendAuditRecordsAnEntry(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	actor := enrolledUser(t, st, "admin@example.com")
+	actor := enrolledUserID(t, st, "admin@example.com")
 
 	if err := st.AppendAudit(ctx, actor, "user.create", "user:abc", `{"email":"new@example.com"}`); err != nil {
 		t.Fatalf("AppendAudit: %v", err)
@@ -3532,7 +3529,7 @@ func TestAppendAuditAcceptsNoActorForSystemActions(t *testing.T) {
 func TestAuditPageIsNewestFirstAndPagesWithoutRepeating(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	actor := enrolledUser(t, st, "admin@example.com")
+	actor := enrolledUserID(t, st, "admin@example.com")
 
 	for i := 0; i < 10; i++ {
 		if err := st.AppendAudit(ctx, actor, "test.action", "target", ""); err != nil {
@@ -3575,7 +3572,7 @@ func TestAuditPageIsNewestFirstAndPagesWithoutRepeating(t *testing.T) {
 func TestAuditPageClampsTheLimit(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	actor := enrolledUser(t, st, "admin@example.com")
+	actor := enrolledUserID(t, st, "admin@example.com")
 	for i := 0; i < 5; i++ {
 		if err := st.AppendAudit(ctx, actor, "test.action", "t", ""); err != nil {
 			t.Fatalf("AppendAudit: %v", err)
@@ -3749,7 +3746,7 @@ import (
 func TestCreateCollectionMakesTheCreatorItsFirstManager(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	creator := enrolledUser(t, st, "admin@example.com")
+	creator := enrolledUserID(t, st, "admin@example.com")
 
 	collection, err := st.CreateCollection(ctx, "Household", creator, "sealed-to-creator")
 	if err != nil {
@@ -3778,7 +3775,7 @@ func TestCreateCollectionMakesTheCreatorItsFirstManager(t *testing.T) {
 func TestCreateCollectionRejectsABlankNameOrMissingSealedKey(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	creator := enrolledUser(t, st, "admin@example.com")
+	creator := enrolledUserID(t, st, "admin@example.com")
 
 	cases := []struct {
 		name      string
@@ -3829,9 +3826,9 @@ func TestCreateCollectionIsAtomic(t *testing.T) {
 func TestCollectionsForUserCarriesTheirOwnSealedKeyOnly(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	creator := enrolledUser(t, st, "admin@example.com")
-	member := enrolledUser(t, st, "member@example.com")
-	outsider := enrolledUser(t, st, "outsider@example.com")
+	creator := enrolledUserID(t, st, "admin@example.com")
+	member := enrolledUserID(t, st, "member@example.com")
+	outsider := enrolledUserID(t, st, "outsider@example.com")
 
 	collection, err := st.CreateCollection(ctx, "Household", creator, "sealed-to-creator")
 	if err != nil {
@@ -3871,8 +3868,8 @@ func TestCollectionsForUserCarriesTheirOwnSealedKeyOnly(t *testing.T) {
 func TestRemoveMemberDeletesTheirSealedKey(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	creator := enrolledUser(t, st, "admin@example.com")
-	member := enrolledUser(t, st, "member@example.com")
+	creator := enrolledUserID(t, st, "admin@example.com")
+	member := enrolledUserID(t, st, "member@example.com")
 
 	collection, err := st.CreateCollection(ctx, "Household", creator, "sealed-to-creator")
 	if err != nil {
@@ -3905,8 +3902,8 @@ func TestRemoveMemberDeletesTheirSealedKey(t *testing.T) {
 func TestRemovingTheLastManagerIsRefused(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	creator := enrolledUser(t, st, "admin@example.com")
-	member := enrolledUser(t, st, "member@example.com")
+	creator := enrolledUserID(t, st, "admin@example.com")
+	member := enrolledUserID(t, st, "member@example.com")
 
 	collection, err := st.CreateCollection(ctx, "Household", creator, "sealed-to-creator")
 	if err != nil {
@@ -3929,8 +3926,8 @@ func TestRemovingTheLastManagerIsRefused(t *testing.T) {
 func TestCreatePendingGrantRecordsTheRoleItWillConfer(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	creator := enrolledUser(t, st, "admin@example.com")
-	invitee := enrolledUser(t, st, "invitee@example.com")
+	creator := enrolledUserID(t, st, "admin@example.com")
+	invitee := enrolledUserID(t, st, "invitee@example.com")
 
 	collection, err := st.CreateCollection(ctx, "Household", creator, "sealed")
 	if err != nil {
@@ -3960,9 +3957,9 @@ func TestCreatePendingGrantRecordsTheRoleItWillConfer(t *testing.T) {
 func TestPendingGrantsAreVisibleOnlyToMembersWhoCanFulfilThem(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	creator := enrolledUser(t, st, "admin@example.com")
-	invitee := enrolledUser(t, st, "invitee@example.com")
-	outsider := enrolledUser(t, st, "outsider@example.com")
+	creator := enrolledUserID(t, st, "admin@example.com")
+	invitee := enrolledUserID(t, st, "invitee@example.com")
+	outsider := enrolledUserID(t, st, "outsider@example.com")
 
 	collection, err := st.CreateCollection(ctx, "Household", creator, "sealed")
 	if err != nil {
@@ -3987,8 +3984,8 @@ func TestPendingGrantsAreVisibleOnlyToMembersWhoCanFulfilThem(t *testing.T) {
 func TestFulfilGrantAddsTheMemberAndClearsTheGrant(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	creator := enrolledUser(t, st, "admin@example.com")
-	invitee := enrolledUser(t, st, "invitee@example.com")
+	creator := enrolledUserID(t, st, "admin@example.com")
+	invitee := enrolledUserID(t, st, "invitee@example.com")
 
 	collection, err := st.CreateCollection(ctx, "Household", creator, "sealed")
 	if err != nil {
@@ -4025,8 +4022,8 @@ func TestFulfilGrantAddsTheMemberAndClearsTheGrant(t *testing.T) {
 func TestFulfilGrantWithoutAGrantIsNotFound(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	creator := enrolledUser(t, st, "admin@example.com")
-	stranger := enrolledUser(t, st, "stranger@example.com")
+	creator := enrolledUserID(t, st, "admin@example.com")
+	stranger := enrolledUserID(t, st, "stranger@example.com")
 
 	collection, err := st.CreateCollection(ctx, "Household", creator, "sealed")
 	if err != nil {
@@ -4044,7 +4041,7 @@ func TestFulfilGrantWithoutAGrantIsNotFound(t *testing.T) {
 func TestDeleteCollectionRemovesItsItemsMembershipsAndGrants(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	creator := enrolledUser(t, st, "admin@example.com")
+	creator := enrolledUserID(t, st, "admin@example.com")
 
 	collection, err := st.CreateCollection(ctx, "Household", creator, "sealed")
 	if err != nil {
@@ -4077,8 +4074,8 @@ func TestDeleteCollectionRemovesItsItemsMembershipsAndGrants(t *testing.T) {
 func TestSyncCarriesTheCallersCollections(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	creator := enrolledUser(t, st, "admin@example.com")
-	outsider := enrolledUser(t, st, "outsider@example.com")
+	creator := enrolledUserID(t, st, "admin@example.com")
+	outsider := enrolledUserID(t, st, "outsider@example.com")
 
 	if _, err := st.CreateCollection(ctx, "Household", creator, "sealed-to-creator"); err != nil {
 		t.Fatalf("CreateCollection: %v", err)
@@ -6019,7 +6016,7 @@ import (
 func TestRotatePasswordReplacesTheCredentialAndTheWrappedKey(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "person@example.com")
+	userID := enrolledUserID(t, st, "person@example.com")
 
 	if err := st.RotatePassword(ctx, userID, PasswordRotation{
 		KDFSalt:          "bmV3LXNhbHQtMTZieXRlcw==",
@@ -6051,7 +6048,7 @@ func TestRotatePasswordReplacesTheCredentialAndTheWrappedKey(t *testing.T) {
 func TestRotatePasswordRevokesEveryOtherSession(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "person@example.com")
+	userID := enrolledUserID(t, st, "person@example.com")
 
 	keep, keepToken, _, err := st.CreateSession(ctx, userID, "this device")
 	if err != nil {
@@ -6086,7 +6083,7 @@ func TestRotatePasswordRevokesEveryOtherSession(t *testing.T) {
 func TestRotateRecoveryReplacesOnlyTheRecoveryBlob(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "person@example.com")
+	userID := enrolledUserID(t, st, "person@example.com")
 
 	before, err := st.UserByID(ctx, userID)
 	if err != nil {
@@ -6121,7 +6118,7 @@ func TestRotateRecoveryReplacesOnlyTheRecoveryBlob(t *testing.T) {
 func TestRotateRecoveryRejectsAnIncompletePayload(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "person@example.com")
+	userID := enrolledUserID(t, st, "person@example.com")
 
 	// A half-written recovery record is worse than none: the UI would show the
 	// user a code that cannot open anything.
@@ -6137,8 +6134,8 @@ func TestRotateRecoveryRejectsAnIncompletePayload(t *testing.T) {
 func TestSessionsForUserListsLiveSessionsOnly(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "person@example.com")
-	otherID := enrolledUser(t, st, "other@example.com")
+	userID := enrolledUserID(t, st, "person@example.com")
+	otherID := enrolledUserID(t, st, "other@example.com")
 
 	if _, _, _, err := st.CreateSession(ctx, userID, "laptop"); err != nil {
 		t.Fatalf("CreateSession: %v", err)
@@ -6169,8 +6166,8 @@ func TestSessionsForUserListsLiveSessionsOnly(t *testing.T) {
 func TestRevokeSessionForUserRefusesAnotherUsersSession(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	mine := enrolledUser(t, st, "mine@example.com")
-	theirs := enrolledUser(t, st, "theirs@example.com")
+	mine := enrolledUserID(t, st, "mine@example.com")
+	theirs := enrolledUserID(t, st, "theirs@example.com")
 
 	session, token, _, err := st.CreateSession(ctx, theirs, "their laptop")
 	if err != nil {
@@ -7167,7 +7164,7 @@ func TestSetUserStatusRejectsAnUnknownStatus(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
 	admin := adminUser(t, st, "admin@example.com")
-	target := enrolledUser(t, st, "person@example.com")
+	target := enrolledUserID(t, st, "person@example.com")
 
 	// The column has a CHECK, but a raw constraint failure would reach the
 	// client as a 500 for what is plainly a bad request.
@@ -7182,7 +7179,7 @@ func TestDisablingAUserRevokesTheirSessions(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
 	admin := adminUser(t, st, "admin@example.com")
-	target := enrolledUser(t, st, "person@example.com")
+	target := enrolledUserID(t, st, "person@example.com")
 
 	_, token, _, err := st.CreateSession(ctx, target, "their laptop")
 	if err != nil {
@@ -7204,7 +7201,7 @@ func TestResetUserDestroysKeyMaterialAndReturnsAFreshInvite(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
 	admin := adminUser(t, st, "admin@example.com")
-	target := enrolledUser(t, st, "person@example.com")
+	target := enrolledUserID(t, st, "person@example.com")
 
 	// Give the account something to lose.
 	if _, err := st.DB().ExecContext(ctx,
@@ -7282,7 +7279,7 @@ func TestResetUserKeepsCollectionItemsOthersStillNeed(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
 	admin := adminUser(t, st, "admin@example.com")
-	target := enrolledUser(t, st, "person@example.com")
+	target := enrolledUserID(t, st, "person@example.com")
 
 	collection, err := st.CreateCollection(ctx, "Household", admin, "sealed")
 	if err != nil {
@@ -7343,7 +7340,7 @@ func TestDeleteUserRemovesAnUnreferencedAccountAndItsItems(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
 	admin := adminUser(t, st, "admin@example.com")
-	target := enrolledUser(t, st, "person@example.com")
+	target := enrolledUserID(t, st, "person@example.com")
 
 	if _, err := st.CreateItem(ctx, target, ItemInput{Ciphertext: "c", WrappedItemKey: "k"}); err != nil {
 		t.Fatalf("CreateItem: %v", err)
@@ -8414,7 +8411,7 @@ import (
 func TestPurgeTombstonesRemovesOldOnesAndKeepsRecentOnes(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "person@example.com")
+	userID := enrolledUserID(t, st, "person@example.com")
 
 	old, err := st.CreateItem(ctx, userID, ItemInput{Ciphertext: "old", WrappedItemKey: "k"})
 	if err != nil {
@@ -8459,7 +8456,7 @@ func TestPurgeTombstonesRemovesOldOnesAndKeepsRecentOnes(t *testing.T) {
 func TestPurgeTombstonesNeverTouchesLiveRows(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "person@example.com")
+	userID := enrolledUserID(t, st, "person@example.com")
 
 	live, err := st.CreateItem(ctx, userID, ItemInput{Ciphertext: "live", WrappedItemKey: "k"})
 	if err != nil {
@@ -8500,7 +8497,7 @@ func TestPurgeTombstonesNeverTouchesLiveRows(t *testing.T) {
 func TestPurgeTombstonesCoversFoldersToo(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
-	userID := enrolledUser(t, st, "person@example.com")
+	userID := enrolledUserID(t, st, "person@example.com")
 
 	folder, err := st.CreateFolder(ctx, userID, "doomed")
 	if err != nil {
