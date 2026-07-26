@@ -83,11 +83,11 @@ crypto** — only Argon2id over the auth hash, and `crypto/rand`.
 ```
 salt        = 16 random bytes, per user, stored server-side
 masterKey   = Argon2id(masterPassword, salt, m=64MiB, t=3, p=4, len=32)
-wrapKey     = HKDF-SHA256(masterKey, info="keyhole:wrap:v1", len=32)
+wrappingKey = HKDF-SHA256(masterKey, info="keyhole:wrap:v1", len=32)
 authHash    = HKDF-SHA256(masterKey, info="keyhole:auth:v1", len=32)
 ```
 
-`wrapKey` never leaves the device. `authHash` is the login credential and decrypts
+`wrappingKey` never leaves the device. `authHash` is the login credential and decrypts
 nothing. KDF parameters are stored per user so they can be raised later without a
 flag day.
 
@@ -103,7 +103,7 @@ database dump yields neither login ability nor plaintext.
 
 ```
 userKey        32 random bytes — root of the vault
-               wrapped by wrapKey            -> protectedUserKey
+               wrapped by wrappingKey            -> protectedUserKey
                wrapped by recoveryKey        -> recoveryProtectedUserKey
 
 keypair        X25519; public key stored in the clear
@@ -165,7 +165,10 @@ explicitly rather than pretending the grant is instant.
 
 ### 3.6 Recovery
 
-At enrollment the client generates a 128-bit recovery code, rendered as words.
+At enrollment the client generates a 125-bit recovery code — 25 Crockford Base32
+characters, shown as five hyphenated groups of five. The alphabet omits `I`, `L`,
+`O`, and `U`, and the client maps those back on input, so a user transcribing the
+code by hand cannot lock themselves out by writing `l` for `1`.
 `recoveryKey = Argon2id(recoveryCode, recoverySalt)` wraps a second copy of `userKey`.
 The code is displayed once and requires an explicit "I have saved this"
 acknowledgement. The server never sees it.
@@ -184,7 +187,7 @@ explicitly and requires typing the user's email to proceed.
 ### 3.8 Auto-lock
 
 Default 15 minutes idle; options 1 / 5 / 15 / 30 / 60 minutes, on-close, or never
-(with a warning). Lock zeroes `wrapKey`, `userKey`, decrypted item keys, and the
+(with a warning). Lock zeroes `wrappingKey`, `userKey`, decrypted item keys, and the
 plaintext cache. The IndexedDB ciphertext cache is retained for offline reads.
 
 ### 3.9 Accepted limitations
@@ -225,10 +228,10 @@ artifact is one file plus a SQLite database.
 
 | Table | Columns of note |
 |---|---|
-| `users` | `id`, `email`, `name`, `role`, `status` (pending/active/disabled), `kdf_salt`, `kdf_params`, `auth_hash`, `protected_user_key`, `recovery_protected_user_key`, `recovery_salt`, `public_key`, `encrypted_private_key`, `revision`, timestamps |
+| `users` | `id`, `email`, `name`, `role`, `status` (pending/active/disabled), `kdf_salt`, `kdf_params`, `auth_hash`, `protected_user_key`, `recovery_protected_user_key`, `recovery_salt`, `recovery_kdf_params`, `public_key`, `encrypted_private_key`, `revision`, timestamps |
 | `invites` | `user_id`, `token_hash`, `expires_at`, `used_at` |
 | `sessions` | `user_id`, `token_hash`, `refresh_hash`, `device_label`, `last_seen_at`, `expires_at`, `revoked_at` |
-| `items` | `id`, `owner_user_id`, `collection_id` (nullable), `type`, `ciphertext`, `wrapped_item_key`, `folder_id`, `revision`, `deleted_at` |
+| `items` | `id`, `owner_user_id`, `collection_id` (nullable), `ciphertext`, `wrapped_item_key`, `folder_id`, `revision`, `deleted_at` |
 | `folders` | `user_id`, `encrypted_name` |
 | `collections` | `id`, `name` (plaintext), `created_by` |
 | `collection_memberships` | `collection_id`, `user_id`, `sealed_collection_key`, `role` (member/manager), `granted_by`, `granted_at` |
@@ -238,6 +241,18 @@ artifact is one file plus a SQLite database.
 
 Deletes are tombstones (`deleted_at`) so sync can propagate them; a retention job
 purges tombstones after 90 days.
+
+**Item `type` is deliberately not a column.** It lives inside the encrypted body, so
+the server cannot tell a login from a secure note, or count how many of each a user
+holds. Filtering by type happens client-side over the decrypted vault, which is free
+at this scale because the whole vault is synced anyway.
+
+**`recovery_kdf_params` is stored separately from `kdf_params`** and is not assumed to
+equal it. If an account's KDF parameters are ever raised, the existing recovery blob
+was wrapped under the *old* parameters, and deriving the recovery key with the new
+ones yields a different key. Recording the parameters the blob was actually made with
+is what prevents a correct recovery code from failing — a failure that would surface
+only at the moment recovery was the user's last resort.
 
 ### 4.3 API
 
