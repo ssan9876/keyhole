@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // enrolledUserID is enrolledUser (sessions_test.go) for the callers that want
@@ -39,23 +40,38 @@ func TestCreateItemStoresCiphertextVerbatimAndNumbersIt(t *testing.T) {
 		t.Fatalf("CreateItem: %v", err)
 	}
 
-	if item.Ciphertext != ct {
-		t.Errorf("Ciphertext = %q, want it stored verbatim (%q)", item.Ciphertext, ct)
+	// Read the row back rather than inspecting the struct CreateItem assembled
+	// from this test's own input. Asserting on the returned struct proves only
+	// that the test can echo itself: an INSERT that appended "-TAMPERED" to
+	// both blobs passed the earlier version of this test unchanged.
+	stored, err := st.ItemByID(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("ItemByID: %v", err)
 	}
-	if item.WrappedItemKey != "wrapped-key-blob" {
-		t.Errorf("WrappedItemKey = %q", item.WrappedItemKey)
+
+	if stored.Ciphertext != ct {
+		t.Errorf("stored Ciphertext = %q, want it stored verbatim (%q)", stored.Ciphertext, ct)
 	}
-	if item.CollectionID.Valid {
+	if stored.WrappedItemKey != "wrapped-key-blob" {
+		t.Errorf("stored WrappedItemKey = %q", stored.WrappedItemKey)
+	}
+	if stored.CollectionID.Valid {
 		t.Error("an item created with no collection must be personal")
 	}
-	if item.Revision != 1 {
-		t.Errorf("Revision = %d, want 1 as the first write to a fresh database", item.Revision)
+	if stored.Revision != 1 {
+		t.Errorf("stored Revision = %d, want 1 as the first write to a fresh database", stored.Revision)
 	}
-	if item.DeletedAt.Valid {
+	if stored.DeletedAt.Valid {
 		t.Error("a new item must not be a tombstone")
 	}
-	if item.OwnerUserID != userID {
-		t.Errorf("OwnerUserID = %q, want %q", item.OwnerUserID, userID)
+	if stored.OwnerUserID != userID {
+		t.Errorf("stored OwnerUserID = %q, want %q", stored.OwnerUserID, userID)
+	}
+	// The struct handed back to the caller has to agree with the row, or a POST
+	// response and a later GET describe different items.
+	if item.Ciphertext != stored.Ciphertext || item.WrappedItemKey != stored.WrappedItemKey ||
+		item.Revision != stored.Revision || item.ID != stored.ID {
+		t.Errorf("returned item disagrees with the stored row:\n returned %+v\n stored   %+v", item, stored)
 	}
 }
 
@@ -96,6 +112,10 @@ func TestUpdateItemAdvancesTheRevisionAndReplacesTheBody(t *testing.T) {
 		t.Fatalf("CreateItem: %v", err)
 	}
 
+	// Captured before the write so the stored stamp can be compared against a
+	// known lower bound rather than against another in-memory time.Now().
+	before := time.Now().UTC().Truncate(time.Second)
+
 	updated, err := st.UpdateItem(ctx, created.ID, created.Revision,
 		ItemInput{Ciphertext: "v2", WrappedItemKey: "k2"})
 	if err != nil {
@@ -109,8 +129,23 @@ func TestUpdateItemAdvancesTheRevisionAndReplacesTheBody(t *testing.T) {
 		t.Errorf("Revision = %d, want greater than %d — a sync at the old cursor "+
 			"would never see this edit", updated.Revision, created.Revision)
 	}
-	if !updated.UpdatedAt.After(created.CreatedAt) && !updated.UpdatedAt.Equal(created.CreatedAt) {
-		t.Error("UpdatedAt went backwards")
+
+	// The stamp has to come from the column. Comparing two in-memory
+	// time.Now() values proves only that time moves forward: writing
+	// updated_at = '1999-01-01T00:00:00Z' while returning now passed the
+	// earlier version of this clause.
+	stored, err := st.ItemByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("ItemByID: %v", err)
+	}
+	if stored.UpdatedAt.Before(before) {
+		t.Errorf("stored updated_at = %s, want no earlier than %s — a client "+
+			"sorting or displaying by this stamp sees the edit as older than it is",
+			stored.UpdatedAt.Format(time.RFC3339), before.Format(time.RFC3339))
+	}
+	if stored.UpdatedAt.Before(stored.CreatedAt) {
+		t.Errorf("stored updated_at %s is before created_at %s",
+			stored.UpdatedAt.Format(time.RFC3339), stored.CreatedAt.Format(time.RFC3339))
 	}
 }
 
@@ -220,16 +255,25 @@ func TestUpdatingATombstoneIsNotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateItem: %v", err)
 	}
-	if _, err := st.DeleteItem(ctx, created.ID); err != nil {
+	deleted, err := st.DeleteItem(ctx, created.ID)
+	if err != nil {
 		t.Fatalf("DeleteItem: %v", err)
 	}
 
 	// A device that was offline during the delete must not be able to
 	// resurrect the item by pushing its cached copy.
-	_, err = st.UpdateItem(ctx, created.ID, created.Revision,
+	//
+	// The expected revision is the TOMBSTONE's current one, not the pre-delete
+	// one. A stale revision would be refused as a conflict whether or not the
+	// tombstone guard exists, which is why the earlier version of this test
+	// passed with `if false && current.DeletedAt.Valid`. Passing the current
+	// revision leaves the guard as the only thing that can reject the write,
+	// and ErrRevisionConflict is no longer an acceptable answer: a conflict
+	// tells the client to resolve and retry, and there is nothing to resolve.
+	_, err = st.UpdateItem(ctx, created.ID, deleted.Revision,
 		ItemInput{Ciphertext: "resurrected", WrappedItemKey: "k"})
-	if !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrRevisionConflict) {
-		t.Fatalf("err = %v, want ErrNotFound or ErrRevisionConflict", err)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
 	}
 	stored, err := st.ItemByID(ctx, created.ID)
 	if err != nil {
@@ -247,13 +291,60 @@ func TestCreateItemsBulkIsAllOrNothing(t *testing.T) {
 
 	// An import of a thousand passwords that half-lands leaves the user with
 	// no way to tell which half. One transaction, or none.
+	//
+	// The middle row names a collection that does not exist. That is deliberate:
+	// it passes validate() and fails at the INSERT on the foreign key, INSIDE
+	// the loop and AFTER row one has already been written — which is the only
+	// arrangement that exercises the rollback at all. A row rejected by
+	// validate() short-circuits before BeginTx, so no transaction ever exists;
+	// with such a row, replacing `defer tx.Rollback()` with `defer tx.Commit()`
+	// passed the earlier version of this test.
+	const missingCollection = "ffffffffffffffffffffffffffffffff"
+	_, err := st.CreateItemsBulk(ctx, userID, []ItemInput{
+		{Ciphertext: "ok-1", WrappedItemKey: "k"},
+		{CollectionID: missingCollection, Ciphertext: "orphan", WrappedItemKey: "k"},
+		{Ciphertext: "ok-2", WrappedItemKey: "k"},
+	})
+	if err == nil {
+		t.Fatal("CreateItemsBulk accepted a batch whose middle row names a collection that does not exist")
+	}
+
+	// Row one was inserted before the failure. If the transaction did not roll
+	// back, it is still there.
+	var count int
+	if err := st.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM items`).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("%d items survived a failed batch, want 0 — the earlier rows in "+
+			"the same batch must not land", count)
+	}
+
+	rev, err := st.CurrentRevision(ctx)
+	if err != nil {
+		t.Fatalf("CurrentRevision: %v", err)
+	}
+	if rev != 0 {
+		t.Errorf("CurrentRevision = %d after a failed batch, want 0", rev)
+	}
+}
+
+func TestCreateItemsBulkRejectsAnInvalidRowBeforeWritingAnything(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	userID := enrolledUserID(t, st, "owner@example.com")
+
+	// The cheap path: validation runs over every row before BeginTx, so a batch
+	// with an empty body never opens a transaction at all.
 	_, err := st.CreateItemsBulk(ctx, userID, []ItemInput{
 		{Ciphertext: "ok-1", WrappedItemKey: "k"},
 		{Ciphertext: "", WrappedItemKey: "k"}, // invalid
 		{Ciphertext: "ok-2", WrappedItemKey: "k"},
 	})
-	if err == nil {
-		t.Fatal("CreateItemsBulk accepted a batch containing an invalid row")
+	var validation *ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("err = %v, want a *ValidationError", err)
 	}
 
 	var count int
@@ -263,14 +354,6 @@ func TestCreateItemsBulkIsAllOrNothing(t *testing.T) {
 	}
 	if count != 0 {
 		t.Errorf("%d items survived a rejected batch, want 0", count)
-	}
-
-	rev, err := st.CurrentRevision(ctx)
-	if err != nil {
-		t.Fatalf("CurrentRevision: %v", err)
-	}
-	if rev != 0 {
-		t.Errorf("CurrentRevision = %d after a rejected batch, want 0", rev)
 	}
 }
 
@@ -293,12 +376,42 @@ func TestCreateItemsBulkNumbersEveryRowDistinctly(t *testing.T) {
 
 	// Sharing a revision across a batch would mean a client syncing mid-import
 	// records a cursor that skips the rest of the batch forever.
+	//
+	// The revisions have to come from the column, not from the returned structs:
+	// CreateItemsBulk assembles those in memory from its own loop variable, so
+	// storing a literal 1 for every row while returning the real distinct values
+	// passed the earlier version of this test.
+	rows, err := st.DB().QueryContext(ctx, `SELECT revision FROM items`)
+	if err != nil {
+		t.Fatalf("select revisions: %v", err)
+	}
+	defer rows.Close()
+
 	seen := make(map[int64]bool, len(items))
-	for _, item := range items {
-		if seen[item.Revision] {
-			t.Fatalf("revision %d appears twice in one batch", item.Revision)
+	for rows.Next() {
+		var revision int64
+		if err := rows.Scan(&revision); err != nil {
+			t.Fatalf("scan revision: %v", err)
 		}
-		seen[item.Revision] = true
+		if seen[revision] {
+			t.Fatalf("stored revision %d appears twice in one batch", revision)
+		}
+		seen[revision] = true
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	if len(seen) != len(ins) {
+		t.Fatalf("%d distinct revisions in the items table, want %d", len(seen), len(ins))
+	}
+
+	// And the numbers reported to the client must be the numbers on disk, or a
+	// client's sync cursor points at revisions no row carries.
+	for _, item := range items {
+		if !seen[item.Revision] {
+			t.Errorf("returned revision %d for item %s matches no stored row",
+				item.Revision, item.ID)
+		}
 	}
 }
 
