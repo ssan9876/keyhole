@@ -71,15 +71,3 @@ export function concatBytes(...parts: Uint8Array[]): Uint8Array {
   }
   return out;
 }
-
-/** Comparison whose running time does not depend on where the first
- *  difference occurs. Length difference short-circuits, which is fine —
- *  the lengths of our tokens and hashes are public. */
-export function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i += 1) {
-    diff |= (a[i] as number) ^ (b[i] as number);
-  }
-  return diff === 0;
-}

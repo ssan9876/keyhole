@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import fc from "fast-check";
 import {
   concatBytes,
-  constantTimeEqual,
   fromBase64,
   toBase64,
   utf8Decode,
@@ -57,19 +56,5 @@ describe("concatBytes", () => {
   it("joins in order", () => {
     const joined = concatBytes(new Uint8Array([1, 2]), new Uint8Array([]), new Uint8Array([3]));
     expect(Array.from(joined)).toEqual([1, 2, 3]);
-  });
-});
-
-describe("constantTimeEqual", () => {
-  it("is true for identical arrays", () => {
-    expect(constantTimeEqual(new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 3]))).toBe(true);
-  });
-
-  it("is false for differing arrays of equal length", () => {
-    expect(constantTimeEqual(new Uint8Array([1, 2, 3]), new Uint8Array([1, 2, 4]))).toBe(false);
-  });
-
-  it("is false for differing lengths", () => {
-    expect(constantTimeEqual(new Uint8Array([1, 2]), new Uint8Array([1, 2, 3]))).toBe(false);
   });
 });

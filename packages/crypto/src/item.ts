@@ -146,6 +146,18 @@ export async function decryptItem(
   return parsed;
 }
 
+/**
+ * Moves an item between parents by re-wrapping 32 bytes; the body is never
+ * re-encrypted.
+ *
+ * **Moving an item out of a collection does not revoke it.** The ciphertext and
+ * the item key are unchanged, so an ex-member who cached the old wrapped item
+ * key can still read the item as it stands today — and will keep reading every
+ * future edit, because edits reuse the same item key. This mirrors spec §5.1:
+ * removing a member is not retroactive. Revocation requires rotating the item
+ * key, which means re-encrypting the body, and any UI offering "remove from
+ * collection" as a security action must say so.
+ */
 export async function rewrapItem(
   encrypted: EncryptedItem,
   fromParentKey: Uint8Array,
