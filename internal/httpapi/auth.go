@@ -100,18 +100,29 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Two independent keys. The IP limit stops one host grinding through many
-	// accounts; the account limit stops a distributed attempt on one account.
-	// Both must pass, and the account key uses the normalized address so case
-	// variations cannot buy extra attempts.
+	// Two independent keys, consulted at deliberately different points.
+	//
+	// The IP key gates before the hash. It is the CPU defence, so it has to stop
+	// the work from starting, and it does block everyone behind that address —
+	// intended: one host grinding through many accounts is what it exists to
+	// stop.
+	//
+	// The account key gates only failures, and is therefore consulted after
+	// verification. Checked up front it was a lockout weapon: household email
+	// addresses are personal addresses, a low bar to learn, and anyone who knew
+	// one could fail a login every few minutes and hold the real owner out
+	// indefinitely, because a *correct* auth hash got the same 429. Letting a
+	// correct credential through costs nothing against a guesser, who by
+	// definition does not have one.
+	//
+	// Both keys use the normalized address so case variations cannot buy extra
+	// attempts.
 	ipKey := "ip:" + ClientIP(r)
 	accountKey := "account:" + store.NormalizeEmail(req.Email)
 
-	for _, key := range []string{ipKey, accountKey} {
-		if allowed, retryAfter := s.limiter.Allow(key); !allowed {
-			tooManyAttempts(w, retryAfter)
-			return
-		}
+	if allowed, retryAfter := s.limiter.Allow(ipKey); !allowed {
+		tooManyAttempts(w, retryAfter)
+		return
 	}
 
 	user, err := s.store.UserByEmail(r.Context(), req.Email)
@@ -131,8 +142,18 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	ok := auth.VerifyAuthHash(req.AuthHash, stored)
 
 	if err != nil || !ok || user.Status != "active" {
+		// Read the account key's verdict before recording, so the sequence of
+		// statuses a failing caller sees is unchanged from when it gated up
+		// front. Every failing path reaches here — unknown address, wrong hash,
+		// disabled account — so throttling still cannot be used to tell them
+		// apart.
+		allowed, retryAfter := s.limiter.Allow(accountKey)
 		s.limiter.RecordFailure(ipKey)
 		s.limiter.RecordFailure(accountKey)
+		if !allowed {
+			tooManyAttempts(w, retryAfter)
+			return
+		}
 		invalidCredentials(w)
 		return
 	}

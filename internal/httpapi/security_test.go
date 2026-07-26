@@ -76,6 +76,46 @@ func TestSuccessfulLoginClearsTheThrottle(t *testing.T) {
 	}
 }
 
+func TestABlockedAccountKeyStillAdmitsTheCorrectCredential(t *testing.T) {
+	srv := newTestServer(t)
+	_, authHash := enrollTestUser(t, srv, "victim@example.com")
+
+	// An attacker grinds one account from one address. Ten failures is well
+	// past the five-attempt allowance, so account:victim@example.com is blocked
+	// and every further failure re-arms it.
+	for i := 0; i < 10; i++ {
+		postJSONFrom(t, srv, "203.0.113.7:5555", "/api/auth/login", map[string]string{
+			"email": "victim@example.com", "authHash": "wrong",
+		})
+	}
+
+	// Prove the account key really is blocked, from an address whose own budget
+	// is untouched: only the account key can produce a 429 here. Without this
+	// the test below could pass for the wrong reason.
+	blocked := postJSONFrom(t, srv, "198.51.100.30:4444", "/api/auth/login", map[string]string{
+		"email": "victim@example.com", "authHash": "wrong",
+	})
+	if blocked.Code != http.StatusTooManyRequests {
+		t.Fatalf("a wrong credential got %d from a fresh address, want %d — the account key is not blocked, so this test proves nothing",
+			blocked.Code, http.StatusTooManyRequests)
+	}
+
+	// The real owner, with the correct credential. A third source address, so
+	// the IP key has budget left: the IP limit is meant to stop an abusive host
+	// and does block everyone behind it, which is intended. The account limit
+	// must not be able to lock out the account's own owner — anyone who knows a
+	// household email could otherwise hold them out indefinitely by failing a
+	// login every few minutes. A guesser gains nothing from this, because by
+	// definition a guesser does not have the correct hash.
+	rec := postJSONFrom(t, srv, "198.51.100.31:4444", "/api/auth/login", map[string]string{
+		"email": "victim@example.com", "authHash": authHash,
+	})
+	if rec.Code != http.StatusOK {
+		t.Errorf("the correct credential got %d while the account key was blocked, want %d; body %s",
+			rec.Code, http.StatusOK, rec.Body.String())
+	}
+}
+
 func TestASpoofedCFHeaderCannotEvadeTheIPLimit(t *testing.T) {
 	srv := newTestServer(t)
 	enrollTestUser(t, srv, "person@example.com")
