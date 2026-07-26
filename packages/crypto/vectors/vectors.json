@@ -1,0 +1,51 @@
+{
+  "_comment": "Frozen cross-language test vectors for Keyhole. Any client implementation must reproduce these exactly. Regenerate only with a deliberate format change.",
+  "kdf": {
+    "masterPassword": "correct horse battery staple",
+    "kdfSaltBase64": "QkJCQkJCQkJCQkJCQkJCQg==",
+    "params": {
+      "algorithm": "argon2id",
+      "memoryKiB": 65536,
+      "iterations": 3,
+      "parallelism": 4
+    },
+    "masterKeyBase64": "3eZKsmYKDe3USfoEFFh70EB+aOvko/FZXywWfx9/880=",
+    "wrapKeyBase64": "bxTTuHjfXbEfNy2KQC8lMPu8Zrmb3+eGHoz1UarBTJY=",
+    "authHashBase64": "SM2ag692RTYuz0zD0VMdDXLklqC3SIfEnQHp4XKEiyM="
+  },
+  "aesGcm": {
+    "keyBase64": "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+    "nonceBase64": "CQkJCQkJCQkJCQkJ",
+    "plaintextUtf8": "attack at dawn",
+    "envelope": {
+      "v": 1,
+      "alg": "A256GCM",
+      "n": "CQkJCQkJCQkJCQkJ",
+      "ct": "RvHw9d2b4QDUQq9ZkYTBOhRYxHc8TOk+71bnWF+u"
+    }
+  },
+  "seal": {
+    "recipientPrivateKeyBase64": "CgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgo=",
+    "recipientPublicKeyBase64": "93/0sQeIv9ymLKC7Fg1CfPV2LYXytcrWgH7Jw/673gk=",
+    "ephemeralPrivateKeyBase64": "CwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCwsLCws=",
+    "nonceBase64": "AQEBAQEBAQEBAQEB",
+    "secretBase64": "WlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlpaWlo=",
+    "sealed": {
+      "v": 1,
+      "alg": "X25519-HKDF-SHA256-A256GCM",
+      "epk": "c7LYt2qptTZgAyvI9di+46OuTjs6f9Sa3oH3NHo0qmg=",
+      "n": "AQEBAQEBAQEBAQEB",
+      "ct": "pNxPUNHBi3ypbAI9frccp8gOk40ZRP8SmmTWdjsz18bSbxKY1VmUvN181Hs/SYhj"
+    }
+  },
+  "recovery": {
+    "code": "ABCDE-FGHJK-MNPQR-STVWX-YZ234",
+    "recoverySaltBase64": "ISEhISEhISEhISEhISEhIQ==",
+    "recoveryKeyBase64": "8rx2ex2vcppUBHkXNil5TIjbtlKJ5CJ9FFbz6/lIs3o="
+  },
+  "fingerprint": {
+    "email": "seth@gmail.com",
+    "publicKeyBase64": "93/0sQeIv9ymLKC7Fg1CfPV2LYXytcrWgH7Jw/673gk=",
+    "fingerprint": "M988-Z7H1-Q06P-BG0N"
+  }
+}
