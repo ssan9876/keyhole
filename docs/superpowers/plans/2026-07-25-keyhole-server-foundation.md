@@ -3142,6 +3142,17 @@ type EnrollmentInput struct {
 	RecoveryKDFParams        string
 }
 
+// ValidationError means the client's enrollment payload was incomplete or
+// malformed. It is the caller's fault and its text is safe to report back to
+// them — unlike a database failure, whose text must never reach a client.
+type ValidationError struct {
+	Field string
+}
+
+func (e *ValidationError) Error() string {
+	return fmt.Sprintf("enrollment field %q is required", e.Field)
+}
+
 func (in EnrollmentInput) validate() error {
 	required := map[string]string{
 		"kdfSalt":                  in.KDFSalt,
@@ -3156,7 +3167,7 @@ func (in EnrollmentInput) validate() error {
 	}
 	for name, value := range required {
 		if value == "" {
-			return fmt.Errorf("enrollment field %q is required", name)
+			return &ValidationError{Field: name}
 		}
 	}
 	return nil
@@ -3227,13 +3238,18 @@ func (s *Store) CompleteEnrollment(ctx context.Context, token string, in Enrollm
 		return User{}, ErrNotFound
 	}
 
-	if err := tx.Commit(); err != nil {
-		return User{}, fmt.Errorf("commit enrollment: %w", err)
+	// Read the user INSIDE the transaction, before committing. Reloading after
+	// commit created a window where the enrollment had succeeded but the
+	// response said it failed — the account active, the invite spent, and a
+	// retry getting 404 with no way for the user to finish.
+	user, err := scanUser(tx.QueryRowContext(ctx,
+		`SELECT `+userColumns+` FROM users WHERE id = ?`, invite.UserID))
+	if err != nil {
+		return User{}, err
 	}
 
-	user, err := s.UserByID(ctx, invite.UserID)
-	if err != nil {
-		return User{}, errors.Join(errors.New("enrollment committed but reload failed"), err)
+	if err := tx.Commit(); err != nil {
+		return User{}, fmt.Errorf("commit enrollment: %w", err)
 	}
 	return user, nil
 }
@@ -3478,17 +3494,23 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		RecoveryProtectedUserKey: req.RecoveryProtectedUserKey,
 		RecoveryKDFParams:        req.RecoveryKDFParams,
 	})
+	var validationErr *store.ValidationError
 	switch {
 	case errors.Is(err, store.ErrNotFound):
 		// Unknown, expired, and already-used links are indistinguishable, so a
 		// caller cannot probe which tokens ever existed.
 		WriteError(w, http.StatusNotFound, CodeNotFound, "this setup link is no longer valid")
 		return
+	case errors.As(err, &validationErr):
+		// The client's payload was wrong; its own error text is safe to echo.
+		WriteError(w, http.StatusBadRequest, CodeBadRequest, validationErr.Error())
+		return
 	case err != nil:
-		// A validation failure from the store is the client's fault; log the
-		// detail and tell them without echoing the body back.
-		s.logger.Warn("enrollment rejected", "id", RequestIDFrom(r.Context()), "error", err)
-		WriteError(w, http.StatusBadRequest, CodeBadRequest, err.Error())
+		// Anything else is ours, not theirs. A transient database failure is not
+		// a bad request, and its wrapped text must never reach a client. Log the
+		// detail; tell them nothing.
+		s.logger.Error("enrollment failed", "id", RequestIDFrom(r.Context()), "error", err)
+		WriteError(w, http.StatusInternalServerError, CodeInternal, "could not complete setup")
 		return
 	}
 
