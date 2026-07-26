@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	sqlited "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // User mirrors the users table. Every key-material field is nullable because
@@ -91,14 +94,29 @@ func (s *Store) CreatePendingUser(ctx context.Context, email, name, role string)
 		 VALUES (?, ?, ?, ?, 'pending', 0, ?, ?)`,
 		id, normalized, strings.TrimSpace(name), role, now, now)
 	if err != nil {
-		// modernc's driver reports constraint violations in the message; the
-		// unique index on lower(email) is the only one this insert can trip.
-		if strings.Contains(strings.ToLower(err.Error()), "unique") {
-			return User{}, ErrEmailTaken
-		}
-		return User{}, fmt.Errorf("insert user: %w", err)
+		return User{}, classifyUserInsertError(err)
 	}
 	return s.UserByID(ctx, id)
+}
+
+// classifyUserInsertError maps a failed users-table insert to ErrEmailTaken
+// when, and only when, it violated the users_email_unique index. The same
+// INSERT can also violate the id PRIMARY KEY (astronomically unlikely at 128
+// bits of random id, but a real bug in its own right if it ever happened),
+// and that must not be reported as a taken email or an operator would debug
+// the wrong problem entirely.
+//
+// modernc's driver reports both violations as *sqlite.Error with a distinct
+// extended result code — SQLITE_CONSTRAINT_UNIQUE for a UNIQUE index,
+// SQLITE_CONSTRAINT_PRIMARYKEY for the primary key — so we type-assert and
+// branch on the code rather than matching on the message text, which
+// contains "UNIQUE constraint failed" for both cases.
+func classifyUserInsertError(err error) error {
+	var sqliteErr *sqlited.Error
+	if errors.As(err, &sqliteErr) && sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_UNIQUE {
+		return ErrEmailTaken
+	}
+	return fmt.Errorf("insert user: %w", err)
 }
 
 func (s *Store) UserByID(ctx context.Context, id string) (User, error) {

@@ -45,9 +45,9 @@ func runAdminCreate(args []string) error {
 	email := fs.String("email", "", "email address of the administrator (required)")
 	name := fs.String("name", "", "display name (defaults to the email address)")
 	configPath := fs.String("config", defaultConfigPath, "path to config.yml")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
+	// flag.ExitOnError means fs.Parse already calls os.Exit on a bad flag, so
+	// there is no error here to handle.
+	fs.Parse(args)
 	if *email == "" {
 		return errors.New("--email is required")
 	}

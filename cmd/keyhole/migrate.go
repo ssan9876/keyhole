@@ -14,9 +14,9 @@ const defaultConfigPath = "/etc/keyhole/config.yml"
 func runMigrate(args []string) error {
 	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
 	configPath := fs.String("config", defaultConfigPath, "path to config.yml")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
+	// flag.ExitOnError means fs.Parse already calls os.Exit on a bad flag, so
+	// there is no error here to handle.
+	fs.Parse(args)
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
