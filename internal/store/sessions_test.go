@@ -146,6 +146,35 @@ func TestRotateSessionInvalidatesTheOldTokens(t *testing.T) {
 	}
 }
 
+func TestScanSessionHandlesAPopulatedRevokedAt(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	u := enrolledUser(t, s, "person@example.com")
+
+	sess, _, _, err := s.CreateSession(ctx, u.ID, "cli")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeSession(ctx, sess.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both production lookups filter revoked_at IS NULL, so this is the only
+	// way to put a populated revoked_at through scanSession — and therefore the
+	// only test that can catch the column failing to scan at all.
+	revoked, err := scanSession(s.DB().QueryRowContext(ctx,
+		`SELECT `+sessionColumns+` FROM sessions WHERE id = ?`, sess.ID))
+	if err != nil {
+		t.Fatalf("scanning a revoked session failed: %v", err)
+	}
+	if !revoked.RevokedAt.Valid {
+		t.Error("RevokedAt is not Valid on a revoked session")
+	}
+	if revoked.RevokedAt.Time.IsZero() {
+		t.Error("RevokedAt.Time is zero on a revoked session")
+	}
+}
+
 func TestTouchSessionExtendsExpiry(t *testing.T) {
 	s := openTemp(t)
 	ctx := context.Background()

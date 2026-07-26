@@ -68,8 +68,9 @@ func (s *Store) CreateSession(ctx context.Context, userID, deviceLabel string) (
 func scanSession(row interface{ Scan(...any) error }) (Session, error) {
 	var sess Session
 	var createdAt, lastSeenAt, expiresAt string
+	var revokedAt sql.NullString
 	err := row.Scan(&sess.ID, &sess.UserID, &sess.DeviceLabel,
-		&createdAt, &lastSeenAt, &expiresAt, &sess.RevokedAt)
+		&createdAt, &lastSeenAt, &expiresAt, &revokedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Session{}, ErrNotFound
 	}
@@ -84,6 +85,13 @@ func scanSession(row interface{ Scan(...any) error }) (Session, error) {
 	}
 	if sess.ExpiresAt, err = time.Parse(time.RFC3339, expiresAt); err != nil {
 		return Session{}, fmt.Errorf("parse expires_at: %w", err)
+	}
+	if revokedAt.Valid {
+		parsed, err := time.Parse(time.RFC3339, revokedAt.String)
+		if err != nil {
+			return Session{}, fmt.Errorf("parse revoked_at: %w", err)
+		}
+		sess.RevokedAt = sql.NullTime{Time: parsed, Valid: true}
 	}
 	return sess, nil
 }

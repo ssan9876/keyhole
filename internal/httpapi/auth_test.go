@@ -275,6 +275,73 @@ func TestRequireAuthGuardsProtectedRoutes(t *testing.T) {
 			t.Errorf("status = %d after revocation, want %d", rec.Code, http.StatusUnauthorized)
 		}
 	})
+
+	// This runs before "disabled account" deliberately: that subtest disables
+	// the shared test user for the rest of the function, which would break
+	// this one's login if it ran after.
+	t.Run("expired session", func(t *testing.T) {
+		login := postJSON(t, srv, "/api/auth/login", map[string]string{
+			"email": "person@example.com", "authHash": authHash,
+		})
+		var body struct {
+			AccessToken string `json:"accessToken"`
+		}
+		if login.Code != http.StatusOK {
+			t.Fatalf("login status = %d, want %d; body %s", login.Code, http.StatusOK, login.Body.String())
+		}
+		if err := json.Unmarshal(login.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		sess, err := srv.store.SessionByAccessToken(context.Background(), body.AccessToken)
+		if err != nil {
+			t.Fatal(err)
+		}
+		past := time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+		if _, err := srv.store.DB().Exec(`UPDATE sessions SET expires_at = ? WHERE id = ?`, past, sess.ID); err != nil {
+			t.Fatal(err)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/test-protected", nil)
+		req.Header.Set("Authorization", "Bearer "+body.AccessToken)
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d for an expired session, want %d", rec.Code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("disabled account", func(t *testing.T) {
+		login := postJSON(t, srv, "/api/auth/login", map[string]string{
+			"email": "person@example.com", "authHash": authHash,
+		})
+		var body struct {
+			AccessToken string `json:"accessToken"`
+		}
+		if login.Code != http.StatusOK {
+			t.Fatalf("login status = %d, want %d; body %s", login.Code, http.StatusOK, login.Body.String())
+		}
+		if err := json.Unmarshal(login.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		user, err := srv.store.UserByEmail(context.Background(), "person@example.com")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := srv.store.DB().Exec(`UPDATE users SET status = 'disabled' WHERE id = ?`, user.ID); err != nil {
+			t.Fatal(err)
+		}
+
+		req := httptest.NewRequest(http.MethodGet, "/api/test-protected", nil)
+		req.Header.Set("Authorization", "Bearer "+body.AccessToken)
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+
+		// A still-valid token must not work once the account is disabled.
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("status = %d for a disabled account, want %d", rec.Code, http.StatusUnauthorized)
+		}
+	})
 }
 
 func TestLogoutRevokesTheSession(t *testing.T) {

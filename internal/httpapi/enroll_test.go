@@ -15,6 +15,8 @@ import (
 
 func enrollBody() map[string]string {
 	return map[string]string{
+		// The crypto package fixes real KDF salts at 16 bytes; this fixture
+		// matches that length even though this package never validates it.
 		"kdfSalt":                  "c2FsdHNhbHRzYWx0c2FsdA==",
 		"params":                   `{"algorithm":"argon2id","memoryKiB":65536,"iterations":3,"parallelism":4}`,
 		"authHash":                 "YXV0aC1oYXNoLTMyLWJ5dGVzLWJhc2U2NA==",

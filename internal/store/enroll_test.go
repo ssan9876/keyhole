@@ -10,7 +10,9 @@ import (
 
 func sampleEnrollment() EnrollmentInput {
 	return EnrollmentInput{
-		KDFSalt:                  "c2FsdHNhbHRzYWx0c2E=",
+		// The crypto package fixes real KDF salts at 16 bytes; this fixture
+		// matches that length even though this package never validates it.
+		KDFSalt:                  "c2FsdHNhbHRzYWx0c2FsdA==",
 		KDFParams:                `{"algorithm":"argon2id","memoryKiB":65536,"iterations":3,"parallelism":4}`,
 		AuthHash:                 "argon2id$c2FsdA==$ZGlnZXN0",
 		ProtectedUserKey:         `{"v":1,"alg":"A256GCM","n":"bm9uY2U=","ct":"Y2lwaGVy"}`,
