@@ -1,0 +1,7 @@
+# Go, SQL, and TypeScript are LF everywhere. Without this, a Windows checkout
+# materializes CRLF working-tree files that gofmt -l flags on every run, which
+# makes the "gofmt must print nothing" gate unverifiable.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary
