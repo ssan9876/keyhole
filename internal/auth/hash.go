@@ -10,6 +10,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"fmt"
+	"runtime"
 	"strings"
 
 	"golang.org/x/crypto/argon2"
@@ -25,13 +26,41 @@ const (
 	argonSaltLen = 16
 )
 
+// argon2Semaphore bounds how many Argon2id computations run at once.
+//
+// Every call to argon2.IDKey allocates argonMemory — 64 MiB — for its lifetime,
+// and net/http imposes no ceiling on concurrent handlers. Unbounded, a few
+// hundred simultaneous requests to an unauthenticated endpoint are roughly
+// 12 GB of live allocation and an OOM kill on the household machine that is the
+// only way to reach the vault. No amount of rate limiting closes this on its
+// own: a limiter's Allow runs before the hash and its RecordFailure after, so N
+// requests arriving together all pass before any of them records anything.
+//
+// Queuing, rather than rejecting, is the right behaviour for a deliberately
+// slow function. Callers already expect to wait ~50 ms; under load they wait
+// longer, and peak memory stays at NumCPU x 64 MiB whatever the request volume.
+// Sizing at NumCPU also means the machine is never asked to run more of a
+// CPU-bound computation than it has cores to run it on.
+//
+// This is package-level on purpose: every Argon2id entry point in the server
+// must share one budget, or a second endpoint reintroduces the whole problem.
+var argon2Semaphore = make(chan struct{}, runtime.NumCPU())
+
+// argon2Key is the single point at which this package performs Argon2id, so the
+// bound above cannot be bypassed by a new caller forgetting to take a slot.
+func argon2Key(password, salt []byte, keyLen uint32) []byte {
+	argon2Semaphore <- struct{}{}
+	defer func() { <-argon2Semaphore }()
+	return argon2.IDKey(password, salt, argonTime, argonMemory, argonThreads, keyLen)
+}
+
 // HashAuthHash returns "argon2id$<base64 salt>$<base64 digest>".
 func HashAuthHash(authHash string) (string, error) {
 	salt := make([]byte, argonSaltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", fmt.Errorf("generate salt: %w", err)
 	}
-	digest := argon2.IDKey([]byte(authHash), salt, argonTime, argonMemory, argonThreads, argonKeyLen)
+	digest := argon2Key([]byte(authHash), salt, argonKeyLen)
 
 	return fmt.Sprintf("argon2id$%s$%s",
 		base64.StdEncoding.EncodeToString(salt),
@@ -58,6 +87,6 @@ func VerifyAuthHash(authHash, encoded string) bool {
 		return false
 	}
 
-	got := argon2.IDKey([]byte(authHash), salt, argonTime, argonMemory, argonThreads, uint32(len(want)))
+	got := argon2Key([]byte(authHash), salt, uint32(len(want)))
 	return subtle.ConstantTimeCompare(got, want) == 1
 }
