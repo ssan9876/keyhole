@@ -48,16 +48,20 @@ func (s *Server) handlePrelogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Prelogin is unauthenticated and would otherwise be a free enumeration
-	// probe. It records no failures of its own — every address gets an answer,
-	// so it has no notion of failure — but it spends the same per-IP budget
-	// that failed logins consume, which is the intent: an attacker walking a
-	// list of addresses pays either way.
-	ipKey := "ip:" + ClientIP(r)
-	if allowed, retryAfter := s.limiter.Allow(ipKey); !allowed {
+	// Prelogin is not an enumeration oracle: the decoy salt below answers
+	// identically for an address with an account and one without, which is what
+	// actually defeats enumeration. The limit here bounds abuse of an
+	// unauthenticated endpoint that does a database lookup and an HMAC per call.
+	//
+	// It records against its own budget on every call, not just on failure —
+	// prelogin has no notion of failure, since every address gets an answer, so
+	// a read-only check would bound nothing at all.
+	preloginKey := "prelogin:" + ClientIP(r)
+	if allowed, retryAfter := s.preloginLimiter.Allow(preloginKey); !allowed {
 		tooManyAttempts(w, retryAfter)
 		return
 	}
+	s.preloginLimiter.RecordFailure(preloginKey)
 
 	normalized := store.NormalizeEmail(req.Email)
 	response := map[string]string{

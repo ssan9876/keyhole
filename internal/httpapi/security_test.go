@@ -80,8 +80,12 @@ func TestASpoofedCFHeaderCannotEvadeTheIPLimit(t *testing.T) {
 	srv := newTestServer(t)
 	enrollTestUser(t, srv, "person@example.com")
 
-	attempt := func(forwarded string) int {
-		body := `{"email":"other@example.com","authHash":"wrong"}`
+	// Vary the account as well as the spoofed address. Holding the email
+	// constant would let the per-account limiter alone produce the 429, and
+	// this test would pass even if CF-Connecting-IP were trusted
+	// unconditionally — precisely the bug it exists to catch.
+	attempt := func(forwarded, email string) int {
+		body := fmt.Sprintf(`{"email":%q,"authHash":"wrong"}`, email)
 		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		req.RemoteAddr = "203.0.113.50:5555" // NOT loopback
@@ -91,13 +95,14 @@ func TestASpoofedCFHeaderCannotEvadeTheIPLimit(t *testing.T) {
 		return rec.Code
 	}
 
-	// Every request claims a different source address. Because the peer is not
-	// loopback the header must be ignored, so all of them count against the one
-	// real address and the throttle still bites. If the header were trusted,
-	// each attempt would look like a fresh client and this would never throttle.
+	// Every request claims a different source address AND a different account,
+	// so no account accumulates more than one failure. Because the peer is not
+	// loopback the header must be ignored, leaving the single real peer address
+	// as the only key that can throttle. If the header were trusted, each
+	// attempt would look like a fresh client and this would never throttle.
 	var last int
 	for i := 0; i < 10; i++ {
-		last = attempt(fmt.Sprintf("198.51.100.%d", i))
+		last = attempt(fmt.Sprintf("198.51.100.%d", i), fmt.Sprintf("spoof%d@example.com", i))
 	}
 	if last != http.StatusTooManyRequests {
 		t.Errorf("status = %d after 10 attempts with rotating spoofed IPs, want %d",
@@ -190,28 +195,42 @@ func TestLoginResponseNeverLeaksStoredCredentialMaterial(t *testing.T) {
 	}
 }
 
-func TestPreloginSharesTheIPBudgetWithLogin(t *testing.T) {
+func TestPreloginIsThrottledOnItsOwnBudget(t *testing.T) {
 	srv := newTestServer(t)
 
-	// Prelogin records no failures itself — every address gets an answer, so it
-	// has no notion of failure — but it must not be a free enumeration probe
-	// either. It spends the same per-IP budget that failed logins consume.
-	if rec := postJSON(t, srv, "/api/auth/prelogin", map[string]string{
-		"email": "probe@example.com",
-	}); rec.Code != http.StatusOK {
-		t.Fatalf("prelogin was throttled before any budget was spent: %d", rec.Code)
-	}
-
-	for i := 0; i < 8; i++ {
-		postJSON(t, srv, "/api/auth/login", map[string]string{
-			"email": "probe@example.com", "authHash": "wrong",
+	// Prelogin records against its own budget on every call, because it has no
+	// notion of failure — every address gets an answer. A read-only check would
+	// bound nothing: an attacker calling only prelogin would never be stopped.
+	var last int
+	for i := 0; i < 30; i++ {
+		rec := postJSON(t, srv, "/api/auth/prelogin", map[string]string{
+			"email": fmt.Sprintf("probe%d@example.com", i),
 		})
+		last = rec.Code
+	}
+	if last != http.StatusTooManyRequests {
+		t.Errorf("prelogin status = %d after 30 calls, want %d — prelogin is not bounded at all",
+			last, http.StatusTooManyRequests)
+	}
+}
+
+func TestPreloginBudgetIsSeparateFromLogin(t *testing.T) {
+	srv := newTestServer(t)
+	_, authHash := enrollTestUser(t, srv, "person@example.com")
+
+	// A real client calls prelogin once per sign-in attempt. Sharing one budget
+	// would mean a user who mistypes their password spends two allowances per
+	// try and gets locked out roughly twice as fast as intended.
+	for i := 0; i < 10; i++ {
+		postJSON(t, srv, "/api/auth/prelogin", map[string]string{"email": "person@example.com"})
 	}
 
-	rec := postJSON(t, srv, "/api/auth/prelogin", map[string]string{"email": "another@example.com"})
-	if rec.Code != http.StatusTooManyRequests {
-		t.Errorf("prelogin status = %d after the IP budget was spent, want %d",
-			rec.Code, http.StatusTooManyRequests)
+	rec := postJSON(t, srv, "/api/auth/login", map[string]string{
+		"email": "person@example.com", "authHash": authHash,
+	})
+	if rec.Code != http.StatusOK {
+		t.Errorf("login status = %d after 10 prelogins, want %d — prelogin is eating the login budget",
+			rec.Code, http.StatusOK)
 	}
 }
 

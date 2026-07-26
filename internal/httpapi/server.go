@@ -18,6 +18,13 @@ type Server struct {
 	logger  *slog.Logger
 	mux     *http.ServeMux
 	limiter *auth.Limiter
+	// preloginLimiter is separate and more generous. Prelogin is not an
+	// enumeration oracle — the decoy salt is what defeats that, by answering
+	// identically for an address with an account and one without. What this
+	// bounds is abuse: an unauthenticated endpoint that does a database lookup
+	// and an HMAC on every call. Keeping it off the login budget means a user
+	// mistyping their password does not spend two allowances per attempt.
+	preloginLimiter *auth.Limiter
 }
 
 // New builds the server and registers every route.
@@ -36,6 +43,10 @@ func New(cfg config.Config, st *store.Store, secret []byte, logger *slog.Logger)
 		// enough that a user mistyping their password never notices, harsh
 		// enough that online guessing against a 64 MiB Argon2id is hopeless.
 		limiter: auth.NewLimiter(5, 2*time.Second, 5*time.Minute),
+		// Twenty free calls before any delay: a real client makes one prelogin
+		// per sign-in attempt, so this never touches a human, while a script
+		// walking an address list hits it immediately.
+		preloginLimiter: auth.NewLimiter(20, time.Second, time.Minute),
 	}
 	s.routes()
 	go s.sweepLimiter()
@@ -51,6 +62,7 @@ func (s *Server) sweepLimiter() {
 	defer ticker.Stop()
 	for range ticker.C {
 		s.limiter.Sweep(time.Hour)
+		s.preloginLimiter.Sweep(time.Hour)
 	}
 }
 

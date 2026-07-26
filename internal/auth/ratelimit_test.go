@@ -33,10 +33,18 @@ func TestLimiterBacksOffExponentially(t *testing.T) {
 		delays = append(delays, retryAfter)
 	}
 
+	// Assert the ratio, not merely that each delay is larger than the last.
+	// Monotonic growth alone would be satisfied by a linear backoff, which
+	// against a 64 MiB Argon2id is not nearly steep enough — the whole point is
+	// that a sustained guessing attempt becomes hopeless within a few attempts,
+	// not gradually inconvenient. The bound is 1.5x rather than exactly 2x so
+	// the assertion survives the sub-millisecond jitter between the
+	// RecordFailure and Allow calls.
 	for i := 1; i < len(delays); i++ {
-		if delays[i] <= delays[i-1] {
-			t.Errorf("delay %d (%v) did not exceed delay %d (%v); backoff is not growing",
-				i, delays[i], i-1, delays[i-1])
+		ratio := float64(delays[i]) / float64(delays[i-1])
+		if ratio < 1.5 {
+			t.Errorf("delay %d (%v) is only %.2fx delay %d (%v); backoff is not exponential",
+				i, delays[i], ratio, i-1, delays[i-1])
 		}
 	}
 }
