@@ -7,6 +7,32 @@ and Swift ones that come with the Android and iOS apps — must reproduce these
 values exactly. If a port cannot, it is wrong, and shipping it would produce
 vaults that cannot be opened.
 
+## What is in the file
+
+| Key | Contents |
+|---|---|
+| `params` | The rules the arithmetic does not reveal: Argon2id including version `0x13`, NFC password normalization, the HKDF hash and info strings, the seal info concatenation order, key and salt lengths, and the Crockford encoding — which is **not** standard Base32 |
+| `kdf` | master password -> masterKey -> wrapKey, authHash |
+| `normalization` | Inputs that differ byte-for-byte but must produce identical output: a decomposed password, an untrimmed mixed-case email, a loosely typed recovery code |
+| `aesGcm`, `seal`, `recovery`, `fingerprint` | Single-operation known-answer vectors |
+| `itemPlaintext` | The exact JSON that gets encrypted, for both variants of the discriminated union |
+| `composed` | One unbroken chain: master password -> wrappingKey -> protectedUserKey -> userKey -> wrappedItemKey -> itemKey, so a failing end-to-end port bisects in one step |
+
+Start with `params` and `normalization`. A port can reproduce every
+single-operation vector and still lock a user out by skipping a normalization
+rule.
+
+## Do not reformat this file
+
+It is pure ASCII, with every non-ASCII character written as a `\u` escape. That
+is deliberate and load-bearing: the normalization vectors depend on a
+precomposed and a decomposed spelling of the same word staying distinct, and
+editors, formatters and file writers silently normalize literal characters. A
+well-meaning reformat would make those vectors identical, at which point they
+verify nothing while still appearing to pass.
+
+Regenerate the file rather than editing it.
+
 ## Regenerating
 
 ```bash
