@@ -36,6 +36,7 @@ func New(cfg config.Config, st *store.Store, secret []byte, logger *slog.Logger)
 
 func (s *Server) routes() {
 	s.mux.HandleFunc("GET /healthz", s.handleHealthz)
+	s.mux.HandleFunc("POST /api/enroll/{token}", s.handleEnroll)
 
 	// Anything unmatched is a 404 in the standard envelope rather than Go's
 	// plain-text default, so a client only ever parses one error shape.
