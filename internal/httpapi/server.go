@@ -3,6 +3,7 @@ package httpapi
 import (
 	"log/slog"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/ssan9876/keyhole/internal/auth"
@@ -25,6 +26,12 @@ type Server struct {
 	// and an HMAC on every call. Keeping it off the login budget means a user
 	// mistyping their password does not spend two allowances per attempt.
 	preloginLimiter *auth.Limiter
+	// stop ends the background sweeper. Without it every server leaks a
+	// goroutine holding a ten-minute ticker — invisible in production, where
+	// there is one server for the life of the process, but newTestServer is the
+	// fixture every handler test uses and will keep using.
+	stop     chan struct{}
+	stopOnce sync.Once
 }
 
 // New builds the server and registers every route.
@@ -47,22 +54,41 @@ func New(cfg config.Config, st *store.Store, secret []byte, logger *slog.Logger)
 		// per sign-in attempt, so this never touches a human, while a script
 		// walking an address list hits it immediately.
 		preloginLimiter: auth.NewLimiter(20, time.Second, time.Minute),
+		stop:            make(chan struct{}),
 	}
+	// WriteError and WriteJSON are free functions with no server to reach, so
+	// this is how their one log line ends up in the configured destination and
+	// format rather than the global slog's.
+	setWriteLogger(logger)
 	s.routes()
 	go s.sweepLimiter()
 	return s
 }
 
+// Close releases the server's background resources. It does not touch the
+// store or the http.Server; those belong to whoever created them.
+//
+// Safe to call more than once, and safe to call on a server that is still
+// serving — all it stops is the sweeper.
+func (s *Server) Close() error {
+	s.stopOnce.Do(func() { close(s.stop) })
+	return nil
+}
+
 // sweepLimiter discards stale rate-limit entries. Without it, an attacker
-// cycling source addresses grows the entries map without bound. Runs for the
-// life of the process; the server is a long-lived singleton, so there is
-// nothing to stop.
+// cycling source addresses grows the entries map without bound. It runs for
+// the life of the server and exits on Close.
 func (s *Server) sweepLimiter() {
 	ticker := time.NewTicker(10 * time.Minute)
 	defer ticker.Stop()
-	for range ticker.C {
-		s.limiter.Sweep(time.Hour)
-		s.preloginLimiter.Sweep(time.Hour)
+	for {
+		select {
+		case <-ticker.C:
+			s.limiter.Sweep(time.Hour)
+			s.preloginLimiter.Sweep(time.Hour)
+		case <-s.stop:
+			return
+		}
 	}
 }
 

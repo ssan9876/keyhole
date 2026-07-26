@@ -188,7 +188,7 @@ func TestALoopbackPeerIsRateLimitedPerForwardedAddress(t *testing.T) {
 	}
 }
 
-func TestUnknownAndRealAccountsAreTimingComparable(t *testing.T) {
+func TestTheUnknownAccountPathStillPaysTheArgon2idCost(t *testing.T) {
 	srv := newTestServer(t)
 	enrollTestUser(t, srv, "person@example.com")
 
@@ -204,14 +204,25 @@ func TestUnknownAndRealAccountsAreTimingComparable(t *testing.T) {
 	real := measure("person@example.com")
 	unknown := measure("ghost@example.com")
 
-	// The unknown-account path must still pay the Argon2id cost. Returning
-	// early would make it dramatically faster and turn login into an oracle for
-	// which addresses have accounts here. The bound is loose on purpose: this
-	// catches "no hashing at all", not microsecond differences, which a network
-	// hides anyway.
-	ratio := float64(real) / float64(unknown)
-	if ratio > 5 || ratio < 0.2 {
-		t.Errorf("timing differs too much: real %v, unknown %v (ratio %.2f)", real, unknown, ratio)
+	// A floor, not a ratio between the two. The property that matters is that
+	// the unknown-account path hashes at all — returning early would make it
+	// dramatically faster and turn login into an oracle for which addresses
+	// have accounts here. VerifyAuthHash against a 64 MiB Argon2id cannot
+	// complete in under 10 ms, so anything at or above that floor did the work.
+	//
+	// The ratio this replaces risked a false *failure*: two single samples
+	// under a loaded test runner can differ by 5x for reasons that have nothing
+	// to do with the code. A floor only gets safer as the machine gets busier.
+	const argon2Floor = 10 * time.Millisecond
+	if unknown < argon2Floor {
+		t.Errorf("the unknown-account login took %v, under the %v an Argon2id verification cannot beat; it is returning early",
+			unknown, argon2Floor)
+	}
+	// The known-account path is the control: if it were somehow under the floor
+	// too, the floor itself would be wrong rather than the unknown path right.
+	if real < argon2Floor {
+		t.Errorf("the known-account login took %v, under the %v floor; the floor no longer reflects what Argon2id costs",
+			real, argon2Floor)
 	}
 }
 

@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -45,6 +47,25 @@ func TestWriteJSON(t *testing.T) {
 	}
 	if got := strings.TrimSpace(rec.Body.String()); got != `{"id":"abc"}` {
 		t.Errorf("body = %q, want %q", got, `{"id":"abc"}`)
+	}
+}
+
+func TestWriteJSONLogsAnEncodeFailureToTheConfiguredLogger(t *testing.T) {
+	var sink bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&sink, nil))
+	setWriteLogger(logger)
+
+	// A channel has no JSON representation, so Encode fails after the status
+	// line has already gone out and logging is the only thing left to do.
+	rec := httptest.NewRecorder()
+	WriteJSON(rec, http.StatusOK, map[string]any{"unencodable": make(chan int)})
+
+	// Every other line in the app goes through the logger New was given. This
+	// one used the global slog, so it alone would land in a different format
+	// and a different destination — and WriteError is what every endpoint in
+	// the next plan will call.
+	if !strings.Contains(sink.String(), "encode response") {
+		t.Errorf("the encode failure did not reach the configured logger; it logged:\n%s", sink.String())
 	}
 }
 

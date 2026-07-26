@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -67,8 +68,23 @@ func TestSecurityHeadersAreSet(t *testing.T) {
 			t.Errorf("%s = %q, want %q", header, got, value)
 		}
 	}
-	if csp := rec.Header().Get("Content-Security-Policy"); csp == "" {
-		t.Error("Content-Security-Policy is not set")
+	csp := rec.Header().Get("Content-Security-Policy")
+	if csp == "" {
+		t.Fatal("Content-Security-Policy is not set")
+	}
+	// Naming the directives, not just checking the header is non-empty: a
+	// regression to a weaker but still non-empty policy is exactly the change
+	// this test exists to catch, and it would have passed before.
+	for _, directive := range []string{
+		"default-src 'self'",
+		"script-src 'self'",
+		"object-src 'none'",
+		"frame-ancestors 'none'",
+		"base-uri 'none'",
+	} {
+		if !strings.Contains(csp, directive) {
+			t.Errorf("Content-Security-Policy is missing %q; policy is %q", directive, csp)
+		}
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync/atomic"
 )
 
 // ErrorCode is a stable identifier a client can branch on. Messages are for
@@ -39,6 +40,38 @@ type errorBody struct {
 	Message string    `json:"message"`
 }
 
+// writeLogger is where WriteJSON reports an encode failure.
+//
+// WriteError and WriteJSON are free functions, called from handlers, from
+// recoverPanic, and from tests — every endpoint in the next plan will call
+// them. Threading a *slog.Logger through would change two exported signatures
+// at 33 non-test call sites and oblige every future handler to carry a logger
+// into every error write, all to serve one line that fires when a response body
+// fails to encode. So: a package-level default, set once from New, rather than
+// the global slog.
+//
+// atomic.Pointer, not a plain var, because tests construct servers freely and
+// two of them racing on a plain assignment is a data race the race detector
+// would rightly flag. Last writer wins, which is correct: a process has one
+// configured logger, and in a test binary every server's logger discards.
+var writeLogger atomic.Pointer[slog.Logger]
+
+// setWriteLogger points the encode-failure path at the configured logger.
+func setWriteLogger(logger *slog.Logger) {
+	if logger != nil {
+		writeLogger.Store(logger)
+	}
+}
+
+func writeLoggerOrDefault() *slog.Logger {
+	if logger := writeLogger.Load(); logger != nil {
+		return logger
+	}
+	// Reachable only if WriteJSON is called before any server exists, which in
+	// practice means a test.
+	return slog.Default()
+}
+
 func WriteError(w http.ResponseWriter, status int, code ErrorCode, message string) {
 	WriteJSON(w, status, errorEnvelope{Error: errorBody{Code: code, Message: message}})
 }
@@ -48,7 +81,7 @@ func WriteJSON(w http.ResponseWriter, status int, payload any) {
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		// The status line is already sent, so this can only be logged.
-		slog.Error("encode response", "error", err)
+		writeLoggerOrDefault().Error("encode response", "error", err)
 	}
 }
 

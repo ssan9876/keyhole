@@ -64,9 +64,12 @@ func runServe(args []string) error {
 		return err
 	}
 
+	api := httpapi.New(cfg, st, serverSecret, logger)
+	defer api.Close()
+
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.New(cfg, st, serverSecret, logger).Handler(),
+		Handler:           api.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
 		WriteTimeout:      30 * time.Second,

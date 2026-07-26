@@ -31,7 +31,32 @@ func newTestServer(t *testing.T) *Server {
 	cfg.BaseURL = "http://test.local"
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	return New(cfg, st, make([]byte, 32), logger)
+	srv := New(cfg, st, make([]byte, 32), logger)
+	// Every server starts a sweeper goroutine holding a ten-minute ticker.
+	// Without this, one leaks per test — and this fixture is what every handler
+	// test in the next plan will build on.
+	t.Cleanup(func() { _ = srv.Close() })
+	return srv
+}
+
+func TestCloseStopsTheLimiterSweeperAndIsSafeToRepeat(t *testing.T) {
+	srv := newTestServer(t)
+
+	if err := srv.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	select {
+	case <-srv.stop:
+	default:
+		t.Error("Close did not signal the sweeper to stop")
+	}
+
+	// newTestServer's cleanup will call Close again, and serve does too on a
+	// path that may already have closed. A second close of the channel would
+	// panic, so this must be idempotent.
+	if err := srv.Close(); err != nil {
+		t.Errorf("second Close: %v", err)
+	}
 }
 
 func TestHealthzReportsOK(t *testing.T) {
