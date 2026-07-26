@@ -27,8 +27,20 @@ type Item struct {
 
 // ItemInput is what a client uploads. Both blobs are opaque: the server checks
 // they are present and stores them byte for byte.
+//
+// CollectionID is a pointer because "not supplied" and "supplied as empty" have
+// to be distinguishable. A plain string cannot tell them apart, and the
+// indistinguishable case is a data-loss bug: a client that PUTs a new body
+// without echoing collectionId would silently move a shared item back to
+// personal, and every other member's next sync would drop it with no error.
+//
+//   - nil means "no opinion": a personal item on create, and no change to the
+//     item's sharing on update.
+//   - a non-nil pointer is an explicit statement of intent and must name a
+//     collection. A pointer to "" is neither, so it is rejected rather than
+//     guessed at.
 type ItemInput struct {
-	CollectionID   string // "" means a personal item
+	CollectionID   *string
 	Ciphertext     string
 	WrappedItemKey string
 }
@@ -40,14 +52,37 @@ func (in ItemInput) validate() error {
 	if in.WrappedItemKey == "" {
 		return &ValidationError{Field: "wrappedItemKey"}
 	}
+	if in.CollectionID != nil && *in.CollectionID == "" {
+		return &ValidationError{
+			Field:   "collectionId",
+			Message: "must name a collection; omit it entirely to leave the item personal",
+		}
+	}
 	return nil
 }
 
 func (in ItemInput) collection() sql.NullString {
-	if in.CollectionID == "" {
+	if in.CollectionID == nil {
 		return sql.NullString{}
 	}
-	return sql.NullString{String: in.CollectionID, Valid: true}
+	return sql.NullString{String: *in.CollectionID, Valid: true}
+}
+
+// requireOneRow turns a guarded UPDATE that matched nothing into an error
+// instead of a silent success. Both item writes select the row inside their own
+// transaction first, so a mismatch is not reachable today — which is exactly
+// why it needs a check: if it ever becomes reachable, the failure mode is a
+// committed transaction that burned a revision, changed no row, and returned a
+// struct describing a write that did not happen.
+func requireOneRow(result sql.Result, what string) error {
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("%s: rows affected: %w", what, err)
+	}
+	if affected != 1 {
+		return fmt.Errorf("%s: %d rows affected, want 1", what, affected)
+	}
+	return nil
 }
 
 const itemColumns = `id, owner_user_id, collection_id, ciphertext,
@@ -206,20 +241,40 @@ func (s *Store) UpdateItem(ctx context.Context, id string, expectedRevision int6
 
 	now := time.Now().UTC()
 
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE items SET collection_id = ?, ciphertext = ?, wrapped_item_key = ?,
+	// collection_id is written only when the client said something about it.
+	// Writing it unconditionally makes a body-only edit un-share the item, and
+	// the owner never sees an error — the other members' items simply vanish on
+	// their next sync.
+	setCollection := ""
+	args := []any{in.Ciphertext, in.WrappedItemKey, revision, now.Format(time.RFC3339)}
+	if in.CollectionID != nil {
+		setCollection = "collection_id = ?, "
+		args = append([]any{in.collection()}, args...)
+	}
+	args = append(args, id, expectedRevision)
+
+	result, err := tx.ExecContext(ctx,
+		`UPDATE items SET `+setCollection+`ciphertext = ?, wrapped_item_key = ?,
 			revision = ?, updated_at = ?
-		 WHERE id = ? AND revision = ? AND deleted_at IS NULL`,
-		in.collection(), in.Ciphertext, in.WrappedItemKey,
-		revision, now.Format(time.RFC3339), id, expectedRevision); err != nil {
+		 WHERE id = ? AND revision = ? AND deleted_at IS NULL`, args...)
+	if err != nil {
 		return Item{}, fmt.Errorf("update item: %w", err)
+	}
+	// The in-transaction SELECT above guarantees a match today, so this is a
+	// guard against a future edit to either the SELECT or the WHERE clause
+	// silently diverging. Committing a zero-row update would burn a revision
+	// and hand the client a success struct describing a row that never changed.
+	if err := requireOneRow(result, "update item"); err != nil {
+		return Item{}, err
 	}
 
 	if err := tx.Commit(); err != nil {
 		return Item{}, fmt.Errorf("commit item update: %w", err)
 	}
 
-	current.CollectionID = in.collection()
+	if in.CollectionID != nil {
+		current.CollectionID = in.collection()
+	}
 	current.Ciphertext = in.Ciphertext
 	current.WrappedItemKey = in.WrappedItemKey
 	current.Revision = revision
@@ -262,12 +317,19 @@ func (s *Store) DeleteItem(ctx context.Context, id string) (Item, error) {
 	now := time.Now().UTC()
 	stamp := now.Format(time.RFC3339)
 
-	if _, err := tx.ExecContext(ctx,
+	result, err := tx.ExecContext(ctx,
 		`UPDATE items SET ciphertext = '', wrapped_item_key = '',
 			revision = ?, updated_at = ?, deleted_at = ?
 		 WHERE id = ? AND deleted_at IS NULL`,
-		revision, stamp, stamp, id); err != nil {
+		revision, stamp, stamp, id)
+	if err != nil {
 		return Item{}, fmt.Errorf("delete item: %w", err)
+	}
+	// See UpdateItem: a zero-row delete that commits would report a tombstone
+	// the database does not have, and the client would stop showing an item
+	// that is still there.
+	if err := requireOneRow(result, "delete item"); err != nil {
+		return Item{}, err
 	}
 
 	if err := tx.Commit(); err != nil {

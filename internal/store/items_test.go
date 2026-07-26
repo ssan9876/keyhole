@@ -284,6 +284,112 @@ func TestUpdatingATombstoneIsNotFound(t *testing.T) {
 	}
 }
 
+// seedCollection creates a collection row directly. The collections store API
+// does not exist yet, and these tests need something a foreign key will accept.
+func seedCollection(t *testing.T, st *Store, createdBy, name string) string {
+	t.Helper()
+	id, err := NewID()
+	if err != nil {
+		t.Fatalf("NewID: %v", err)
+	}
+	if _, err := st.DB().ExecContext(context.Background(),
+		`INSERT INTO collections (id, name, created_by, created_at)
+		 VALUES (?, ?, ?, '2026-01-01T00:00:00Z')`, id, name, createdBy); err != nil {
+		t.Fatalf("seed collection: %v", err)
+	}
+	return id
+}
+
+func TestUpdateItemWithoutACollectionLeavesASharedItemShared(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	userID := enrolledUserID(t, st, "owner@example.com")
+	collectionID := seedCollection(t, st, userID, "Household")
+
+	created, err := st.CreateItem(ctx, userID, ItemInput{
+		CollectionID: &collectionID, Ciphertext: "v1", WrappedItemKey: "k",
+	})
+	if err != nil {
+		t.Fatalf("CreateItem: %v", err)
+	}
+
+	// A client editing only the body does not echo collectionId back. When that
+	// meant "personal", the item silently left the collection and every other
+	// member's next sync dropped it — no error anywhere, on either side.
+	updated, err := st.UpdateItem(ctx, created.ID, created.Revision,
+		ItemInput{Ciphertext: "v2", WrappedItemKey: "k"})
+	if err != nil {
+		t.Fatalf("UpdateItem: %v", err)
+	}
+
+	stored, err := st.ItemByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("ItemByID: %v", err)
+	}
+	if !stored.CollectionID.Valid || stored.CollectionID.String != collectionID {
+		t.Errorf("stored collection_id = %+v, want %q — a body-only edit un-shared the item",
+			stored.CollectionID, collectionID)
+	}
+	if !updated.CollectionID.Valid || updated.CollectionID.String != collectionID {
+		t.Errorf("returned CollectionID = %+v, want %q", updated.CollectionID, collectionID)
+	}
+	if stored.Ciphertext != "v2" {
+		t.Errorf("stored Ciphertext = %q, want the new body", stored.Ciphertext)
+	}
+}
+
+func TestUpdateItemMovesAnItemWhenTheCollectionIsStated(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	userID := enrolledUserID(t, st, "owner@example.com")
+	first := seedCollection(t, st, userID, "Household")
+	second := seedCollection(t, st, userID, "Work")
+
+	// Leaving the collection alone must not cost the ability to change it: a
+	// non-nil pointer is an explicit statement of intent and is obeyed.
+	created, err := st.CreateItem(ctx, userID, ItemInput{
+		CollectionID: &first, Ciphertext: "v1", WrappedItemKey: "k",
+	})
+	if err != nil {
+		t.Fatalf("CreateItem: %v", err)
+	}
+
+	if _, err := st.UpdateItem(ctx, created.ID, created.Revision, ItemInput{
+		CollectionID: &second, Ciphertext: "v2", WrappedItemKey: "k",
+	}); err != nil {
+		t.Fatalf("UpdateItem: %v", err)
+	}
+
+	stored, err := st.ItemByID(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("ItemByID: %v", err)
+	}
+	if !stored.CollectionID.Valid || stored.CollectionID.String != second {
+		t.Errorf("stored collection_id = %+v, want the item moved to %q",
+			stored.CollectionID, second)
+	}
+}
+
+func TestAnEmptyCollectionIDIsRejectedRatherThanGuessedAt(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	userID := enrolledUserID(t, st, "owner@example.com")
+
+	// A pointer to "" is neither "no opinion" nor a collection. Treating it as
+	// either one silently does something the client did not ask for.
+	empty := ""
+	_, err := st.CreateItem(ctx, userID, ItemInput{
+		CollectionID: &empty, Ciphertext: "c", WrappedItemKey: "k",
+	})
+	var validation *ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("CreateItem err = %v, want a *ValidationError", err)
+	}
+	if validation.Field != "collectionId" {
+		t.Errorf("Field = %q, want %q", validation.Field, "collectionId")
+	}
+}
+
 func TestCreateItemsBulkIsAllOrNothing(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()
@@ -299,10 +405,10 @@ func TestCreateItemsBulkIsAllOrNothing(t *testing.T) {
 	// validate() short-circuits before BeginTx, so no transaction ever exists;
 	// with such a row, replacing `defer tx.Rollback()` with `defer tx.Commit()`
 	// passed the earlier version of this test.
-	const missingCollection = "ffffffffffffffffffffffffffffffff"
+	missingCollection := "ffffffffffffffffffffffffffffffff"
 	_, err := st.CreateItemsBulk(ctx, userID, []ItemInput{
 		{Ciphertext: "ok-1", WrappedItemKey: "k"},
-		{CollectionID: missingCollection, Ciphertext: "orphan", WrappedItemKey: "k"},
+		{CollectionID: &missingCollection, Ciphertext: "orphan", WrappedItemKey: "k"},
 		{Ciphertext: "ok-2", WrappedItemKey: "k"},
 	})
 	if err == nil {

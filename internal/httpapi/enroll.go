@@ -48,7 +48,9 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	if req.AuthHash == "" {
 		// Hashing an empty string succeeds and costs exactly as much as hashing
 		// a real one, so this has to be checked before the hash, not after.
-		WriteError(w, http.StatusBadRequest, CodeBadRequest, "enrollment field \"authHash\" is required")
+		// Worded by hand to match (*store.ValidationError).Error(), which is what
+		// every other missing field in this payload renders as.
+		WriteError(w, http.StatusBadRequest, CodeBadRequest, "field \"authHash\" is required")
 		return
 	}
 

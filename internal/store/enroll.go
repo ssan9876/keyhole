@@ -41,15 +41,24 @@ func (in EnrollmentInput) validate() error {
 	return nil
 }
 
-// ValidationError means the client's enrollment payload was incomplete or
-// malformed. It is the caller's fault and is safe to report back to them —
-// unlike a database failure, whose text must never reach a client.
+// ValidationError means the client's payload was incomplete or malformed. It
+// is the caller's fault and is safe to report back to them — unlike a database
+// failure, whose text must never reach a client.
+//
+// Message carries a specific explanation for the cases where "is required" is
+// not the truth: a field that was supplied but is unusable needs to say so, or
+// the client is told to send something it already sent. It is optional, and an
+// empty Message keeps the plain required-field wording.
 type ValidationError struct {
-	Field string
+	Field   string
+	Message string
 }
 
 func (e *ValidationError) Error() string {
-	return fmt.Sprintf("enrollment field %q is required", e.Field)
+	if e.Message != "" {
+		return fmt.Sprintf("field %q: %s", e.Field, e.Message)
+	}
+	return fmt.Sprintf("field %q is required", e.Field)
 }
 
 // CompleteEnrollment consumes the invite and activates the account in one
