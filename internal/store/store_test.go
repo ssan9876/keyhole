@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -105,5 +106,38 @@ func TestWALIsEnabled(t *testing.T) {
 	}
 	if mode != "wal" {
 		t.Errorf("journal_mode = %q, want %q", mode, "wal")
+	}
+}
+
+func TestSchemaVersionOnAnUnmigratedDatabase(t *testing.T) {
+	// Deliberately not openTemp: that helper migrates first, which is exactly
+	// the ordering that hides this bug. `keyhole migrate` reads the version
+	// before creating the tracking table on every first-ever run.
+	s, err := Open(filepath.Join(t.TempDir(), "fresh.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	version, err := s.SchemaVersion(context.Background())
+	if err != nil {
+		t.Fatalf("SchemaVersion on a fresh database returned an error: %v", err)
+	}
+	if version != 0 {
+		t.Errorf("SchemaVersion = %d on a fresh database, want 0", version)
+	}
+}
+
+func TestOpenCreatesTheParentDirectory(t *testing.T) {
+	nested := filepath.Join(t.TempDir(), "does", "not", "exist", "keyhole.db")
+
+	s, err := Open(nested)
+	if err != nil {
+		t.Fatalf("Open should create the parent directory, got: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	if _, err := os.Stat(nested); err != nil {
+		t.Errorf("database file was not created: %v", err)
 	}
 }

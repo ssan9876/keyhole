@@ -4,6 +4,8 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	_ "modernc.org/sqlite" // pure-Go driver, registered as "sqlite"
 )
@@ -21,6 +23,11 @@ type Store struct {
 //     are the common case.
 //   - busy_timeout turns "database is locked" from an error into a wait.
 func Open(dbPath string) (*Store, error) {
+	dir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, fmt.Errorf("create database directory %s: %w", dir, err)
+	}
+
 	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", dbPath)
 
 	db, err := sql.Open("sqlite", dsn)
