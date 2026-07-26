@@ -165,6 +165,10 @@ describe("frozen vectors: normalization", () => {
   it("derives one recovery key however the code was typed", async () => {
     const { canonical, asTyped, recoverySaltBase64, recoveryKeyBase64 } =
       vectors.normalization.recoveryCode;
+    // Guard the vector itself: if canonical and asTyped were ever the same
+    // string, deriving the same key from the same input would pass this test
+    // while proving nothing about normalization.
+    expect(asTyped).not.toBe(canonical);
     const salt = fromBase64(recoverySaltBase64);
     expect(toBase64(await deriveRecoveryKey(asTyped, salt, DEFAULT_KDF_PARAMS))).toBe(
       recoveryKeyBase64,

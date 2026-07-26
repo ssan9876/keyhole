@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -32,8 +32,20 @@ const NODE_BUILTINS = new Set([
 
 const srcDir = dirname(fileURLToPath(import.meta.url));
 
-function runtimeSourceFiles(): string[] {
-  return readdirSync(srcDir).filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"));
+/** Recurses into subdirectories so a future src/ subfolder cannot silently
+ *  escape the node: import check below. Paths are returned relative to
+ *  srcDir (e.g. "nested/probe.ts") so callers can still join(srcDir, name). */
+function runtimeSourceFiles(dir: string = srcDir): string[] {
+  const files: string[] = [];
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const entryPath = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...runtimeSourceFiles(entryPath));
+    } else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) {
+      files.push(relative(srcDir, entryPath));
+    }
+  }
+  return files;
 }
 
 /** Every module specifier in the file: `from "x"`, `import "x"`, `require("x")`. */

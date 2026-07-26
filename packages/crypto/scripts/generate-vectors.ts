@@ -79,6 +79,28 @@ const ITEM_NOTE: NoteItem = {
  *  identically to the literal character, but the file on disk stays pure
  *  ASCII, so no editor, formatter or file writer can silently renormalize the
  *  Unicode vectors into the form they are meant to distinguish. */
+/** Compares two strings by their encoded UTF-8 bytes, not by JavaScript
+ *  string equality. Comparing the two password literals with === is
+ *  already false today, so plain string equality is not the hazard this
+ *  guards against. The hazard is a file-level normalization (an editor or
+ *  formatter tidying a combining-accent escape into a literal combining
+ *  character, which a save then renormalizes to match the precomposed
+ *  constant) that leaves both source literals holding identical bytes.
+ *  Comparing the encoded bytes is what actually catches that, rather than
+ *  trusting a string comparison that would just as happily pass on the
+ *  collapsed input. */
+function utf8BytesEqual(a: string, b: string): boolean {
+  return toBase64(utf8Encode(a)) === toBase64(utf8Encode(b));
+}
+
+/** Plain string equality through a `string`-typed parameter, so comparing two
+ *  distinct string-literal constants doesn't trip TS2367 ("this comparison
+ *  appears to be unintentional") — the whole point here is to assert they are
+ *  unintentional if they ever match. */
+function stringsEqual(a: string, b: string): boolean {
+  return a === b;
+}
+
 function escapeNonAscii(json: string): string {
   let out = "";
   for (let i = 0; i < json.length; i += 1) {
@@ -95,10 +117,54 @@ async function main(): Promise<void> {
   const wrapKey = deriveWrapKey(masterKey);
   const recipientPublic = publicKeyFor(RECIPIENT_PRIVATE);
 
+  // Guard the inputs, not just the outputs. If the precomposed and decomposed
+  // password literals ever collapse to identical UTF-8 bytes (an editor
+  // "tidying" a \u0301 escape into a literal combining character, which a
+  // save then renormalizes to match the precomposed constant),
+  // deriveMasterKey trivially returns the same output from the same input,
+  // the agreement check below passes, and the generated vector would assert
+  // nothing about normalization at all — it would just be a value equal to
+  // itself.
+  if (utf8BytesEqual(NFC_PASSWORD_PRECOMPOSED, NFC_PASSWORD_DECOMPOSED)) {
+    throw new Error(
+      "NFC normalization vector inputs collapsed: the precomposed and decomposed " +
+        "password literals encode to identical UTF-8 bytes. This vector exists to " +
+        "prove two different spellings derive the same key; with identical inputs " +
+        "it would assert nothing and still appear to pass. Restore the distinct " +
+        "\\u escapes for NFC_PASSWORD_PRECOMPOSED / NFC_PASSWORD_DECOMPOSED.",
+    );
+  }
+
   const nfcPrecomposed = await deriveMasterKey(NFC_PASSWORD_PRECOMPOSED, NFC_SALT);
   const nfcDecomposed = await deriveMasterKey(NFC_PASSWORD_DECOMPOSED, NFC_SALT);
   if (toBase64(nfcPrecomposed) !== toBase64(nfcDecomposed)) {
     throw new Error("NFC normalization vector is inconsistent; refusing to write it");
+  }
+
+  // Same hazard, plain-string form: trimming/casing differences do not
+  // collapse under Unicode normalization the way combining accents do, but an
+  // accidental copy-paste that makes the "as typed" email identical to the
+  // canonical one would silently produce the same non-guarantee.
+  if (stringsEqual(FINGERPRINT_EMAIL, FINGERPRINT_EMAIL_MESSY)) {
+    throw new Error(
+      "Email normalization vector inputs collapsed: FINGERPRINT_EMAIL and " +
+        "FINGERPRINT_EMAIL_MESSY are identical strings. This vector exists to prove " +
+        "an untrimmed, mixed-case email fingerprints the same as its canonical form; " +
+        "with identical inputs it would assert nothing about trimming or " +
+        "lowercasing and still appear to pass.",
+    );
+  }
+
+  // Same hazard again, for the recovery code pair.
+  if (stringsEqual(RECOVERY_CODE, RECOVERY_CODE_MESSY)) {
+    throw new Error(
+      "Recovery code normalization vector inputs collapsed: RECOVERY_CODE and " +
+        "RECOVERY_CODE_MESSY are identical strings. This vector exists to prove a " +
+        "messily-typed recovery code derives the same key as its canonical form; " +
+        "with identical inputs it would assert nothing about the normalization " +
+        "(uppercasing, stripping whitespace/hyphens, I/L/O mapping) and still " +
+        "appear to pass.",
+    );
   }
 
   const recoveryKey = await deriveRecoveryKey(RECOVERY_CODE, RECOVERY_SALT, DEFAULT_KDF_PARAMS);
