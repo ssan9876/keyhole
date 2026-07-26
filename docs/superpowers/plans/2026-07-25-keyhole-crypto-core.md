@@ -2159,7 +2159,7 @@ export * from "./recovery.js";
 - [ ] **Step 5: Run the tests to verify they pass**
 
 Run: `pnpm --filter @keyhole/crypto test src/crockford.test.ts src/recovery.test.ts`
-Expected: PASS — 16 tests (6 crockford, 10 recovery).
+Expected: PASS — 17 tests (6 crockford, 11 recovery).
 
 - [ ] **Step 6: Commit**
 
