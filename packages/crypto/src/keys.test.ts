@@ -100,11 +100,31 @@ describe("enrollUser", () => {
     expect((await enrollUser(PASSWORD, RAISED_PARAMS)).params).toEqual(RAISED_PARAMS);
   });
 
-  it("produces different key material for two users with the same password", async () => {
+  // Two housemates who happen to pick the same master password must still be
+  // cryptographically separated. Asserting only that the random userKeys differ
+  // would re-verify the RNG; what matters is that the stored blob differs and
+  // that A's wrapping key is useless against B's.
+  it("keeps two users with the same password from reaching each other's vault", async () => {
     const a = await enrollUser(PASSWORD);
     const b = await enrollUser(PASSWORD);
-    expect(toBase64(a.userKey)).not.toBe(toBase64(b.userKey));
+
+    expect(a.protectedUserKey).not.toBe(b.protectedUserKey);
     expect(toBase64(a.authHash)).not.toBe(toBase64(b.authHash));
+    expect(toBase64(a.kdfSalt)).not.toBe(toBase64(b.kdfSalt));
+
+    // A's session, pointed at B's blob, must fail rather than yield anything.
+    const aSession = await beginUnlock(PASSWORD, a.kdfSalt);
+    await expect(aSession.finish(b.protectedUserKey, b.encryptedPrivateKey)).rejects.toThrow(
+      DecryptionError,
+    );
+    aSession.destroy();
+
+    // And A's own blob still opens, so the failure above was B's wrapping, not
+    // a broken session.
+    const aAgain = await beginUnlock(PASSWORD, a.kdfSalt);
+    const unlocked = await aAgain.finish(a.protectedUserKey, a.encryptedPrivateKey);
+    expect(toBase64(unlocked.userKey)).toBe(toBase64(a.userKey));
+    aAgain.destroy();
   });
 });
 

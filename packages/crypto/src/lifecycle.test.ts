@@ -4,6 +4,7 @@ import { openSealed, sealToUser } from "./seal.js";
 import { decryptItem, encryptItem, type LoginItem } from "./item.js";
 import { createRecoveryBlob, generateRecoveryCode, recoverUserKey } from "./recovery.js";
 import { DecryptionError } from "./errors.js";
+import { DEFAULT_KDF_PARAMS, type KdfParams } from "./kdf.js";
 import { toBase64 } from "./encoding.js";
 
 const netflix: LoginItem = {
@@ -82,5 +83,61 @@ describe("end-to-end lifecycle", () => {
     );
     expect(toBase64(recoveredUserKey)).toBe(toBase64(user.userKey));
     expect(await decryptItem(item, recoveredUserKey)).toEqual(netflix);
+  });
+
+  // The spec says KDF params are stored per user "so they can be raised later
+  // without a flag day". This is the only executable evidence for that
+  // capability, and it covers recovery specifically: a recovery blob wrapped
+  // under one set of params and opened under another yields a different key,
+  // which is how a correct recovery code fails at the worst possible moment.
+  it("enrolls, unlocks and recovers under raised KDF params", async () => {
+    const raised: Readonly<KdfParams> = Object.freeze({
+      algorithm: "argon2id",
+      memoryKiB: 131072,
+      iterations: 4,
+      parallelism: 4,
+    });
+
+    const user = await enrollUser("raised-params-password", raised);
+    expect(user.params).toEqual(raised);
+
+    const item = await encryptItem(netflix, user.userKey);
+
+    const session = await beginUnlock("raised-params-password", user.kdfSalt, user.params);
+    expect(toBase64(session.authHash)).toBe(toBase64(user.authHash));
+    const unlocked = await session.finish(user.protectedUserKey, user.encryptedPrivateKey);
+    session.destroy();
+    expect(toBase64(unlocked.userKey)).toBe(toBase64(user.userKey));
+
+    const code = generateRecoveryCode();
+    const blob = await createRecoveryBlob(user.userKey, code, user.params);
+    expect(blob.params).toEqual(raised);
+
+    const recovered = await recoverUserKey(
+      blob.recoveryProtectedUserKey,
+      code,
+      blob.recoverySalt,
+      blob.params,
+    );
+    expect(toBase64(recovered)).toBe(toBase64(user.userKey));
+    expect(await decryptItem(item, recovered)).toEqual(netflix);
+  });
+
+  // The failure Fix 2 exists to prevent, made concrete: the blob was wrapped
+  // under raised params, and the defaults are supplied at recovery time.
+  it("fails recovery when the blob's params are not the ones supplied", async () => {
+    const raised: Readonly<KdfParams> = Object.freeze({
+      algorithm: "argon2id",
+      memoryKiB: 131072,
+      iterations: 4,
+      parallelism: 4,
+    });
+    const user = await enrollUser("params-mismatch-password", raised);
+    const code = generateRecoveryCode();
+    const blob = await createRecoveryBlob(user.userKey, code, raised);
+
+    await expect(
+      recoverUserKey(blob.recoveryProtectedUserKey, code, blob.recoverySalt, DEFAULT_KDF_PARAMS),
+    ).rejects.toThrow(DecryptionError);
   });
 });
