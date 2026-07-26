@@ -5,7 +5,7 @@ import {
   sealToUserWithEphemeral,
 } from "./seal.js";
 import { generateCollectionKey, generateKeyPair } from "./keys.js";
-import { DecryptionError, MalformedEnvelopeError } from "./errors.js";
+import { DecryptionError, InvalidKeyError, MalformedEnvelopeError } from "./errors.js";
 import { toBase64 } from "./encoding.js";
 
 describe("sealToUser / openSealed", () => {
@@ -74,8 +74,22 @@ describe("sealToUser / openSealed", () => {
 
   it("rejects a recipient public key that is not 32 bytes", async () => {
     await expect(sealToUser(generateCollectionKey(), new Uint8Array(16))).rejects.toThrow(
+      InvalidKeyError,
+    );
+    await expect(sealToUser(generateCollectionKey(), new Uint8Array(16))).rejects.toThrow(
       /32 bytes/,
     );
+  });
+
+  // A compromised server can seal arbitrary bytes to a user as a "collection
+  // key". Without this check the wrong-length result reaches decryptItem and
+  // AES-GCM key import throws — outside the error taxonomy, so a caller
+  // catching KeyholeCryptoError gets an unhandled rejection instead.
+  it("refuses to return an opened secret that is not a 32-byte key", async () => {
+    const recipient = generateKeyPair();
+    const notAKey = new Uint8Array(16).fill(0xaa);
+    const sealed = await sealToUser(notAKey, recipient.publicKey);
+    await expect(openSealed(sealed, recipient.privateKey)).rejects.toThrow(DecryptionError);
   });
 
   it("rejects a sealed blob whose epk is the wrong length", async () => {

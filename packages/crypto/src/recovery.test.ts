@@ -7,7 +7,7 @@ import {
   recoverUserKey,
 } from "./recovery.js";
 import { generateUserKey } from "./keys.js";
-import { DecryptionError, InvalidRecoveryCodeError } from "./errors.js";
+import { DecryptionError, InvalidKeyError, InvalidRecoveryCodeError } from "./errors.js";
 import { DEFAULT_KDF_PARAMS } from "./kdf.js";
 import { toBase64 } from "./encoding.js";
 
@@ -65,6 +65,15 @@ describe("deriveRecoveryKey", () => {
       DEFAULT_KDF_PARAMS,
     );
     expect(toBase64(formatted)).toBe(toBase64(messy));
+  });
+
+  // deriveRecoveryKey did not validate its salt at all: an 8-to-15-byte salt
+  // was silently accepted, violating the fixed 16-byte constraint and
+  // producing a key no other client would reproduce.
+  it("rejects a salt that is not 16 bytes", async () => {
+    await expect(
+      deriveRecoveryKey("ABCDE-FGHJK-MNPQR-STVWX-YZ234", new Uint8Array(8), DEFAULT_KDF_PARAMS),
+    ).rejects.toThrow(InvalidKeyError);
   });
 });
 

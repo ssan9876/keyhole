@@ -2,7 +2,7 @@ import { x25519 } from "@noble/curves/ed25519";
 import { hkdf } from "@noble/hashes/hkdf";
 import { sha256 } from "@noble/hashes/sha256";
 import { concatBytes, fromBase64, toBase64, utf8Encode } from "./encoding.js";
-import { DecryptionError, MalformedEnvelopeError } from "./errors.js";
+import { DecryptionError, InvalidKeyError, MalformedEnvelopeError } from "./errors.js";
 import { decryptBytes, encryptBytesWithNonce } from "./symmetric.js";
 import { generateKeyPair } from "./keys.js";
 import { randomBytes } from "./random.js";
@@ -19,6 +19,8 @@ const SEAL_ALG = "X25519-HKDF-SHA256-A256GCM";
 const SEAL_INFO_PREFIX = utf8Encode("keyhole:seal:v1");
 const PUBLIC_KEY_BYTES = 32;
 const NONCE_BYTES = 12;
+/** Sealing carries symmetric keys — collection keys today — and nothing else. */
+const SEALED_SECRET_BYTES = 32;
 
 /**
  * The HKDF info binds both public keys into the derived key. Without that
@@ -40,7 +42,7 @@ export async function sealToUserWithEphemeral(
   nonce: Uint8Array,
 ): Promise<string> {
   if (recipientPublicKey.length !== PUBLIC_KEY_BYTES) {
-    throw new Error(
+    throw new InvalidKeyError(
       `Recipient public key must be ${PUBLIC_KEY_BYTES} bytes, received ${recipientPublicKey.length}`,
     );
   }
@@ -117,5 +119,13 @@ export async function openSealed(
   } catch {
     throw new DecryptionError();
   }
-  return decryptBytes({ v: 1, alg: "A256GCM", n: parsed.n, ct: parsed.ct }, sealKey);
+  const opened = await decryptBytes({ v: 1, alg: "A256GCM", n: parsed.n, ct: parsed.ct }, sealKey);
+  // Everything this opens is a 32-byte symmetric key. Returning anything else
+  // is how an attacker-chosen "collection key" of the wrong length reaches
+  // decryptItem and surfaces as a bare Error from importKey instead of a typed
+  // failure the caller can handle.
+  if (opened.length !== SEALED_SECRET_BYTES) {
+    throw new DecryptionError();
+  }
+  return opened;
 }

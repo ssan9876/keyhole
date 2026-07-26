@@ -8,6 +8,7 @@ import {
   utf8Decode,
   utf8Encode,
 } from "./encoding.js";
+import { MalformedEnvelopeError } from "./errors.js";
 
 describe("base64", () => {
   it("encodes known values", () => {
@@ -18,6 +19,22 @@ describe("base64", () => {
   it("decodes known values", () => {
     expect(Array.from(fromBase64("AAEC/f7/"))).toEqual([0, 1, 2, 253, 254, 255]);
     expect(fromBase64("")).toHaveLength(0);
+  });
+
+  it("pads a single byte the way every other base64 encoder does", () => {
+    expect(toBase64(new Uint8Array([0]))).toBe("AA==");
+  });
+
+  it("rejects an invalid character with a typed error", () => {
+    expect(() => fromBase64("AA!A")).toThrow(MalformedEnvelopeError);
+  });
+
+  // Five stripped characters are four bytes plus six orphan bits. No encoder
+  // emits that, and the decoder used to drop the tail silently rather than
+  // reporting the corruption.
+  it("rejects a stripped length of 1 mod 4 rather than dropping six bits", () => {
+    expect(() => fromBase64("AAAAA")).toThrow(MalformedEnvelopeError);
+    expect(() => fromBase64("A")).toThrow(MalformedEnvelopeError);
   });
 
   it("round-trips arbitrary bytes", () => {

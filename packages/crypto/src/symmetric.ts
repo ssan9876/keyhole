@@ -3,7 +3,7 @@
  * key it is protected with comes last. Every argument here is a `Uint8Array`, so
  * the compiler cannot catch a transposition — the convention is the only defence.
  */
-import { DecryptionError, MalformedEnvelopeError } from "./errors.js";
+import { DecryptionError, InvalidKeyError, MalformedEnvelopeError } from "./errors.js";
 import { fromBase64, toBase64, utf8Decode, utf8Encode } from "./encoding.js";
 import { randomBytes } from "./random.js";
 
@@ -20,7 +20,7 @@ const TAG_BITS = 128;
 
 async function importKey(key: Uint8Array): Promise<CryptoKey> {
   if (key.length !== KEY_BYTES) {
-    throw new Error(`Symmetric key must be ${KEY_BYTES} bytes, received ${key.length}`);
+    throw new InvalidKeyError(`Symmetric key must be ${KEY_BYTES} bytes, received ${key.length}`);
   }
   return globalThis.crypto.subtle.importKey("raw", key as BufferSource, "AES-GCM", false, [
     "encrypt",
@@ -36,7 +36,7 @@ export async function encryptBytesWithNonce(
   nonce: Uint8Array,
 ): Promise<Envelope> {
   if (nonce.length !== NONCE_BYTES) {
-    throw new Error(`Nonce must be ${NONCE_BYTES} bytes, received ${nonce.length}`);
+    throw new InvalidKeyError(`Nonce must be ${NONCE_BYTES} bytes, received ${nonce.length}`);
   }
   const cryptoKey = await importKey(key);
   const ciphertext = await globalThis.crypto.subtle.encrypt(

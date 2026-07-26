@@ -16,4 +16,10 @@ export class DecryptionError extends KeyholeCryptoError {
 
 export class MalformedEnvelopeError extends KeyholeCryptoError {}
 
+/** Raised when key material is the wrong length for the algorithm — a 16-byte
+ *  AES key, a nonce that is not 96 bits, a KDF salt that is not 16 bytes.
+ *  Always a programming error or attacker-supplied data, never a wrong
+ *  password: a caller that catches this should not show a lock screen. */
+export class InvalidKeyError extends KeyholeCryptoError {}
+
 export class InvalidRecoveryCodeError extends KeyholeCryptoError {}

@@ -10,7 +10,12 @@ import {
   parseEnvelope,
   serializeEnvelope,
 } from "./symmetric.js";
-import { DecryptionError, MalformedEnvelopeError } from "./errors.js";
+import {
+  DecryptionError,
+  InvalidKeyError,
+  KeyholeCryptoError,
+  MalformedEnvelopeError,
+} from "./errors.js";
 import { fromBase64, toBase64, utf8Encode } from "./encoding.js";
 
 const KEY = new Uint8Array(32).fill(0x07);
@@ -38,8 +43,21 @@ describe("encryptBytes", () => {
     expect(fromBase64(envelope.ct)).toHaveLength(plaintext.length + 16);
   });
 
-  it("rejects a key that is not 32 bytes", async () => {
+  // A web app catching KeyholeCryptoError must catch every failure this
+  // package can raise, or it gets an unhandled rejection where it wanted a
+  // lock screen.
+  it("rejects a key that is not 32 bytes with a typed error", async () => {
+    await expect(encryptBytes(utf8Encode("x"), new Uint8Array(16))).rejects.toThrow(InvalidKeyError);
+    await expect(encryptBytes(utf8Encode("x"), new Uint8Array(16))).rejects.toThrow(
+      KeyholeCryptoError,
+    );
     await expect(encryptBytes(utf8Encode("x"), new Uint8Array(16))).rejects.toThrow(/32 bytes/);
+  });
+
+  it("rejects a nonce that is not 12 bytes with a typed error", async () => {
+    await expect(
+      encryptBytesWithNonce(utf8Encode("x"), KEY, new Uint8Array(16)),
+    ).rejects.toThrow(InvalidKeyError);
   });
 });
 

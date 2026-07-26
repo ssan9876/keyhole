@@ -10,6 +10,7 @@ import {
   deriveWrapKey,
   generateKdfSalt,
 } from "./kdf.js";
+import { InvalidKeyError } from "./errors.js";
 import { toBase64, utf8Encode } from "./encoding.js";
 
 const SALT = new Uint8Array(16).fill(0x42);
@@ -75,10 +76,12 @@ describe("deriveMasterKey", () => {
   });
 
   it("rejects a salt that is not 16 bytes", async () => {
+    await expect(deriveMasterKey(PASSWORD, new Uint8Array(8))).rejects.toThrow(InvalidKeyError);
     await expect(deriveMasterKey(PASSWORD, new Uint8Array(8))).rejects.toThrow(/16 bytes/);
   });
 
   it("rejects an empty password", async () => {
+    await expect(deriveMasterKey("", SALT)).rejects.toThrow(InvalidKeyError);
     await expect(deriveMasterKey("", SALT)).rejects.toThrow(/empty/);
   });
 });
@@ -124,8 +127,9 @@ describe("HKDF derivation", () => {
   });
 
   it("rejects a master key that is not 32 bytes", () => {
+    expect(() => deriveWrapKey(new Uint8Array(16))).toThrow(InvalidKeyError);
+    expect(() => deriveAuthHash(new Uint8Array(16))).toThrow(InvalidKeyError);
     expect(() => deriveWrapKey(new Uint8Array(16))).toThrow(/32 bytes/);
-    expect(() => deriveAuthHash(new Uint8Array(16))).toThrow(/32 bytes/);
   });
 });
 

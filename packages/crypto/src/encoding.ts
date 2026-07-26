@@ -1,3 +1,5 @@
+import { MalformedEnvelopeError } from "./errors.js";
+
 const BASE64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 /** `noUncheckedIndexedAccess` makes every string index `string | undefined`.
@@ -24,13 +26,19 @@ export function toBase64(bytes: Uint8Array): string {
 
 export function fromBase64(text: string): Uint8Array {
   const clean = text.replace(/=+$/u, "");
+  // A stripped length of 1 mod 4 is not producible by any encoder: it is six
+  // orphan bits that this decoder would silently drop, turning corrupt input
+  // into a short buffer instead of an error.
+  if (clean.length % 4 === 1) {
+    throw new MalformedEnvelopeError(`Invalid base64 length: ${clean.length} characters`);
+  }
   const out = new Uint8Array(Math.floor((clean.length * 6) / 8));
   let bits = 0;
   let acc = 0;
   let index = 0;
   for (const char of clean) {
     const value = BASE64_ALPHABET.indexOf(char);
-    if (value < 0) throw new Error(`Invalid base64 character: ${char}`);
+    if (value < 0) throw new MalformedEnvelopeError(`Invalid base64 character: ${char}`);
     acc = (acc << 6) | value;
     bits += 6;
     if (bits >= 8) {

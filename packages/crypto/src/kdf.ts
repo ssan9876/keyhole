@@ -1,6 +1,7 @@
 import { argon2id } from "hash-wasm";
 import { hkdf } from "@noble/hashes/hkdf";
 import { sha256 } from "@noble/hashes/sha256";
+import { InvalidKeyError } from "./errors.js";
 import { randomBytes } from "./random.js";
 import { utf8Encode } from "./encoding.js";
 
@@ -29,6 +30,15 @@ export function generateKdfSalt(): Uint8Array {
   return randomBytes(KDF_SALT_BYTES);
 }
 
+/** The 16-byte salt length is fixed forever. A shorter salt would still derive
+ *  a key, just not one any other client would reproduce. Shared with the
+ *  recovery KDF, which is the same Argon2id over a different secret. */
+export function assertKdfSalt(salt: Uint8Array): void {
+  if (salt.length !== KDF_SALT_BYTES) {
+    throw new InvalidKeyError(`KDF salt must be ${KDF_SALT_BYTES} bytes, received ${salt.length}`);
+  }
+}
+
 /**
  * Argon2id over the master password. The password is normalized to Unicode NFC
  * first: a user typing "é" on one platform and "e"+combining-acute on another
@@ -41,11 +51,9 @@ export async function deriveMasterKey(
   params: Readonly<KdfParams> = DEFAULT_KDF_PARAMS,
 ): Promise<Uint8Array> {
   if (masterPassword.length === 0) {
-    throw new Error("Master password must not be empty");
+    throw new InvalidKeyError("Master password must not be empty");
   }
-  if (salt.length !== KDF_SALT_BYTES) {
-    throw new Error(`KDF salt must be ${KDF_SALT_BYTES} bytes, received ${salt.length}`);
-  }
+  assertKdfSalt(salt);
   const hash = await argon2id({
     password: masterPassword.normalize("NFC"),
     salt,
@@ -60,7 +68,9 @@ export async function deriveMasterKey(
 
 function expand(masterKey: Uint8Array, info: Uint8Array): Uint8Array {
   if (masterKey.length !== DERIVED_KEY_BYTES) {
-    throw new Error(`Master key must be ${DERIVED_KEY_BYTES} bytes, received ${masterKey.length}`);
+    throw new InvalidKeyError(
+      `Master key must be ${DERIVED_KEY_BYTES} bytes, received ${masterKey.length}`,
+    );
   }
   return hkdf(sha256, masterKey, undefined, info, DERIVED_KEY_BYTES);
 }

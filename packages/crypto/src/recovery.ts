@@ -1,7 +1,7 @@
 import { argon2id } from "hash-wasm";
 import { InvalidRecoveryCodeError } from "./errors.js";
 import { randomBytes } from "./random.js";
-import { DEFAULT_KDF_PARAMS, generateKdfSalt, type KdfParams } from "./kdf.js";
+import { assertKdfSalt, generateKdfSalt, type KdfParams } from "./kdf.js";
 import { unwrapKey, wrapKey } from "./keys.js";
 import {
   CROCKFORD_ALPHABET,
@@ -44,6 +44,7 @@ export async function deriveRecoveryKey(
   salt: Uint8Array,
   params: Readonly<KdfParams>,
 ): Promise<Uint8Array> {
+  assertKdfSalt(salt);
   const hash = await argon2id({
     password: normalizeRecoveryCode(code),
     salt,
