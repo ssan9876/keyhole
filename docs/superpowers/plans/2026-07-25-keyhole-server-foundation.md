@@ -14,7 +14,7 @@
 
 ## Global Constraints
 
-- **Go 1.23 or newer.** `go.mod` declares `go 1.23`.
+- **Go 1.25.0 or newer.** `go.mod` declares `go 1.25.0` — not a preference: `modernc.org/sqlite` v1.54.0 declares that floor in its own `go.mod`, verified with `go list -m -f '{{.GoVersion}}' modernc.org/sqlite`.
 - **SQLite driver is `modernc.org/sqlite`, registered as `"sqlite"`.** Never `mattn/go-sqlite3` — it needs cgo, which costs the static binary that the entire deploy story depends on.
 - **The server performs no vault crypto.** It never derives, unwraps, or inspects a vault key. Its only crypto is `argon2.IDKey` over the auth hash, `crypto/rand`, `crypto/sha256`, `crypto/hmac`, and `crypto/subtle`.
 - **Argon2id over the auth hash, server side:** `time=3`, `memory=65536` (KiB), `threads=4`, `keyLen=32`. These are the server's own parameters and are unrelated to the client's per-user KDF params, which the server only stores and echoes.
@@ -381,7 +381,43 @@ func TestWALIsEnabled(t *testing.T) {
 		t.Errorf("journal_mode = %q, want %q", mode, "wal")
 	}
 }
+
+func TestSchemaVersionOnAnUnmigratedDatabase(t *testing.T) {
+	// Deliberately not openTemp: that helper migrates first, which is exactly
+	// the ordering that hides this bug. `keyhole migrate` reads the version
+	// before creating the tracking table on every first-ever run, so without
+	// the sqlite_master pre-check this path fails on every new install.
+	s, err := Open(filepath.Join(t.TempDir(), "fresh.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	version, err := s.SchemaVersion(context.Background())
+	if err != nil {
+		t.Fatalf("SchemaVersion on a fresh database returned an error: %v", err)
+	}
+	if version != 0 {
+		t.Errorf("SchemaVersion = %d on a fresh database, want 0", version)
+	}
+}
+
+func TestOpenCreatesTheParentDirectory(t *testing.T) {
+	nested := filepath.Join(t.TempDir(), "does", "not", "exist", "keyhole.db")
+
+	s, err := Open(nested)
+	if err != nil {
+		t.Fatalf("Open should create the parent directory, got: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	if _, err := os.Stat(nested); err != nil {
+		t.Errorf("database file was not created: %v", err)
+	}
+}
 ```
+
+Add `"os"` to this test file's imports alongside `"context"`, `"path/filepath"`, and `"testing"`.
 
 - [ ] **Step 7: Run the store test to verify it fails**
 
@@ -640,7 +676,23 @@ func (s *Store) applyMigration(ctx context.Context, m migration) error {
 
 // SchemaVersion is the highest applied migration version, or 0 on a fresh
 // database.
+//
+// The existence check comes first because `keyhole migrate` reads the version
+// BEFORE Migrate has created the tracking table — which is every first-ever run
+// on a new install. Querying schema_migrations directly fails there with
+// "no such table". Only that specific absence yields 0; every real SQL error
+// still propagates.
 func (s *Store) SchemaVersion(ctx context.Context) (int, error) {
+	var exists int
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'`,
+	).Scan(&exists); err != nil {
+		return 0, fmt.Errorf("check schema_migrations table: %w", err)
+	}
+	if exists == 0 {
+		return 0, nil
+	}
+
 	var version sql.NullInt64
 	err := s.db.QueryRowContext(ctx, `SELECT MAX(version) FROM schema_migrations`).Scan(&version)
 	if err != nil {
@@ -664,6 +716,8 @@ package store
 import (
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	_ "modernc.org/sqlite" // pure-Go driver, registered as "sqlite"
 )
@@ -681,6 +735,14 @@ type Store struct {
 //     are the common case.
 //   - busy_timeout turns "database is locked" from an error into a wait.
 func Open(dbPath string) (*Store, error) {
+	// 0700, not 0755: this directory holds every user's wrapped key material.
+	// Creating it here means a fresh install gets a working database rather
+	// than SQLite's opaque "unable to open database file".
+	dir := filepath.Dir(dbPath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, fmt.Errorf("create database directory %s: %w", dir, err)
+	}
+
 	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)&_pragma=busy_timeout(5000)", dbPath)
 
 	db, err := sql.Open("sqlite", dsn)
