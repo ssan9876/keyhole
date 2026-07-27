@@ -1,5 +1,15 @@
-import { openSealed } from "@keyhole/crypto";
+import {
+  fromBase64,
+  generateCollectionKey,
+  openSealed,
+  sealToUser,
+  zeroize,
+} from "@keyhole/crypto";
+import type { ApiClient } from "./api.js";
+import type { DirectoryEntry } from "./directory.js";
 import type { Session } from "./session.js";
+
+type Deps = { api: ApiClient; session: Session };
 
 /** The server's shape for one collection the caller belongs to. `name` is
  *  plaintext by design — spec §3.9.3 lists collection names as metadata the
@@ -81,4 +91,144 @@ export async function adoptCollections(
 
   session.setCollectionKeys(next);
   return summaries;
+}
+
+export interface PendingGrant {
+  collectionId: string;
+  collectionName: string;
+  userId: string;
+  role: string;
+  requestedBy: string;
+  createdAt: string;
+}
+
+export interface Member {
+  userId: string;
+  name: string;
+  email: string;
+  role: string;
+  grantedAt: string;
+}
+
+/**
+ * Creates a collection and seals its key to the creator, who becomes its first
+ * manager.
+ *
+ * The collection key is generated here and sealed here; the server receives
+ * only the sealed blob and never holds a key that opens anything. That is what
+ * makes "an admin cannot read another user's vault" a cryptographic fact
+ * rather than a permission check.
+ */
+export async function createCollection(
+  deps: Deps,
+  input: { name: string; ownPublicKey: string },
+): Promise<CollectionSummary> {
+  const collectionKey = generateCollectionKey();
+  try {
+    const sealedCollectionKey = await sealToUser(collectionKey, fromBase64(input.ownPublicKey));
+
+    const created = await deps.api.post<WireCollection>("/api/collections", {
+      name: input.name,
+      sealedCollectionKey,
+    });
+
+    // Install it directly rather than waiting for the next sync to seal-and-open
+    // a key we already have in hand.
+    const next = new Map<string, Uint8Array>();
+    for (const id of deps.session.collectionIds()) {
+      const existing = deps.session.getCollectionKey(id);
+      if (existing !== null) next.set(id, existing);
+    }
+    next.set(created.id, collectionKey);
+    deps.session.setCollectionKeys(next);
+
+    return { id: created.id, name: created.name, role: "manager", usable: true };
+  } catch (err) {
+    // The key was generated but never handed to setCollectionKeys, so nothing
+    // else in this codebase will ever get a chance to zero it out.
+    zeroize(collectionKey);
+    throw err;
+  }
+}
+
+export async function deleteCollection(deps: Deps, collectionId: string): Promise<void> {
+  await deps.api.del(`/api/collections/${collectionId}`);
+}
+
+export async function listMembers(deps: Deps, collectionId: string): Promise<Member[]> {
+  const response = await deps.api.get<{ members: Member[] }>(
+    `/api/collections/${collectionId}/members`,
+  );
+  return response.members;
+}
+
+export async function loadPendingGrants(deps: Deps): Promise<PendingGrant[]> {
+  const response = await deps.api.get<{ pendingGrants: PendingGrant[] }>(
+    "/api/collections/pending-grants",
+  );
+  return response.pendingGrants;
+}
+
+/**
+ * Adds a member, taking whichever of the two paths this client can.
+ *
+ * Holding the collection key means sealing it and granting access outright.
+ * Not holding it — an admin who is not a member — means recording an intention
+ * the server cannot carry out, because it has no key either. The returned
+ * value is the server's own answer, not the branch taken here: reporting
+ * "granted" for a 202 would tell an admin the user has access when they do not.
+ */
+export async function addMember(
+  deps: Deps,
+  input: { collectionId: string; recipient: DirectoryEntry; role: "manager" | "member" },
+): Promise<"granted" | "pending"> {
+  const collectionKey = deps.session.getCollectionKey(input.collectionId);
+  const body: Record<string, unknown> = {
+    userId: input.recipient.id,
+    role: input.role,
+  };
+  if (collectionKey !== null) {
+    body["sealedCollectionKey"] = await sealToUser(
+      collectionKey,
+      fromBase64(input.recipient.publicKey),
+    );
+  }
+
+  const response = await deps.api.post<{ status?: string }>(
+    `/api/collections/${input.collectionId}/members`,
+    body,
+  );
+  return response.status === "granted" ? "granted" : "pending";
+}
+
+export async function removeMember(
+  deps: Deps,
+  input: { collectionId: string; userId: string },
+): Promise<void> {
+  await deps.api.del(`/api/collections/${input.collectionId}/members/${input.userId}`);
+}
+
+/**
+ * Completes a grant an admin could only request.
+ *
+ * The recipient check is not defensive padding. Sealing to the wrong person
+ * fails silently in the worst way: the server stores the blob against
+ * grant.userId whatever it contains, so the intended member gets a membership
+ * whose key they can never open, and nothing anywhere reports it.
+ */
+export async function fulfilGrant(
+  deps: Deps,
+  input: { grant: PendingGrant; recipient: DirectoryEntry },
+): Promise<void> {
+  if (input.recipient.id !== input.grant.userId) {
+    throw new Error("The chosen recipient does not match the pending grant");
+  }
+  const collectionKey = deps.session.getCollectionKey(input.grant.collectionId);
+  if (collectionKey === null) {
+    throw new Error("This device cannot open the key for that collection");
+  }
+  await deps.api.post(`/api/collections/${input.grant.collectionId}/grants`, {
+    userId: input.grant.userId,
+    sealedCollectionKey: await sealToUser(collectionKey, fromBase64(input.recipient.publicKey)),
+  });
 }

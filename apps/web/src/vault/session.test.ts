@@ -243,6 +243,19 @@ describe("collection keyring", () => {
     expect(session.getCollectionKey("c1")).toBeNull();
   });
 
+  it("lists exactly the ids of the collections whose keys are currently set", () => {
+    const session = openSession();
+    expect(session.collectionIds()).toEqual([]);
+
+    const first = new Uint8Array(32).fill(7);
+    const second = new Uint8Array(32).fill(8);
+    session.setCollectionKeys(new Map([["c1", first], ["c2", second]]));
+    expect(session.collectionIds().sort()).toEqual(["c1", "c2"]);
+
+    session.setCollectionKeys(new Map([["c2", second]]));
+    expect(session.collectionIds()).toEqual(["c2"]);
+  });
+
   it("zeroizes the keys of a previous session when open() is called again", () => {
     const session = openSession();
     const stale = new Uint8Array(32).fill(7);

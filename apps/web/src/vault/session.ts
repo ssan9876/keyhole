@@ -33,6 +33,10 @@ export interface Session {
    *  open. Callers must handle null; an item in that collection is simply
    *  unreadable here, which is not an error worth throwing over. */
   getCollectionKey(collectionId: string): Uint8Array | null;
+  /** The ids of every collection this session currently holds a key for. Used
+   *  by collection creation to preserve the rest of the keyring while adding
+   *  the newly created one, without exposing the key material itself. */
+  collectionIds(): string[];
   /**
    * Replaces the whole keyring, zeroizing every key the new map does not
    * carry over.
@@ -115,6 +119,9 @@ export function createSession(): Session {
     },
     getCollectionKey(collectionId) {
       return collectionKeys.get(collectionId) ?? null;
+    },
+    collectionIds() {
+      return [...collectionKeys.keys()];
     },
     setCollectionKeys(next) {
       // Identity, not equality: adoptCollections reuses the existing Uint8Array
