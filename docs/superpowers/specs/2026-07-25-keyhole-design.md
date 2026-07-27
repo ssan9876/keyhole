@@ -185,6 +185,17 @@ acknowledgement. The server never sees it.
 Recovery flow: enter email + recovery code → unwrap `userKey` → set a new master
 password → re-wrap → issue a new recovery code and invalidate the old.
 
+**Not yet implemented, as of 2026-07-27.** Section 4.3's API has no endpoint that
+returns `recovery_protected_user_key` to a caller who cannot log in, so the flow
+above cannot run. `POST /api/account/recovery` only *rotates* the blob for an
+already-authenticated user. Closing this needs a migration adding a
+`recovery_auth_hash` column, a `deriveRecoveryAuthHash` addition to
+`packages/crypto` with new pinned vectors, and a decoyed two-step endpoint pair
+mirroring prelogin/login — so that asking for an unknown address is answered
+identically to asking for a real one. Until then the enrolment screen and the
+README must say plainly that a forgotten master password means an admin reset,
+which destroys personal items and collection memberships.
+
 ### 3.7 Admin reset (destructive)
 
 Deletes `protected_user_key`, `recovery_protected_user_key`, the keypair, and all
@@ -466,14 +477,34 @@ bash -c "$(curl -fsSL https://raw.githubusercontent.com/OWNER/keyhole/VERSION/sc
 Steps: verify it is running on a PVE host → prompt for CTID, hostname, cores, RAM,
 disk, storage, bridge (flags available for every prompt) → create an unprivileged
 Debian 12 container → install the verified binary, a `keyhole` service user, a
-systemd unit, `/var/lib/keyhole`, `/etc/keyhole/config.yml` → install `cloudflared`
-and register the tunnel token as a service → run `keyhole admin create` → print the
-setup URL and next steps.
+systemd unit, `/var/lib/keyhole`, `/etc/keyhole/config.yml` → configure how the
+vault is reached → run `keyhole admin create` → print the setup URL and next steps.
+
+**TLS is not optional, and the tunnel is.** `SubtleCrypto` is exposed only in a
+secure context, so on a plain-HTTP origin that is not `localhost`,
+`globalThis.crypto.subtle` is `undefined` and every AES-GCM call in
+`packages/crypto` throws. A plain-HTTP install is therefore not a degraded
+deployment but a vault that cannot open a single item. The installer offers three
+modes and no fourth:
+
+- **`tunnel`** — bind `127.0.0.1`, install `cloudflared`, register the token as a
+  service. Cloudflare terminates TLS. Requires a token in hand.
+- **`tls`** — bind the container address and terminate TLS in-process from a
+  self-signed certificate the installer generates, printing its SHA-256 fingerprint
+  so the browser warning can be checked rather than clicked through.
+- **`proxy`** — bind `127.0.0.1` and print what a reverse proxy in front of it needs.
+
+The tunnel token is read from a prompt or a file and never passed as an argument,
+where it would be visible in `ps` and in shell history.
 
 **Supply-chain handling.** Piping a script to a shell is the risk this product exists
 to defend against, so: the URL pins a release tag rather than `main`; the installer
 verifies the binary against a published SHA-256 and a minisign signature before
-installing; and it prints its plan before acting. The README leads with the
+installing; and it prints its plan before acting. The signature covers `SHA256SUMS`
+rather than each binary, so one signature covers every architecture — which means
+both halves must be checked, since a valid signature over a list that does not name
+this file proves nothing about it. The public key is printed in the installer's own
+text and in the README, so the two can be compared. The README leads with the
 download-inspect-run two-step and presents the one-liner as the convenience option.
 
 ### 8.2 Update
