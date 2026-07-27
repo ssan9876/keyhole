@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { toBase64 } from "@keyhole/crypto";
 import {
   EMAIL_STORAGE_KEY,
   createSession,
@@ -74,7 +75,22 @@ describe("session", () => {
     // Design spec 6.3, stated as a code-review gate: no key material and no
     // plaintext outside memory. A stringified dump catches a value written
     // under any key, which an assertion on known keys would not.
-    for (const forbidden of ["access", "refresh", "1,2,3,4", "5,6,7,8"]) {
+    //
+    // The raw decimal CSV forms ("1,2,3,4") are what a naive `.join(",")` would
+    // produce, but nothing in this codebase serialises keys that way: they
+    // would actually reach storage as base64 text, or as the index-keyed
+    // object form a plain `JSON.stringify` of a Uint8Array produces
+    // ({"0":1,"1":2,...}). Check both realistic leak forms alongside the CSV.
+    for (const forbidden of [
+      "access",
+      "refresh",
+      "1,2,3,4",
+      "5,6,7,8",
+      toBase64(new Uint8Array([1, 2, 3, 4])),
+      toBase64(new Uint8Array([5, 6, 7, 8])),
+      JSON.stringify(new Uint8Array([1, 2, 3, 4])),
+      JSON.stringify(new Uint8Array([5, 6, 7, 8])),
+    ]) {
       expect(dump).not.toContain(forbidden);
     }
     expect(Object.keys(localStorage)).toEqual([EMAIL_STORAGE_KEY]);

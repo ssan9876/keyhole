@@ -3,6 +3,7 @@ import {
   DEFAULT_KDF_PARAMS_JSON,
   fromBase64,
   recoverUserKey,
+  toBase64,
 } from "@keyhole/crypto";
 import type { ApiClient } from "./api.js";
 import { createSession } from "./session.js";
@@ -113,6 +114,15 @@ describe("enroll", () => {
     // which is the one thing this whole design exists to prevent.
     expect(dump).not.toContain(Array.from(keys.userKey).join(","));
     expect(dump).not.toContain(Array.from(keys.privateKey).join(","));
+    // The CSV form above is a raw decimal join that nothing in this codebase
+    // actually produces. Every key-shaped field in this request body is base64
+    // text (wrapKey/toBase64), and a plain JSON.stringify of a Uint8Array
+    // serialises as an index-keyed object ({"0":12,"1":45,...}) — neither of
+    // which the CSV check would catch. Check both realistic leak forms too.
+    expect(dump).not.toContain(toBase64(keys.userKey));
+    expect(dump).not.toContain(toBase64(keys.privateKey));
+    expect(dump).not.toContain(JSON.stringify(keys.userKey));
+    expect(dump).not.toContain(JSON.stringify(keys.privateKey));
   }, 60_000);
 
   it("leaves the vault unlocked without a second password prompt", async () => {
