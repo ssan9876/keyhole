@@ -3,8 +3,8 @@ import { startServer, type RunningServer } from "./server.js";
 
 let server: RunningServer;
 
-test.beforeAll(() => {
-  server = startServer();
+test.beforeAll(async () => {
+  server = await startServer();
 });
 
 test.afterAll(() => {
