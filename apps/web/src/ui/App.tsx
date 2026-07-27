@@ -90,7 +90,16 @@ export function App() {
       <EnrolScreen
         inviteToken={inviteToken}
         onEnrol={handleEnrol}
-        onFinish={() => setEnrolled(true)}
+        onFinish={() => {
+          // Clear the one-time invite path from the address bar. Without
+          // this, inviteToken above is re-derived from window.location on
+          // every mount, so a reload after enrolling — which wipes the
+          // memory-only session and React state by design — would land back
+          // on the enrolment screen instead of the unlock screen, even
+          // though the invite was already consumed and the account exists.
+          window.history.replaceState(null, "", "/");
+          setEnrolled(true);
+        }}
       />
     );
   }
