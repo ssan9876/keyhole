@@ -112,6 +112,22 @@ func collectFolders(rows *sql.Rows) ([]Folder, error) {
 
 // CanAccessItem answers the single-item version of the sync visibility rule.
 // Handlers call it before every read, write, and delete of one item.
+//
+// The item MUST be one returned by ItemByID (or another store read) for the id
+// the handler is acting on. It judges the struct it is handed and does not
+// re-read the row, so a caller that assembles an Item from request data gets
+// the answer for that fabricated struct, not for the stored row:
+// CanAccessItem(ctx, u, Item{OwnerUserID: u}) is true for every u. Load first,
+// then check, then act on the loaded row.
+//
+// The membership lookup runs on s.db rather than inside the caller's
+// transaction, so a membership could in principle change between this check and
+// the write it guards. That is benign here: SQLite admits one writer at a time,
+// so the guarded write and any membership change are serialised, and the worst
+// case is a decision made against state one write old — the same window a
+// client's own request already races. Documented so it is not rediscovered as a
+// bug; it becomes real only if this store ever moves to a concurrent-writer
+// engine, at which point the check belongs in the caller's transaction.
 func (s *Store) CanAccessItem(ctx context.Context, userID string, item Item) (bool, error) {
 	if !item.CollectionID.Valid {
 		return item.OwnerUserID == userID, nil
@@ -123,4 +139,26 @@ func (s *Store) CanAccessItem(ctx context.Context, userID string, item Item) (bo
 		return false, fmt.Errorf("check membership: %w", err)
 	}
 	return count > 0, nil
+}
+
+// CanAccessFolder answers the folder counterpart of CanAccessItem. Folders are
+// personal — there is no shared-folder concept, so ownership is the whole rule
+// and no membership lookup exists to do. It is a function rather than an
+// inlined folder.UserID == userID at each call site for the same reason
+// CanAccessItem is: FolderByID, UpdateFolder and DeleteFolder take no userID,
+// so three handlers would otherwise hand-roll the owner check with nothing
+// keeping them consistent. One definition, one place to change if folders ever
+// become shareable.
+//
+// Like CanAccessItem, the folder MUST be one returned by FolderByID: this
+// judges the struct it is handed and does not re-read the row. It never
+// consults the database today, and returns an error only so call sites and a
+// future shared-folder rule need no signature change.
+//
+// A tombstoned folder answers exactly as a live one does — deletion does not
+// change who owns the row. Handlers decide separately whether a tombstone is
+// actionable; they must not read "not accessible" as "deleted", nor treat a
+// tombstone as unowned.
+func (s *Store) CanAccessFolder(ctx context.Context, userID string, folder Folder) (bool, error) {
+	return folder.UserID == userID, nil
 }
