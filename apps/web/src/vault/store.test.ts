@@ -8,9 +8,9 @@ import {
   type LoginItem,
 } from "@keyhole/crypto";
 import type { ApiClient } from "./api.js";
-import { createSession, type Session } from "./session.js";
 import { createVaultStore } from "./store.js";
 import type { WireItem } from "./items.js";
+import { fakeApi, openSession, sessionWithUserKey } from "./test-helpers.js";
 
 const LOGIN: LoginItem = {
   type: "login",
@@ -36,30 +36,6 @@ const BLANK: LoginItem = {
   passwordHistory: [],
 };
 
-function sessionWith(userKey: Uint8Array) {
-  const session = createSession();
-  session.open({
-    tokens: { accessToken: "a", refreshToken: "r" },
-    user: { id: "u1", email: "a@b.c", name: "A", role: "user" },
-    userKey,
-    privateKey: new Uint8Array(32),
-  });
-  return session;
-}
-
-/** Like `sessionWith`, but for tests that need a real keypair so a sealed
- *  collection key can actually be opened. The userKey is unused filler. */
-function openSession(privateKey: Uint8Array): Session {
-  const session = createSession();
-  session.open({
-    tokens: { accessToken: "a", refreshToken: "r" },
-    user: { id: "u1", email: "a@example.com", name: "A", role: "user" },
-    userKey: new Uint8Array(32).fill(1),
-    privateKey,
-  });
-  return session;
-}
-
 function wireItem(overrides: Partial<WireItem> = {}): WireItem {
   return {
     id: "i1",
@@ -72,31 +48,6 @@ function wireItem(overrides: Partial<WireItem> = {}): WireItem {
     updatedAt: "2026-01-01T00:00:00Z",
     deletedAt: null,
     ...overrides,
-  };
-}
-
-interface FakeApiOptions {
-  get?: (path: string) => Promise<unknown>;
-}
-
-/** Like `syncApi`, but the response is computed by a function rather than
- *  looked up by path — for tests where the only call is `/api/sync` and the
- *  path itself is not the point. */
-function fakeApi(options: FakeApiOptions): ApiClient {
-  return {
-    async get<T>(path: string): Promise<T> {
-      if (options.get) return (await options.get(path)) as T;
-      throw new Error(`unexpected GET ${path}`);
-    },
-    async post<T>(): Promise<T> {
-      throw new Error("unexpected POST");
-    },
-    async put<T>(): Promise<T> {
-      throw new Error("unexpected PUT");
-    },
-    async del<T>(): Promise<T> {
-      throw new Error("unexpected DELETE");
-    },
   };
 }
 
@@ -163,7 +114,7 @@ describe("vault store", () => {
     const api = syncApi({ "/api/sync": { revision: 4, items: [item], folders: [], collections: [] } });
     const store = createVaultStore();
 
-    await store.load({ api, session: sessionWith(userKey) });
+    await store.load({ api, session: sessionWithUserKey(userKey) });
 
     expect(store.getState().status).toBe("ready");
     expect(store.getState().revision).toBe(4);
@@ -196,7 +147,7 @@ describe("vault store", () => {
       },
     });
     const store = createVaultStore();
-    const session = sessionWith(userKey);
+    const session = sessionWithUserKey(userKey);
 
     await store.load({ api, session });
     expect(store.getState().items).toHaveLength(1);
@@ -236,7 +187,7 @@ describe("vault store", () => {
       ],
     });
     const store = createVaultStore();
-    const session = sessionWith(userKey);
+    const session = sessionWithUserKey(userKey);
 
     await store.load({ api, session });
     expect(store.getState().items).toHaveLength(2);

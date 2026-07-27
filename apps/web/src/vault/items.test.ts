@@ -6,8 +6,7 @@ import {
   generateUserKey,
   type LoginItem,
 } from "@keyhole/crypto";
-import { ApiError, type ApiClient } from "./api.js";
-import { createSession, type Session } from "./session.js";
+import { ApiError } from "./api.js";
 import {
   ItemConflictError,
   createItem,
@@ -15,6 +14,7 @@ import {
   updateItem,
   type WireItem,
 } from "./items.js";
+import { fakeApi, sessionWithCollectionKeys, sessionWithUserKey } from "./test-helpers.js";
 
 const LOGIN: LoginItem = {
   type: "login",
@@ -55,48 +55,13 @@ function wireItem(overrides: Partial<WireItem> = {}): WireItem {
   };
 }
 
-function sessionWith(userKey: Uint8Array): Session {
-  const session = createSession();
-  session.open({
-    tokens: { accessToken: "a", refreshToken: "r" },
-    user: { id: "u1", email: "a@b.c", name: "A", role: "user" },
-    userKey,
-    privateKey: new Uint8Array(32),
-  });
-  return session;
-}
-
-interface FakeApiOptions {
-  post?: (path: string, body?: unknown) => Promise<unknown>;
-  put?: (path: string, body?: unknown) => Promise<unknown>;
-}
-
-function fakeApi(options: FakeApiOptions = {}): ApiClient {
-  return {
-    async get<T>(path: string): Promise<T> {
-      throw new Error(`unexpected GET ${path}`);
-    },
-    async post<T>(path: string, body?: unknown): Promise<T> {
-      if (options.post) return (await options.post(path, body)) as T;
-      throw new Error(`unexpected POST ${path}`);
-    },
-    async put<T>(path: string, body?: unknown): Promise<T> {
-      if (options.put) return (await options.put(path, body)) as T;
-      throw new Error(`unexpected PUT ${path}`);
-    },
-    async del<T>(path: string): Promise<T> {
-      throw new Error(`unexpected DELETE ${path}`);
-    },
-  };
-}
-
 describe("decryptRecords", () => {
   it("decrypts what it can", async () => {
     const userKey = generateUserKey();
     const encrypted = await encryptItem(LOGIN, userKey);
     const records = await decryptRecords(
       [wireItem({ ciphertext: encrypted.ciphertext, wrappedItemKey: encrypted.wrappedItemKey })],
-      sessionWith(userKey),
+      sessionWithUserKey(userKey),
     );
 
     expect(records).toHaveLength(1);
@@ -112,7 +77,7 @@ describe("decryptRecords", () => {
         wireItem({ id: "bad", ciphertext: "not-ciphertext", wrappedItemKey: "junk" }),
         wireItem({ id: "good", ciphertext: good.ciphertext, wrappedItemKey: good.wrappedItemKey }),
       ],
-      sessionWith(userKey),
+      sessionWithUserKey(userKey),
     );
 
     // One corrupt blob making every password unreachable is a far worse failure
@@ -128,7 +93,7 @@ describe("decryptRecords", () => {
     // nothing to decrypt and must not be reported as a decryption failure.
     const records = await decryptRecords(
       [wireItem({ deletedAt: "2026-01-02T00:00:00Z" })],
-      sessionWith(generateUserKey()),
+      sessionWithUserKey(generateUserKey()),
     );
     expect(records[0]?.plaintext).toBeNull();
     expect(records[0]?.deletedAt).not.toBeNull();
@@ -147,7 +112,7 @@ describe("createItem and updateItem", () => {
       },
     });
 
-    await createItem({ api, session: sessionWith(userKey) }, LOGIN, null);
+    await createItem({ api, session: sessionWithUserKey(userKey) }, LOGIN, null);
 
     const dump = JSON.stringify(sent);
     // The server stores an opaque string. If any of these appear, the vault is
@@ -170,7 +135,7 @@ describe("createItem and updateItem", () => {
     });
 
     const error = (await updateItem(
-      { api, session: sessionWith(userKey) },
+      { api, session: sessionWithUserKey(userKey) },
       { id: "i1", revision: 1, collectionId: null, plaintext: LOGIN },
     ).catch((e: unknown) => e)) as ItemConflictError;
 
@@ -184,24 +149,15 @@ describe("createItem and updateItem", () => {
 
 describe("collection items", () => {
   const COLLECTION_KEY = generateCollectionKey();
+  // Matches the fixed userKey `sessionWithCollectionKeys` opens with, so
+  // tests below can encrypt/decrypt directly against it to prove which key a
+  // ciphertext actually opens under.
   const USER_KEY = new Uint8Array(32).fill(1);
-
-  function sessionWith(collectionKeys: Map<string, Uint8Array>): Session {
-    const session = createSession();
-    session.open({
-      tokens: { accessToken: "a", refreshToken: "r" },
-      user: { id: "u1", email: "a@example.com", name: "A", role: "user" },
-      userKey: USER_KEY,
-      privateKey: new Uint8Array(32).fill(2),
-    });
-    session.setCollectionKeys(collectionKeys);
-    return session;
-  }
 
   it("decrypts a collection item with the collection key, not the user key", async () => {
     const plaintext: LoginItem = { ...BLANK, name: "Shared router" };
     const encrypted = await encryptItem(plaintext, COLLECTION_KEY);
-    const session = sessionWith(new Map([["c1", COLLECTION_KEY]]));
+    const session = sessionWithCollectionKeys(new Map([["c1", COLLECTION_KEY]]));
 
     const [record] = await decryptRecords(
       [wireItem({ id: "i1", collectionId: "c1", ...encrypted })],
@@ -213,7 +169,7 @@ describe("collection items", () => {
 
   it("leaves a collection item unreadable when the session holds no key for it", async () => {
     const encrypted = await encryptItem({ ...BLANK, name: "Shared router" }, COLLECTION_KEY);
-    const session = sessionWith(new Map());
+    const session = sessionWithCollectionKeys(new Map());
 
     const [record] = await decryptRecords(
       [wireItem({ id: "i1", collectionId: "c1", ...encrypted })],
@@ -228,7 +184,7 @@ describe("collection items", () => {
 
   it("still decrypts a personal item with the user key when a keyring is present", async () => {
     const encrypted = await encryptItem({ ...BLANK, name: "Mine" }, USER_KEY);
-    const session = sessionWith(new Map([["c1", COLLECTION_KEY]]));
+    const session = sessionWithCollectionKeys(new Map([["c1", COLLECTION_KEY]]));
 
     const [record] = await decryptRecords(
       [wireItem({ id: "i1", collectionId: null, ...encrypted })],
@@ -239,7 +195,7 @@ describe("collection items", () => {
   });
 
   it("encrypts a new collection item under the collection key", async () => {
-    const session = sessionWith(new Map([["c1", COLLECTION_KEY]]));
+    const session = sessionWithCollectionKeys(new Map([["c1", COLLECTION_KEY]]));
     type Sent = { ciphertext: string; wrappedItemKey: string; collectionId: string | null };
     let sent: Sent | null = null;
     const api = fakeApi({
@@ -260,7 +216,7 @@ describe("collection items", () => {
   });
 
   it("refuses to create an item in a collection this client cannot open", async () => {
-    const session = sessionWith(new Map());
+    const session = sessionWithCollectionKeys(new Map());
     const api = fakeApi({ post: async () => { throw new Error("must not be called"); } });
 
     await expect(
@@ -269,7 +225,7 @@ describe("collection items", () => {
   });
 
   it("always sends collectionId on update, so an unchanged shared item is never moved to personal", async () => {
-    const session = sessionWith(new Map([["c1", COLLECTION_KEY]]));
+    const session = sessionWithCollectionKeys(new Map([["c1", COLLECTION_KEY]]));
     let sent: Record<string, unknown> | null = null;
     const api = fakeApi({
       put: async (_path, body) => {
@@ -291,7 +247,7 @@ describe("collection items", () => {
   });
 
   it("re-encrypts under the user key when an item is moved out of a collection", async () => {
-    const session = sessionWith(new Map([["c1", COLLECTION_KEY]]));
+    const session = sessionWithCollectionKeys(new Map([["c1", COLLECTION_KEY]]));
     type Sent = { ciphertext: string; wrappedItemKey: string };
     let sent: Sent | null = null;
     const api = fakeApi({

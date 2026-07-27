@@ -1,29 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { generateKeyPair, publicKeyFingerprint, toBase64 } from "@keyhole/crypto";
-import type { ApiClient } from "./api.js";
 import { loadDirectory } from "./directory.js";
-
-interface FakeApiOptions {
-  get?: (path: string) => Promise<unknown>;
-}
-
-function fakeApi(options: FakeApiOptions = {}): ApiClient {
-  return {
-    async get<T>(path: string): Promise<T> {
-      if (options.get) return (await options.get(path)) as T;
-      throw new Error(`unexpected GET ${path}`);
-    },
-    async post<T>(path: string): Promise<T> {
-      throw new Error(`unexpected POST ${path}`);
-    },
-    async put<T>(path: string): Promise<T> {
-      throw new Error(`unexpected PUT ${path}`);
-    },
-    async del<T>(path: string): Promise<T> {
-      throw new Error(`unexpected DELETE ${path}`);
-    },
-  };
-}
+import { fakeApi } from "./test-helpers.js";
 
 describe("loadDirectory", () => {
   it("computes each entry's fingerprint from its public key and email", async () => {

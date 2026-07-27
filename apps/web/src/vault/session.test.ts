@@ -6,13 +6,18 @@ import {
   forgetEmail,
   rememberEmail,
   rememberedEmail,
-  type Session,
 } from "./session.js";
+import { openSession } from "./test-helpers.js";
 
 const USER = { id: "u1", email: "a@b.c", name: "A", role: "user" };
 const TOKENS = { accessToken: "access", refreshToken: "refresh" };
 
-function openSession() {
+/**
+ * Trivial fixed keys, not the shared `openSession` helper's real-sized ones:
+ * these tests exercise the session's own open/lock/subscribe/storage
+ * behaviour, not anything that has to survive a real crypto operation.
+ */
+function openBasicSession() {
   const session = createSession();
   session.open({
     tokens: TOKENS,
@@ -65,7 +70,7 @@ describe("session", () => {
   });
 
   it("writes nothing but the email to storage, ever", () => {
-    const session = openSession();
+    const session = openBasicSession();
     rememberEmail("a@b.c");
 
     // Build the dump from the raw stored strings rather than re-encoding
@@ -160,7 +165,7 @@ describe("session", () => {
   });
 
   it("replaces tokens without disturbing the keys", () => {
-    const session = openSession();
+    const session = openBasicSession();
     const before = session.getKeys();
 
     session.replaceTokens({ accessToken: "fresh", refreshToken: "fresh-r" });
@@ -172,24 +177,13 @@ describe("session", () => {
   });
 
   it("is safe to lock twice", () => {
-    const session = openSession();
+    const session = openBasicSession();
     session.lock();
     expect(() => session.lock()).not.toThrow();
   });
 });
 
 describe("collection keyring", () => {
-  function openSession(): Session {
-    const session = createSession();
-    session.open({
-      tokens: { accessToken: "a", refreshToken: "r" },
-      user: { id: "u1", email: "a@example.com", name: "A", role: "user" },
-      userKey: new Uint8Array(32).fill(1),
-      privateKey: new Uint8Array(32).fill(2),
-    });
-    return session;
-  }
-
   it("returns a collection key that was set, and null for one that was not", () => {
     const session = openSession();
     const key = new Uint8Array(32).fill(7);

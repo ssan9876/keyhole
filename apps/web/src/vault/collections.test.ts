@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { generateCollectionKey, generateKeyPair, sealToUser } from "@keyhole/crypto";
-import { createSession, type Session } from "./session.js";
 import { adoptCollections, type WireCollection } from "./collections.js";
+import { openSession } from "./test-helpers.js";
 
 function wire(over: Partial<WireCollection> = {}): WireCollection {
   return {
@@ -13,17 +13,6 @@ function wire(over: Partial<WireCollection> = {}): WireCollection {
     createdAt: "2026-07-27T00:00:00Z",
     ...over,
   };
-}
-
-function openSession(privateKey: Uint8Array): Session {
-  const session = createSession();
-  session.open({
-    tokens: { accessToken: "a", refreshToken: "r" },
-    user: { id: "u1", email: "a@example.com", name: "A", role: "user" },
-    userKey: new Uint8Array(32).fill(1),
-    privateKey,
-  });
-  return session;
 }
 
 describe("adoptCollections", () => {
