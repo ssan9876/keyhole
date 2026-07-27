@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ssan9876/keyhole/internal/auth"
 )
 
 func sampleEnrollment() EnrollmentInput {
@@ -265,5 +267,54 @@ func TestCompleteEnrollmentRollsBackAMidTransactionFailure(t *testing.T) {
 	}
 	if after.ProtectedUserKey.String != first.ProtectedUserKey {
 		t.Error("protected_user_key was overwritten by the failed second enrollment")
+	}
+}
+
+func TestEnrollmentRejectsNonDefaultKDFParams(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+
+	user, err := st.CreatePendingUser(ctx, "person@example.com", "Test Person", "user")
+	if err != nil {
+		t.Fatalf("CreatePendingUser: %v", err)
+	}
+	_, token, err := st.CreateInvite(ctx, user.ID, time.Hour)
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+
+	in := sampleEnrollment()
+	// Semantically identical, byte-different. That is enough: prelogin's decoy
+	// emits one exact string, so any other serialization makes this account
+	// distinguishable from an address with no account at all.
+	in.KDFParams = `{"algorithm":"argon2id","iterations":3,"memoryKiB":65536,"parallelism":4}`
+
+	_, err = st.CompleteEnrollment(ctx, token, in)
+	var validation *ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("err = %v, want a *ValidationError", err)
+	}
+	if validation.Field != "params" {
+		t.Errorf("Field = %q, want %q", validation.Field, "params")
+	}
+}
+
+func TestEnrollmentAcceptsTheDefaultKDFParams(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+
+	user, err := st.CreatePendingUser(ctx, "person@example.com", "Test Person", "user")
+	if err != nil {
+		t.Fatalf("CreatePendingUser: %v", err)
+	}
+	_, token, err := st.CreateInvite(ctx, user.ID, time.Hour)
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+
+	in := sampleEnrollment()
+	in.KDFParams = auth.DefaultKDFParamsJSON
+	if _, err := st.CompleteEnrollment(ctx, token, in); err != nil {
+		t.Fatalf("CompleteEnrollment: %v", err)
 	}
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/ssan9876/keyhole/internal/auth"
 )
 
 // EnrollmentInput is everything a client uploads when it sets a master
@@ -36,6 +38,27 @@ func (in EnrollmentInput) validate() error {
 	for name, value := range required {
 		if value == "" {
 			return &ValidationError{Field: name}
+		}
+	}
+
+	// The prelogin decoy answers an unknown address with DefaultKDFParamsJSON.
+	// The moment one real account holds different parameters, comparing that
+	// field against the default tells an attacker whether an address has an
+	// account here — which is precisely what the decoy exists to stop. So the
+	// parameters are pinned, and raising them becomes a deliberate migration
+	// rather than a silent per-user drift.
+	//
+	// Byte equality, not semantic: the decoy emits this exact string, so
+	// anything that serializes differently is distinguishable even when it
+	// means the same thing.
+	//
+	// recovery_kdf_params is deliberately NOT pinned. No endpoint returns it,
+	// so it cannot be compared against anything and leaks nothing, and spec
+	// 4.2's reason for recording it as it actually was still holds.
+	if in.KDFParams != auth.DefaultKDFParamsJSON {
+		return &ValidationError{
+			Field:   "params",
+			Message: "must match the server's current KDF parameters exactly",
 		}
 	}
 	return nil

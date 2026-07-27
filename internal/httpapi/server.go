@@ -126,6 +126,12 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET /api/directory", s.requireAuth(s.handleDirectory))
 
+	s.mux.HandleFunc("GET /api/account", s.requireAuth(s.handleGetAccount))
+	s.mux.HandleFunc("POST /api/account/password", s.requireAuth(s.handleRotatePassword))
+	s.mux.HandleFunc("POST /api/account/recovery", s.requireAuth(s.handleRotateRecovery))
+	s.mux.HandleFunc("GET /api/account/sessions", s.requireAuth(s.handleListSessions))
+	s.mux.HandleFunc("DELETE /api/account/sessions/{id}", s.requireAuth(s.handleRevokeSession))
+
 	// Anything unmatched is a 404 in the standard envelope rather than Go's
 	// plain-text default, so a client only ever parses one error shape.
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
