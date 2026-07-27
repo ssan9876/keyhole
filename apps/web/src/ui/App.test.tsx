@@ -19,7 +19,7 @@ vi.mock("../vault/enroll.js", () => ({
       userKey: new Uint8Array(32),
       privateKey: new Uint8Array(32),
     });
-    return { recoveryCode: "ABCD-EFGH-IJKL-MNOP-QRST" };
+    return { recoveryCode: "ABCD-EFGH-IJKL-MNOP-QRST", loggedIn: true };
   }),
 }));
 
@@ -82,6 +82,43 @@ describe("App", () => {
 
       await waitFor(() => {
         expect(window.location.pathname).toBe("/");
+      });
+    } finally {
+      vi.unstubAllGlobals();
+      window.history.replaceState(null, "", originalPathname);
+    }
+  });
+
+  it("still shows the recovery code when the post-enrolment sync fails", async () => {
+    // Regression for App.tsx's handleEnrol: it used to `await store.load(...)`
+    // after enroll() and before returning the outcome. enroll() here succeeds
+    // (loggedIn: true, per the module mock above) exactly as it would after a
+    // real POST /api/enroll/:token 200, but the store's own /api/sync call —
+    // the "post-enrolment sync" — fails. That must not cost the user their
+    // recovery code: it is shown once and is unrecoverable afterwards, by
+    // anyone, including an administrator (enroll.ts's own doc comment).
+    const originalPathname = window.location.pathname;
+    window.history.replaceState(null, "", "/enroll/test-invite-token");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network blip");
+      }),
+    );
+
+    try {
+      render(<App />);
+
+      await userEvent.type(screen.getByLabelText(/email/i), "a@b.c");
+      await userEvent.type(screen.getByLabelText(/^master password/i), "correct horse");
+      await userEvent.type(screen.getByLabelText(/confirm/i), "correct horse");
+      await userEvent.click(screen.getByRole("button", { name: /set master password/i }));
+
+      // The failed sync must not turn into a rejected onEnrol promise: that
+      // would land EnrolScreen back in its catch block, showing a form with
+      // the code nowhere to be found instead of the recovery-code screen.
+      await waitFor(() => {
+        expect(screen.getByText("ABCD-EFGH-IJKL-MNOP-QRST")).toBeInTheDocument();
       });
     } finally {
       vi.unstubAllGlobals();

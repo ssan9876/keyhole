@@ -13,6 +13,17 @@ export interface EnrolmentOutcome {
   /** Shown exactly once. It cannot be recovered afterwards — not by an admin,
    *  not by anyone holding the database. */
   recoveryCode: string;
+  /**
+   * True once the follow-up login succeeded and the session is open.
+   *
+   * False means POST /api/enroll/:token already returned 200 — the invite is
+   * consumed and the account exists with the credentials just set — but the
+   * login that normally follows it failed (a network blip, a 5xx). The
+   * caller must still surface `recoveryCode`: it is gone forever otherwise,
+   * and there is no second chance to show it. The user can unlock normally
+   * afterwards, since the account already has everything it needs.
+   */
+  loggedIn: boolean;
 }
 
 interface LoginResponse {
@@ -67,24 +78,38 @@ export async function enroll(
     recoveryKdfParams: JSON.stringify(recovery.params),
   });
 
-  const login = await deps.api.post<LoginResponse>("/api/auth/login", {
-    email: input.email,
-    authHash: toBase64(enrolled.authHash),
-    deviceLabel: input.deviceLabel,
-  });
-
-  deps.session.open({
-    tokens: {
-      accessToken: login.accessToken,
-      refreshToken: login.refreshToken,
-    },
-    user: login.user,
-    // These are the objects enrollUser produced. The keys never left memory and
-    // were never round-tripped through the server.
-    userKey: enrolled.userKey,
-    privateKey: enrolled.keyPair.privateKey,
-  });
+  // POST /api/enroll/:token has returned 200: the invite is consumed and the
+  // account exists. From here on, nothing may destroy recoveryCode — it is
+  // the only way back into the vault, and there is no second chance to show
+  // it. Remembering the email is safe regardless of what happens next: it is
+  // the one value this application persists, and the user typed it whether
+  // or not the login below succeeds.
   rememberEmail(input.email);
 
-  return { recoveryCode };
+  try {
+    const login = await deps.api.post<LoginResponse>("/api/auth/login", {
+      email: input.email,
+      authHash: toBase64(enrolled.authHash),
+      deviceLabel: input.deviceLabel,
+    });
+
+    deps.session.open({
+      tokens: {
+        accessToken: login.accessToken,
+        refreshToken: login.refreshToken,
+      },
+      user: login.user,
+      // These are the objects enrollUser produced. The keys never left memory
+      // and were never round-tripped through the server.
+      userKey: enrolled.userKey,
+      privateKey: enrolled.keyPair.privateKey,
+    });
+
+    return { recoveryCode, loggedIn: true };
+  } catch {
+    // The account exists and its credentials are already set server-side; a
+    // normal unlock will succeed. What must not happen is losing the code
+    // because this last, resumable step hiccupped.
+    return { recoveryCode, loggedIn: false };
+  }
 }

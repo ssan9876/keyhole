@@ -79,7 +79,17 @@ export function App() {
   const handleEnrol = useCallback(
     async (input: { inviteToken: string; email: string; masterPassword: string }) => {
       const outcome = await enroll({ api, session }, { ...input, deviceLabel: DEVICE_LABEL });
-      await store.load({ api, session });
+      // enroll() already resolved, which means POST /api/enroll/:token
+      // returned 200 and outcome.recoveryCode must reach the caller no matter
+      // what happens below. Only sync if login actually opened the session —
+      // store.load needs session.getKeys(), which throws while locked — and
+      // swallow a failed sync rather than let it reject this promise: the
+      // user must land on the recovery-code screen with a recoverable error,
+      // never back on a form with the code destroyed. VaultScreen already
+      // renders store's own "error" status once the user gets there.
+      if (outcome.loggedIn) {
+        await store.load({ api, session }).catch(() => undefined);
+      }
       return outcome;
     },
     [api, session, store],

@@ -137,4 +137,33 @@ describe("enroll", () => {
     expect(session.isUnlocked).toBe(true);
     expect(session.getAccessToken()).toBe("access");
   }, 60_000);
+
+  it("still returns the recovery code when the follow-up login fails", async () => {
+    // Regression: POST /api/enroll/:token has already returned 200 here — the
+    // invite is consumed and the account exists — but POST /api/auth/login
+    // (a network blip, a 5xx) fails right after. The old code awaited that
+    // login unconditionally and let its rejection propagate, destroying the
+    // recovery code identically to the App.tsx-level bug one layer up: the
+    // code is unrecoverable afterwards, by anyone, so losing it here is just
+    // as fatal as losing it there.
+    const { api: base } = recordingApi();
+    const api: typeof base = {
+      ...base,
+      async post<T>(path: string, body?: unknown): Promise<T> {
+        if (path === "/api/auth/login") {
+          throw new Error("network blip");
+        }
+        return base.post<T>(path, body);
+      },
+    };
+    const session = createSession();
+
+    const outcome = await enroll({ api, session }, INPUT);
+
+    expect(outcome.recoveryCode).toBeTruthy();
+    expect(outcome.loggedIn).toBe(false);
+    // The account exists but this session never opened — a real unlock is
+    // still required, and must not be skipped silently.
+    expect(session.isUnlocked).toBe(false);
+  }, 60_000);
 });
