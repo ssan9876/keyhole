@@ -7,8 +7,6 @@ import (
 )
 
 // SyncResult is everything a client needs to bring itself up to date.
-// Collections join it in Task 4 — they are sent in full rather than
-// incrementally, so they do not participate in the cursor.
 type SyncResult struct {
 	// Revision is the cursor to send on the next sync. It is read inside the
 	// same transaction as the rows, so it can never be ahead of what was
@@ -16,6 +14,11 @@ type SyncResult struct {
 	Revision int64
 	Items    []Item
 	Folders  []Folder
+	// Collections are sent in full on every sync rather than incrementally. At
+	// household scale that is a handful of rows, and it means a revoked
+	// membership or a deleted collection simply disappears from the list — no
+	// membership tombstone table and no revision column on two more tables.
+	Collections []CollectionWithMembership
 }
 
 // visibleItemsClause is the one definition of what a user may see: their own
@@ -26,6 +29,30 @@ type SyncResult struct {
 const visibleItemsClause = `(
 	(owner_user_id = ? AND collection_id IS NULL)
 	OR collection_id IN (SELECT collection_id FROM collection_memberships WHERE user_id = ?)
+)`
+
+// changedSinceClause is the cursor filter, and it is deliberately not a plain
+// `revision > ?`.
+//
+// The cursor is global and monotonic, but visibility is evaluated at query
+// time. An item that was already in a collection carries a revision BELOW the
+// cursor a newly-granted member's device already holds, so `revision > since`
+// alone matches nothing and the shared passwords they were just given are
+// invisible — with no error and no empty-state signal — until that device wipes
+// its local state. Measured during Task 2's review: cursor 1, shared item at
+// revision 1, the new member's sync returned 0 items.
+//
+// The second disjunct delivers that backlog exactly once, to exactly the person
+// who needs it: their membership's granted_revision is above their cursor on
+// the first sync after the grant and below it forever after. Existing members
+// are untouched, because their own granted_revision is long past. It takes the
+// user id once more.
+const changedSinceClause = `(
+	revision > ?
+	OR collection_id IN (
+	    SELECT collection_id FROM collection_memberships
+	    WHERE user_id = ? AND granted_revision > ?
+	)
 )`
 
 // SyncSince returns every item and folder visible to userID that changed after
@@ -50,9 +77,9 @@ func (s *Store) SyncSince(ctx context.Context, userID string, since int64) (Sync
 
 	itemRows, err := tx.QueryContext(ctx,
 		`SELECT `+itemColumns+` FROM items
-		 WHERE revision > ? AND `+visibleItemsClause+`
+		 WHERE `+changedSinceClause+` AND `+visibleItemsClause+`
 		 ORDER BY revision`,
-		since, userID, userID)
+		since, userID, since, userID, userID)
 	if err != nil {
 		return SyncResult{}, fmt.Errorf("select items: %w", err)
 	}
@@ -69,6 +96,12 @@ func (s *Store) SyncSince(ctx context.Context, userID string, since int64) (Sync
 		return SyncResult{}, fmt.Errorf("select folders: %w", err)
 	}
 	if result.Folders, err = collectFolders(folderRows); err != nil {
+		return SyncResult{}, err
+	}
+
+	// Read inside the same transaction as the items, so a membership added
+	// mid-read cannot yield items whose collection is absent from this list.
+	if result.Collections, err = collectionsForUser(ctx, tx, userID); err != nil {
 		return SyncResult{}, err
 	}
 

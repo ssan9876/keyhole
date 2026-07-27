@@ -4,11 +4,20 @@ import (
 	"context"
 	"sync"
 	"testing"
-	"time"
 )
 
-// seedCollectionWithMembers inserts a collection and its memberships
-// directly. Task 4 replaces this with CreateCollection.
+// seedCollectionWithMembers creates a collection and its memberships through
+// the store, not through raw SQL.
+//
+// It went through the SQL directly until Task 4 built CreateCollection. Now
+// that one exists, hand-written INSERTs here would let the schema and the store
+// drift apart silently — granted_revision is exactly the sort of column a
+// hand-written INSERT forgets, and forgetting it makes every visibility test
+// pass against a sync query that would strand a real member's vault.
+//
+// createdBy becomes a manager (CreateCollection's own doing); any other id in
+// memberIDs becomes a plain member. Passing createdBy in memberIDs is harmless
+// and does not demote them.
 //
 // Named distinctly from items_test.go's seedCollection (Task 1), which takes
 // an explicit name and inserts no membership rows — that helper only needs a
@@ -18,26 +27,21 @@ import (
 func seedCollectionWithMembers(t *testing.T, st *Store, createdBy string, memberIDs ...string) string {
 	t.Helper()
 	ctx := context.Background()
-	id, err := NewID()
+
+	collection, err := st.CreateCollection(ctx, "Household", createdBy, "sealed-to-creator")
 	if err != nil {
-		t.Fatalf("NewID: %v", err)
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err := st.DB().ExecContext(ctx,
-		`INSERT INTO collections (id, name, created_by, created_at) VALUES (?, ?, ?, ?)`,
-		id, "Household", createdBy, now); err != nil {
-		t.Fatalf("insert collection: %v", err)
+		t.Fatalf("CreateCollection: %v", err)
 	}
 	for _, member := range memberIDs {
-		if _, err := st.DB().ExecContext(ctx,
-			`INSERT INTO collection_memberships
-			 (collection_id, user_id, sealed_collection_key, role, granted_by, granted_at)
-			 VALUES (?, ?, ?, 'member', ?, ?)`,
-			id, member, "sealed-blob", createdBy, now); err != nil {
-			t.Fatalf("insert membership: %v", err)
+		if member == createdBy {
+			continue
+		}
+		if err := st.FulfilGrantOrAdd(ctx, collection.ID, member,
+			"sealed-to-member", "member", createdBy); err != nil {
+			t.Fatalf("add member %s: %v", member, err)
 		}
 	}
-	return id
+	return collection.ID
 }
 
 func TestSyncReturnsOnlyTheCallersPersonalItems(t *testing.T) {
