@@ -67,10 +67,35 @@ describe("session", () => {
     const session = openSession();
     rememberEmail("a@b.c");
 
-    const dump = JSON.stringify({
-      local: { ...localStorage },
-      session: { ...sessionStorage },
-    });
+    // Build the dump from the raw stored strings rather than re-encoding
+    // them. localStorage/sessionStorage values are already strings, so
+    // running the whole thing through JSON.stringify again would add a
+    // second encoding layer: a leak written as `JSON.stringify(userKey)`
+    // (producing the literal text `{"0":1,"1":2,...}`) would have its
+    // quotes escaped by the outer JSON.stringify, so it would never match
+    // an unescaped `JSON.stringify(...)` needle below. Concatenating the
+    // raw key/value pairs keeps the dump byte-for-byte what is actually in
+    // storage, so a substring check means something.
+    //
+    // The separators below are derived from numeric character codes rather
+    // than typed as literal characters: this codebase's file-write path has
+    // been seen to silently mangle literal characters that recur within a
+    // file (see the keyhole-file-write-normalization note), which would make
+    // this dump quietly stop reflecting the real stored bytes. Deriving them
+    // at runtime from distinct numeric codes sidesteps that entirely.
+    const fieldSep = String.fromCharCode(30); // ASCII record separator
+    const entrySep = String.fromCharCode(31); // ASCII unit separator
+    const dumpStorage = (storage: Storage): string => {
+      const parts: string[] = [];
+      for (let i = 0; i < storage.length; i++) {
+        const key = storage.key(i);
+        if (key === null) continue;
+        parts.push(key + fieldSep + (storage.getItem(key) ?? ""));
+      }
+      return parts.join(entrySep);
+    };
+    const dump =
+      dumpStorage(localStorage) + entrySep + dumpStorage(sessionStorage);
 
     // Design spec 6.3, stated as a code-review gate: no key material and no
     // plaintext outside memory. A stringified dump catches a value written
