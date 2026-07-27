@@ -222,6 +222,20 @@ describe("collection keyring", () => {
     expect(key.every((byte) => byte === 7)).toBe(true);
   });
 
+  it("zeroizes a superseded key when the same collection id gets a different buffer", () => {
+    const session = openSession();
+    const superseded = new Uint8Array(32).fill(7);
+    session.setCollectionKeys(new Map([["c1", superseded]]));
+
+    // What a re-grant looks like: the same collection, a freshly opened key.
+    const replacement = new Uint8Array(32).fill(9);
+    session.setCollectionKeys(new Map([["c1", replacement]]));
+
+    expect(superseded.every((byte) => byte === 0)).toBe(true);
+    expect(replacement.every((byte) => byte === 9)).toBe(true);
+    expect(session.getCollectionKey("c1")).toBe(replacement);
+  });
+
   it("zeroizes every collection key on lock", () => {
     const session = openSession();
     const first = new Uint8Array(32).fill(7);
