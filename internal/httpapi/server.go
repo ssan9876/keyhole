@@ -101,6 +101,17 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/auth/refresh", s.handleRefresh)
 	s.mux.HandleFunc("POST /api/auth/logout", s.requireAuth(s.handleLogout))
 
+	s.mux.HandleFunc("POST /api/items", s.requireAuth(s.handleCreateItem))
+	s.mux.HandleFunc("POST /api/items/bulk", s.requireAuth(s.handleBulkItems))
+	s.mux.HandleFunc("PUT /api/items/{id}", s.requireAuth(s.handleUpdateItem))
+	s.mux.HandleFunc("DELETE /api/items/{id}", s.requireAuth(s.handleDeleteItem))
+
+	s.mux.HandleFunc("POST /api/folders", s.requireAuth(s.handleCreateFolder))
+	s.mux.HandleFunc("PUT /api/folders/{id}", s.requireAuth(s.handleUpdateFolder))
+	s.mux.HandleFunc("DELETE /api/folders/{id}", s.requireAuth(s.handleDeleteFolder))
+
+	s.mux.HandleFunc("GET /api/sync", s.requireAuth(s.handleSync))
+
 	// Anything unmatched is a 404 in the standard envelope rather than Go's
 	// plain-text default, so a client only ever parses one error shape.
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

@@ -94,7 +94,16 @@ func WriteJSON(w http.ResponseWriter, status int, payload any) {
 // client ships without recoveryKdfParams and nobody notices until a user tries
 // to recover a vault.
 func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBody)
+	return DecodeJSONLimit(w, r, dst, maxRequestBody)
+}
+
+// DecodeJSONLimit is DecodeJSON with an explicit cap. Only the bulk import
+// route raises it: a vault export is thousands of items, and forcing the client
+// to send them one per request turns an import into thousands of round trips.
+// Everything else keeps the 1 MiB default, because a single item is small and
+// anything larger is a mistake or an attempt to exhaust memory.
+func DecodeJSONLimit(w http.ResponseWriter, r *http.Request, dst any, limit int64) bool {
+	r.Body = http.MaxBytesReader(w, r.Body, limit)
 
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
