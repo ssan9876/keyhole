@@ -45,3 +45,14 @@ func HashToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
 }
+
+// ErrUserReferenced means the account cannot be deleted because other records
+// point at it — a collection it created, or a membership it granted. Those
+// references have no ON DELETE action on purpose: deleting an admin must not
+// cascade into destroying a shared collection's key material, which nobody
+// could reconstruct.
+var ErrUserReferenced = errors.New("user is referenced by other records")
+
+// ErrLastAdmin means the action would leave the installation with no
+// administrator, and therefore no way to create one.
+var ErrLastAdmin = errors.New("this is the last administrator")

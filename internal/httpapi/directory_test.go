@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"net/http"
-	"strings"
 	"testing"
 )
 
@@ -43,22 +42,11 @@ func TestDirectoryNeverCarriesKeyMaterial(t *testing.T) {
 	_, token := loginTestUser(t, srv, "person@example.com")
 
 	rec := doJSON(t, srv, http.MethodGet, "/api/directory", token, nil)
-	body := rec.Body.String()
 
 	// Spec section 10 names this as a security test: no endpoint may return
 	// another user's wrapped keys. The public key is public by design; every
 	// one of these is not.
-	for _, field := range []string{
-		"protectedUserKey", "protected_user_key",
-		"encryptedPrivateKey", "encrypted_private_key",
-		"recoveryProtectedUserKey", "recovery_protected_user_key",
-		"authHash", "auth_hash", "kdfSalt", "kdf_salt",
-		"recoverySalt", "recovery_salt",
-	} {
-		if strings.Contains(body, field) {
-			t.Errorf("directory response contains %q: %s", field, body)
-		}
-	}
+	assertNoKeyMaterial(t, "/api/directory", rec.Body.String())
 }
 
 func TestDirectoryOmitsPendingAndDisabledAccounts(t *testing.T) {

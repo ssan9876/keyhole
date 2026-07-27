@@ -33,11 +33,7 @@ func TestGetAccountReturnsTheProfileAndNoKeyMaterial(t *testing.T) {
 	// The wrapped keys are delivered by login, once, with the tokens. Repeating
 	// them on a plain profile read widens the blast radius of any endpoint that
 	// is ever accidentally cached or logged.
-	for _, field := range []string{"authHash", "protectedUserKey", "encryptedPrivateKey"} {
-		if strings.Contains(rec.Body.String(), field) {
-			t.Errorf("/api/account carries %q", field)
-		}
-	}
+	assertNoKeyMaterial(t, "/api/account", rec.Body.String())
 }
 
 func TestRotatingThePasswordRequiresTheCurrentOne(t *testing.T) {

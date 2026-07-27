@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/ssan9876/keyhole/internal/store"
@@ -69,5 +70,38 @@ func decodeInto(t *testing.T, rec *httptest.ResponseRecorder, dst any) {
 	t.Helper()
 	if err := json.Unmarshal(rec.Body.Bytes(), dst); err != nil {
 		t.Fatalf("response is not valid JSON (%d): %s", rec.Code, rec.Body.String())
+	}
+}
+
+// keyMaterialFields are the columns no endpoint may ever return for anyone.
+// public_key is deliberately absent: it is public by design (spec 3.9).
+var keyMaterialFields = []string{
+	"protectedUserKey", "encryptedPrivateKey", "recoveryProtectedUserKey",
+	"authHash", "kdfSalt", "kdfParams", "recoverySalt", "recoveryKdfParams",
+}
+
+// normalizeFieldNames lowercases and strips underscores so one needle catches
+// every spelling a field can reach the wire as.
+//
+// This is not fussiness. A struct with no JSON tags marshals PascalCase, so a
+// handler that accidentally returns store.User instead of its own wire type
+// emits "ProtectedUserKey" — which a check for "protectedUserKey" or
+// "protected_user_key" sails straight past. Measured: with handleAdminListUsers
+// mutated to marshal store.UserSummary directly, the response carried every
+// wrapped key and an exact-match assertion still passed.
+func normalizeFieldNames(s string) string {
+	return strings.ReplaceAll(strings.ToLower(s), "_", "")
+}
+
+// assertNoKeyMaterial fails if a response body mentions any wrapped-key field
+// under any spelling. Spec section 10 requires this of every endpoint that
+// returns user records.
+func assertNoKeyMaterial(t *testing.T, what, body string) {
+	t.Helper()
+	normalized := normalizeFieldNames(body)
+	for _, field := range keyMaterialFields {
+		if strings.Contains(normalized, normalizeFieldNames(field)) {
+			t.Errorf("%s carries %q: %s", what, field, body)
+		}
 	}
 }

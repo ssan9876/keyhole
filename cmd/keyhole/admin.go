@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 
 	"github.com/ssan9876/keyhole/internal/config"
 	"github.com/ssan9876/keyhole/internal/store"
@@ -19,11 +18,6 @@ Usage:
   keyhole admin create --email ADDRESS [--name NAME] [--config PATH]
         Create an administrator account and print a one-time setup link.
 `
-
-// inviteTTL is how long a setup or invite link stays valid. Long enough to
-// hand over in person or by message; short enough that a stale link in a chat
-// log stops being useful.
-const inviteTTL = 72 * time.Hour
 
 func runAdmin(args []string) error {
 	if len(args) == 0 {
@@ -101,7 +95,7 @@ func runAdminCreate(out io.Writer, args []string) error {
 		return err
 	}
 
-	_, token, err := st.CreateInvite(ctx, user.ID, inviteTTL)
+	_, token, err := st.CreateInvite(ctx, user.ID, store.InviteTTL)
 	if err != nil {
 		return err
 	}
@@ -123,7 +117,7 @@ The link works once and expires in %s. Your master password is set in the
 browser and never reaches the server, so nobody — including this command —
 can recover it for you. Save the recovery code the setup screen gives you.
 
-`, user.Email, cfg.BaseURL, token, inviteTTL)
+`, user.Email, cfg.BaseURL, token, store.InviteTTL)
 
 	return nil
 }
