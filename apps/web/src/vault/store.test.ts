@@ -188,7 +188,13 @@ describe("vault store", () => {
     expect(store.getState().items).toHaveLength(1);
     expect(calls).toBeGreaterThan(0);
 
+    // The count must be read again *after* clear(), not just before it: a
+    // clear() that stopped notifying entirely -- e.g. one rewritten to mutate
+    // `state` in place without calling any listener -- would still pass the
+    // upsert assertion above and be missed here otherwise.
+    const callsBeforeClear = calls;
     store.clear();
+    expect(calls).toBeGreaterThan(callsBeforeClear);
     // Plaintext must not outlive the unlocked session — this is the store half
     // of the memory-only rule.
     expect(store.getState().items).toHaveLength(0);

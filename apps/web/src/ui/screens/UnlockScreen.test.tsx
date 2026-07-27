@@ -32,6 +32,25 @@ describe("UnlockScreen", () => {
     });
   });
 
+  it("shows an unreachable-server message that does not blame the password", async () => {
+    // Design spec 9 requires a wrong password, an unreachable server, and an
+    // expired session to read differently. Only the wrong-password case above
+    // was ever asserted; nothing checked what renders for a network failure,
+    // so a regression collapsing the two messages into one would have passed
+    // silently. The vault layer's own NetworkError (src/vault/api.ts) carries
+    // exactly this message, distinct from "Wrong master password".
+    const onUnlock = vi.fn().mockRejectedValue(new Error("Could not reach the server"));
+    render(<UnlockScreen rememberedEmail="a@b.c" onUnlock={onUnlock} />);
+
+    await userEvent.type(screen.getByLabelText(/master password/i), "correct horse");
+    await userEvent.click(screen.getByRole("button", { name: /unlock/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("alert")).toHaveTextContent(/could not reach the server/i);
+    });
+    expect(screen.getByRole("alert")).not.toHaveTextContent(/wrong master password/i);
+  });
+
   it("disables the button while unlocking so one press is one attempt", async () => {
     let release: (() => void) | undefined;
     const onUnlock = vi.fn(
