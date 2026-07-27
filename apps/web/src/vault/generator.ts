@@ -58,6 +58,16 @@ function byteWidthFor(limit: number): number {
  * `secureRandomIndex`, which supplies the real CSPRNG byte source.
  */
 export function randomIndex(limit: number, byteSource: ByteSource): number {
+  if (limit < 1) {
+    // limit <= 0 makes ceiling = Math.floor(range / limit) * limit either 0
+    // (limit 0, via division by zero -> NaN, and NaN * limit is also NaN, so
+    // `value < ceiling` is never true) or negative (limit < 0), and a
+    // negative limit is nonsensical besides. Either way the rejection loop
+    // below never returns -- it spins forever and, being synchronous, starves
+    // even vitest's own timer, so a hang here does not get caught by a test
+    // timeout. Fail fast instead.
+    throw new Error(`limit must be at least 1, got ${limit}`);
+  }
   const byteWidth = byteWidthFor(limit);
   const range = 256 ** byteWidth;
   const ceiling = Math.floor(range / limit) * limit;

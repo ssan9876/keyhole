@@ -138,4 +138,21 @@ describe("randomIndex", () => {
 
     expect(counts).toEqual(new Array(limit).fill(drawsPerIndex));
   });
+
+  it(
+    "refuses a limit below 1 instead of spinning forever",
+    { timeout: 2000 },
+    () => {
+      // Regression for a real hang: with limit 0, ceiling = Math.floor(range
+      // / 0) * 0 is NaN (division by zero, then NaN * 0), so `value < ceiling`
+      // is never true and the rejection loop never returns. randomIndex is
+      // unreachable through generatePassword today, but it is exported, and
+      // this exact kind of hang in this exact function previously starved
+      // vitest's own timer and had to be killed -- a synchronous infinite
+      // loop does not respect the `timeout` option above, so a regression
+      // here would hang the whole run, not just fail this one assertion.
+      expect(() => randomIndex(0, () => new Uint8Array(1))).toThrow();
+      expect(() => randomIndex(-1, () => new Uint8Array(1))).toThrow();
+    },
+  );
 });
