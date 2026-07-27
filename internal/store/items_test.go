@@ -597,3 +597,37 @@ func TestItemByIDReportsAMissingItemAsNotFound(t *testing.T) {
 		t.Errorf("err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestCreateItemInAnUnknownCollectionIsTheCallersFault(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	userID := enrolledUserID(t, st, "owner@example.com")
+
+	// A collection deleted between the client's last sync and this write is an
+	// ordinary race, not a server fault. Left as a wrapped foreign-key error it
+	// reaches the client as a 500 telling them to try again later, when what
+	// they actually need to do is drop a stale id.
+	missing := "0123456789abcdef0123456789abcdef"
+	_, err := st.CreateItem(ctx, userID, ItemInput{
+		CollectionID:   &missing,
+		Ciphertext:     "c",
+		WrappedItemKey: "k",
+	})
+
+	var validation *ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("err = %v (%T), want a *ValidationError", err, err)
+	}
+	if validation.Field != "collectionId" {
+		t.Errorf("Field = %q, want %q", validation.Field, "collectionId")
+	}
+	// Nothing may survive a rejected insert, or the vault holds an item in a
+	// collection that does not exist and no sync will ever explain it.
+	var count int
+	if err := st.DB().QueryRowContext(ctx, `SELECT COUNT(*) FROM items`).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("%d items survived a rejected insert, want 0", count)
+	}
+}

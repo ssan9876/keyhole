@@ -6,6 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	sqlited "modernc.org/sqlite"
+	sqlite3 "modernc.org/sqlite/lib"
 )
 
 // Item mirrors the items table. CollectionID is NULL for a personal item;
@@ -127,6 +130,32 @@ func (s *Store) ItemByID(ctx context.Context, id string) (Item, error) {
 		`SELECT `+itemColumns+` FROM items WHERE id = ?`, id))
 }
 
+// classifyItemInsertError turns the one constraint a client can actually
+// violate into its fault rather than the server's.
+//
+// An items INSERT fails the foreign key on collection_id when the client posts
+// a collection that no longer exists — a collection deleted between its last
+// sync and this write, which is an ordinary race rather than a server fault.
+// Left wrapped, it reaches the caller as a 500 telling them to try again later,
+// when what they need to do is drop a stale id.
+//
+// errors.As on the extended result code, never string matching, following
+// classifyUserInsertError. The code was verified empirically against this
+// driver rather than read from documentation: an items insert naming an unknown
+// collection reports 787 (SQLITE_CONSTRAINT_FOREIGNKEY). The bare
+// SQLITE_CONSTRAINT is 19 and would also match a NOT NULL failure, which is a
+// server bug and must keep its 500.
+func classifyItemInsertError(err error) error {
+	var sqliteErr *sqlited.Error
+	if errors.As(err, &sqliteErr) && sqliteErr.Code() == sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY {
+		return &ValidationError{
+			Field:   "collectionId",
+			Message: "does not name a collection that exists",
+		}
+	}
+	return fmt.Errorf("insert item: %w", err)
+}
+
 // CreateItem stores one item. The revision and the row commit together, so a
 // client can never read a revision whose row is not there yet.
 func (s *Store) CreateItem(ctx context.Context, ownerUserID string, in ItemInput) (Item, error) {
@@ -156,7 +185,10 @@ func (s *Store) CreateItemsBulk(ctx context.Context, ownerUserID string, ins []I
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	now := time.Now().UTC()
+	// Truncated to the second, the resolution RFC3339 stores. Without it the
+	// struct returned here carries nanoseconds the column never held, so a POST
+	// response and a later GET serialize different createdAt for the same item.
+	now := time.Now().UTC().Truncate(time.Second)
 	stamp := now.Format(time.RFC3339)
 	items := make([]Item, 0, len(ins))
 
@@ -177,7 +209,7 @@ func (s *Store) CreateItemsBulk(ctx context.Context, ownerUserID string, ins []I
 			 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			id, ownerUserID, collection, in.Ciphertext, in.WrappedItemKey,
 			revision, stamp, stamp); err != nil {
-			return nil, fmt.Errorf("insert item: %w", err)
+			return nil, classifyItemInsertError(err)
 		}
 
 		items = append(items, Item{
@@ -239,7 +271,7 @@ func (s *Store) UpdateItem(ctx context.Context, id string, expectedRevision int6
 		return current, ErrRevisionConflict
 	}
 
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Second)
 
 	// collection_id is written only when the client said something about it.
 	// Writing it unconditionally makes a body-only edit un-share the item, and
@@ -314,7 +346,7 @@ func (s *Store) DeleteItem(ctx context.Context, id string) (Item, error) {
 		return Item{}, ErrNotFound
 	}
 
-	now := time.Now().UTC()
+	now := time.Now().UTC().Truncate(time.Second)
 	stamp := now.Format(time.RFC3339)
 
 	result, err := tx.ExecContext(ctx,
