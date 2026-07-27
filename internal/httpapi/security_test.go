@@ -325,3 +325,31 @@ func TestErrorResponsesAreAlwaysTheEnvelope(t *testing.T) {
 		})
 	}
 }
+
+func TestASuccessfulLoginClearsThePreloginBudget(t *testing.T) {
+	srv := newTestServer(t)
+	_, authHash := enrollTestUser(t, srv, "person@example.com")
+
+	// Spend the whole prelogin allowance from one address.
+	for i := 0; i < 25; i++ {
+		postJSON(t, srv, "/api/auth/prelogin", map[string]string{"email": "ghost@example.com"})
+	}
+	if rec := postJSON(t, srv, "/api/auth/prelogin",
+		map[string]string{"email": "ghost@example.com"}); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("setup: prelogin status = %d, want %d", rec.Code, http.StatusTooManyRequests)
+	}
+
+	if rec := postJSON(t, srv, "/api/auth/login", map[string]string{
+		"email": "person@example.com", "authHash": authHash, "deviceLabel": "test",
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("login: %d %s", rec.Code, rec.Body.String())
+	}
+
+	// A real household shares one address. Proving the traffic is real must
+	// buy back the allowance, or the second person to sign in that hour is
+	// throttled for reasons they cannot see.
+	if rec := postJSON(t, srv, "/api/auth/prelogin",
+		map[string]string{"email": "person@example.com"}); rec.Code != http.StatusOK {
+		t.Errorf("prelogin after a successful login = %d, want %d", rec.Code, http.StatusOK)
+	}
+}

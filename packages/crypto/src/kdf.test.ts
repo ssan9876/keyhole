@@ -5,6 +5,7 @@ import { hkdf as nobleHkdf } from "@noble/hashes/hkdf";
 import { sha256 } from "@noble/hashes/sha256";
 import {
   DEFAULT_KDF_PARAMS,
+  DEFAULT_KDF_PARAMS_JSON,
   deriveAuthHash,
   deriveMasterKey,
   deriveWrapKey,
@@ -137,5 +138,27 @@ describe("generateKdfSalt", () => {
   it("returns 16 unpredictable bytes", () => {
     expect(generateKdfSalt()).toHaveLength(16);
     expect(toBase64(generateKdfSalt())).not.toBe(toBase64(generateKdfSalt()));
+  });
+});
+
+describe("DEFAULT_KDF_PARAMS_JSON", () => {
+  it("the canonical params string parses to the default params", () => {
+    // Two ways of stating the same thing that must never disagree: the object
+    // the crypto package derives with, and the exact bytes the server accepts.
+    expect(JSON.parse(DEFAULT_KDF_PARAMS_JSON)).toEqual({
+      algorithm: "argon2id",
+      memoryKiB: 65536,
+      iterations: 3,
+      parallelism: 4,
+    });
+  });
+
+  it("is the exact string the server pins, not a re-stringified object", () => {
+    // The server compares bytes. Key order and spacing are part of the
+    // contract, so this asserts the literal rather than a round-trip that
+    // would pass for any equivalent serialization.
+    expect(DEFAULT_KDF_PARAMS_JSON).toBe(
+      '{"algorithm":"argon2id","memoryKiB":65536,"iterations":3,"parallelism":4}',
+    );
   });
 });

@@ -66,8 +66,9 @@ prelogin. The wire representation is a JSON-encoded **string**, not a nested
 object:
 
 ```ts
-// Enrollment: stringify on the way out.
-body.params            = JSON.stringify(enrolled.params);
+// Enrollment and password rotation: send the pinned constant verbatim.
+body.params            = DEFAULT_KDF_PARAMS_JSON;
+// recoveryKdfParams is NOT pinned — stringify the params you actually used.
 body.recoveryKdfParams = JSON.stringify(recovery.params);
 
 // Prelogin: parse on the way back in.
@@ -78,6 +79,28 @@ const session = await beginUnlock(masterPassword, kdfSalt, JSON.parse(params));
 The server never parses the contents, so it will happily store `"[object Object]"`
 and give it back to you months later, at unlock, when the vault is the only copy
 of anything.
+
+### `params` must be `DEFAULT_KDF_PARAMS_JSON`, not a stringified object
+
+`POST /api/enroll/:token` and `POST /api/account/password` **reject** a `params`
+value that is not byte-equal to the server's default, with a 400. This is not
+pedantry: prelogin answers an address with no account using that exact string,
+so the first account whose params serialize differently makes itself
+enumerable — ask prelogin for an address, compare the field, learn whether
+someone is registered here.
+
+`JSON.stringify(DEFAULT_KDF_PARAMS)` happens to produce the right bytes today,
+because the object literal is declared in that key order. That is a coincidence
+one reordering away from a 400 nobody can explain. Send the constant:
+
+```ts
+import { DEFAULT_KDF_PARAMS_JSON } from "@keyhole/crypto";
+
+body.params = DEFAULT_KDF_PARAMS_JSON; // not JSON.stringify(...)
+```
+
+Raising the parameters is therefore a deliberate server-side migration that
+forces re-derivation at next login, not a per-client choice.
 
 Never upload: `userKey`, `keyPair.privateKey`, the master password, or the
 recovery code.

@@ -79,8 +79,14 @@ func TestInviteByTokenRejectsUsedInvite(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.MarkInviteUsed(ctx, invite.ID); err != nil {
-		t.Fatalf("MarkInviteUsed: %v", err)
+	// Marked used directly, because the only thing that consumes an invite in
+	// production is CompleteEnrollment, inside its own transaction. This test
+	// is about InviteByToken's treatment of a used row, not about how it got
+	// that way.
+	if _, err := s.DB().ExecContext(ctx,
+		`UPDATE invites SET used_at = ? WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339), invite.ID); err != nil {
+		t.Fatalf("mark used: %v", err)
 	}
 	// A one-time link must be exactly one time: a leaked URL in a chat log
 	// cannot be replayed to seize an account that was already set up.
@@ -100,22 +106,5 @@ func TestInviteByTokenRejectsExpiredInvite(t *testing.T) {
 	}
 	if _, err := s.InviteByToken(ctx, token); !errors.Is(err, ErrNotFound) {
 		t.Errorf("expired invite error = %v, want ErrNotFound", err)
-	}
-}
-
-func TestMarkInviteUsedIsNotRepeatable(t *testing.T) {
-	s := openTemp(t)
-	ctx := context.Background()
-	u := makeUser(t, s, "person@example.com")
-
-	invite, _, err := s.CreateInvite(ctx, u.ID, time.Hour)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := s.MarkInviteUsed(ctx, invite.ID); err != nil {
-		t.Fatalf("first MarkInviteUsed: %v", err)
-	}
-	if err := s.MarkInviteUsed(ctx, invite.ID); !errors.Is(err, ErrNotFound) {
-		t.Errorf("second MarkInviteUsed error = %v, want ErrNotFound", err)
 	}
 }

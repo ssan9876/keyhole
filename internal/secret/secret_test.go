@@ -66,3 +66,31 @@ func TestLoadOrCreateRejectsATruncatedSecret(t *testing.T) {
 		t.Error("a truncated secret file was accepted")
 	}
 }
+
+func TestAnUnreadableSecretIsAnErrorNotAFreshSecret(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "server.secret")
+
+	if err := os.WriteFile(path, make([]byte, 32), 0o600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+
+	// Windows ignores POSIX mode bits on files, so verify the chmod actually
+	// took effect before asserting on it. A test that silently passes on the
+	// development machine and only means something in CI is worse than one
+	// that says which it is.
+	if data, err := os.ReadFile(path); err == nil && len(data) == 32 {
+		t.Skip("this filesystem does not enforce mode 0000; nothing to assert")
+	}
+
+	// Generating a fresh secret here would silently invalidate every prelogin
+	// decoy salt the installation has ever produced — turning a permissions
+	// problem into a change of identity nobody asked for.
+	if _, err := LoadOrCreate(path); err == nil {
+		t.Error("LoadOrCreate succeeded on an unreadable secret file")
+	}
+}

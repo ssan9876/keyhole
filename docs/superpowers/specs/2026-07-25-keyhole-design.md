@@ -88,8 +88,17 @@ authHash    = HKDF-SHA256(masterKey, info="keyhole:auth:v1", len=32)
 ```
 
 `wrappingKey` never leaves the device. `authHash` is the login credential and decrypts
-nothing. KDF parameters are stored per user so they can be raised later without a
-flag day.
+nothing.
+
+**KDF parameters are stored per user, but the server pins them to its current
+default:** enrollment and password rotation reject anything that is not byte-equal to
+it. The column exists so parameters *can* be raised, and so a future migration knows
+what each account was using — but divergence is not permitted while an account is
+live, because prelogin answers an unknown address with the default and any difference
+would turn the `params` field into an account-enumeration oracle. Raising the
+parameters is therefore a deliberate migration that forces re-derivation at next
+login. (Amended during Plan 2b, Task 6; the original text promised the raise could
+happen "without a flag day", which is exactly what could not be delivered safely.)
 
 **Prelogin.** `POST /api/auth/prelogin {email}` returns the salt and KDF params. For
 an unknown email it returns a deterministic decoy derived as
@@ -247,6 +256,20 @@ the server cannot tell a login from a secure note, or count how many of each a u
 holds. Filtering by type happens client-side over the decrypted vault, which is free
 at this scale because the whole vault is synced anyway.
 
+**`items` has no `folder_id` column either.** Folder membership lives inside the
+encrypted body next to `type`, for the same reason: a plaintext column recording which
+items are grouped together tells the server something it does not need. Migration 0002
+removes the column that migration 0001 created.
+
+**`collection_memberships` carries a `granted_revision`.** The sync cursor is global
+and monotonic, but visibility is evaluated at query time, so an item already in a
+collection has a revision *below* the cursor a newly-granted member's device already
+holds — and filtering on the item's revision alone returns nothing, leaving the shared
+passwords invisible with no error to report it. A shared item is therefore returned
+when `item.revision > since` **OR** `membership.granted_revision > since`, which
+delivers the backlog once, to exactly the person just granted access. Migration 0003
+adds the column.
+
 **`recovery_kdf_params` is stored separately from `kdf_params`** and is not assumed to
 equal it. If an account's KDF parameters are ever raised, the existing recovery blob
 was wrapped under the *old* parameters, and deriving the recovery key with the new
@@ -291,6 +314,24 @@ DELETE /api/admin/users/:id
 GET    /api/admin/audit
 
 GET    /healthz
+```
+
+**Added during Plan 2b.** Each completes a feature this section already assumes
+rather than introducing a new one:
+
+```
+GET    /api/directory               active users + public keys — without it a client
+                                    cannot seal a collection key to anyone, so
+                                    sharing is impossible
+POST   /api/folders                 folder CRUD; the folders table and the folderId
+PUT    /api/folders/:id             field inside the encrypted item body are
+DELETE /api/folders/:id             otherwise unreachable
+GET    /api/collections/:id/members membership list, deliberately carrying no
+                                    sealed keys
+POST   /api/admin/users/:id/invite  reissue a setup link — without it a pending
+                                    account whose invite was never created is
+                                    unrecoverable except by direct SQL
+GET    /api/admin/collections       membership-graph view, no sealed keys
 ```
 
 ### 4.4 Sessions

@@ -106,22 +106,8 @@ func (s *Store) InviteByToken(ctx context.Context, token string) (Invite, error)
 	return inv, nil
 }
 
-// MarkInviteUsed consumes the invite. The WHERE clause carries the
-// used_at IS NULL condition so two concurrent enrollments cannot both succeed:
-// the second affects zero rows and gets ErrNotFound.
-func (s *Store) MarkInviteUsed(ctx context.Context, inviteID string) error {
-	result, err := s.db.ExecContext(ctx,
-		`UPDATE invites SET used_at = ? WHERE id = ? AND used_at IS NULL`,
-		time.Now().UTC().Format(time.RFC3339), inviteID)
-	if err != nil {
-		return fmt.Errorf("mark invite used: %w", err)
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("rows affected: %w", err)
-	}
-	if affected == 0 {
-		return ErrNotFound
-	}
-	return nil
-}
+// Deliberately absent: a standalone MarkInviteUsed. CompleteEnrollment
+// consumes the invite inside its own transaction, and that is what makes a
+// link one-time under concurrency — two racing enrollments both matching
+// `used_at IS NULL` in separate statements would both succeed. A separate
+// function would be the wrong thing to reach for.

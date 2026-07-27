@@ -169,6 +169,11 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// then gets it right is not still throttled on their next sign-in.
 	s.limiter.Reset(ipKey)
 	s.limiter.Reset(accountKey)
+	// A successful sign-in is proof the traffic from this address is real, so
+	// it clears the prelogin budget too. Without this a household behind one
+	// NAT address is throttled after twenty sign-ins in an hour and told
+	// nothing about why.
+	s.preloginLimiter.Reset("prelogin:" + ClientIP(r))
 
 	// The wrapped keys ride along with the tokens: the client derived its auth
 	// hash before it had them, and needs them now to finish unlocking.
@@ -236,11 +241,9 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	session, ok := sessionFrom(r.Context())
-	if !ok {
-		WriteError(w, http.StatusUnauthorized, CodeUnauthorized, "not signed in")
-		return
-	}
+	// requireAuth cannot call this handler without a session in context, so
+	// the absent case is unreachable rather than merely unlikely.
+	session, _ := sessionFrom(r.Context())
 	if err := s.store.RevokeSession(r.Context(), session.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
 		s.logger.Error("revoke session", "id", RequestIDFrom(r.Context()), "error", err)
 		WriteError(w, http.StatusInternalServerError, CodeInternal, "could not sign out")

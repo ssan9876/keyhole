@@ -12,13 +12,31 @@ export interface KdfParams {
   parallelism: number;
 }
 
-/** Fixed by the spec. Stored per user so they can be raised later without a flag day. */
+/**
+ * Fixed by the spec. Recorded per user so a future migration knows what each
+ * account used — but the server pins them: enrollment and password rotation
+ * reject anything that is not byte-equal to its current default.
+ */
 export const DEFAULT_KDF_PARAMS: Readonly<KdfParams> = Object.freeze({
   algorithm: "argon2id",
   memoryKiB: 65536,
   iterations: 3,
   parallelism: 4,
 });
+
+/**
+ * The exact JSON the server accepts for KDF parameters, byte for byte.
+ *
+ * The server pins this: enrollment and password rotation reject anything else,
+ * because prelogin answers an unknown address with this same string and any
+ * divergence would turn the params field into an account-enumeration oracle.
+ *
+ * A literal, not `JSON.stringify(DEFAULT_KDF_PARAMS)` — key order and spacing
+ * are part of the contract, and a stringify at a call site is exactly how they
+ * drift. Send this verbatim; never stringify an object.
+ */
+export const DEFAULT_KDF_PARAMS_JSON =
+  '{"algorithm":"argon2id","memoryKiB":65536,"iterations":3,"parallelism":4}';
 
 const KDF_SALT_BYTES = 16;
 const DERIVED_KEY_BYTES = 32;

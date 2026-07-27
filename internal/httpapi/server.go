@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -26,7 +27,7 @@ type Server struct {
 	// and an HMAC on every call. Keeping it off the login budget means a user
 	// mistyping their password does not spend two allowances per attempt.
 	preloginLimiter *auth.Limiter
-	// stop ends the background sweeper. Without it every server leaks a
+	// stop ends the background goroutine. Without it every server leaks a
 	// goroutine holding a ten-minute ticker — invisible in production, where
 	// there is one server for the life of the process, but newTestServer is the
 	// fixture every handler test uses and will keep using.
@@ -61,7 +62,7 @@ func New(cfg config.Config, st *store.Store, secret []byte, logger *slog.Logger)
 	// format rather than the global slog's.
 	setWriteLogger(logger)
 	s.routes()
-	go s.sweepLimiter()
+	go s.background()
 	return s
 }
 
@@ -75,17 +76,32 @@ func (s *Server) Close() error {
 	return nil
 }
 
-// sweepLimiter discards stale rate-limit entries. Without it, an attacker
-// cycling source addresses grows the entries map without bound. It runs for
-// the life of the server and exits on Close.
-func (s *Server) sweepLimiter() {
-	ticker := time.NewTicker(10 * time.Minute)
-	defer ticker.Stop()
+// background runs the server's periodic maintenance and exits on Close.
+//
+// Two jobs on two tickers in one goroutine: discarding stale rate-limit
+// entries, without which an attacker cycling source addresses grows the map
+// without bound; and purging expired tombstones, without which every delete
+// this installation ever performs is stored forever.
+func (s *Server) background() {
+	limiterTicker := time.NewTicker(10 * time.Minute)
+	defer limiterTicker.Stop()
+	retentionTicker := time.NewTicker(24 * time.Hour)
+	defer retentionTicker.Stop()
+
 	for {
 		select {
-		case <-ticker.C:
+		case <-limiterTicker.C:
 			s.limiter.Sweep(time.Hour)
 			s.preloginLimiter.Sweep(time.Hour)
+		case <-retentionTicker.C:
+			purged, err := s.store.PurgeTombstones(context.Background(), store.TombstoneRetention)
+			if err != nil {
+				s.logger.Error("purge tombstones", "error", err)
+				continue
+			}
+			if purged > 0 {
+				s.logger.Info("purged tombstones", "rows", purged)
+			}
 		case <-s.stop:
 			return
 		}
