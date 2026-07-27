@@ -93,6 +93,41 @@ completions of specced features, not new ones.
 
 ### The sync contract
 
+**Correction made during Task 2, after its review.** The first version of this
+contract was wrong in a way that would have silently withheld a household's
+shared passwords from the person just given access to them. It is recorded here
+rather than quietly patched, because Tasks 3, 4, and 5 all depend on it.
+
+The cursor is global and monotonic, but visibility is evaluated at query time.
+So an item already in collection C carries a revision *below* the cursor a new
+member's device already holds, and their next incremental sync returns nothing.
+Measured during review: cursor 1, shared item at revision 1, new member's sync
+returned 0 items. No error, no empty-state signal — the passwords are simply
+invisible until that device wipes its local state.
+
+Three rules close it. All three are load-bearing; none is optional.
+
+1. **`collection_memberships.granted_revision`** records the revision at which
+   a membership was created, drawn from the same sequence. A shared item is
+   returned when `item.revision > since` **OR** `membership.granted_revision >
+   since` — so being newly granted access delivers the whole collection, with
+   no row rewrites and no effect on existing members. Task 4 adds the column
+   (migration 0003) and amends the query.
+
+2. **Re-parenting an item is not an in-place update.** `PUT /api/items/{id}`
+   rejects a `collectionId` that differs from the stored one. The client moves
+   an item by deleting it and creating a new one, so the change reaches the old
+   audience as a tombstone and the new audience as a create. An in-place move
+   is invisible to everyone who loses sight of the item: their filter simply
+   stops matching it, and no tombstone is ever written.
+
+3. **The client drops items whose `collectionId` is no longer in the
+   collections list.** That list is complete on every sync — never incremental
+   — precisely so this check is possible. This is what makes a revoked
+   membership take effect on the ex-member's device; the server correctly stops
+   serving those items, but it cannot issue a per-user tombstone without a
+   per-user table, and at household scale that table is not worth its weight.
+
 - **Items and folders are incremental**, filtered on `revision > since`,
   tombstones included so deletes propagate.
 - **Collections and pending grants are sent in full on every sync.** At
