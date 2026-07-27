@@ -10,6 +10,36 @@
 
 ---
 
+## Corrections found during execution
+
+This plan was executed end to end. Seven defects in **this document's own code**
+surfaced during implementation and review; the merged implementation is correct,
+but the code blocks below still show the original versions. Read the code in
+`apps/web/` as authoritative where they disagree.
+
+| Where | Defect | What the implementation does instead |
+|---|---|---|
+| Task 1, `eslint.config.js` | Declared `rules` but configured no TypeScript/JSX parser, so it parse-errored on `.tsx` and the crypto-import ban silently never ran on real UI files | Adds `extends: [tseslint.configs.recommended]` scoped to the same `files` glob |
+| Task 2 / Task 4, storage and upload assertions | Searched for a decimal CSV (`"1,2,3,4"`), but key bytes reach the wire and storage as **base64**. The assertion could not fail | Checks base64 and `JSON.stringify` object forms, and builds the storage dump from raw values rather than double-JSON-encoding it |
+| Task 3, `unlock.test.ts` | Hard-coded `SALT_B64` for the mocked prelogin, but `enrollUser()` generates its own random salt — the round-trip would have failed at AES-GCM | Threads the enrolled account's real salt through, which is what a real prelogin returns |
+| Task 5, `store.test.ts` | Nothing covered the full-load-versus-resync distinction; mutating it to always-merge passed every test | Adds a test that a full snapshot drops items absent from it without a tombstone |
+| Task 6, `generator.ts` | `randomIndex` computed `ceiling = Math.floor(256/limit)*limit`, which is `0` once `limit > 256`, so `generatePassword({length: 300})` **hung forever** | Byte-width-aware rejection sampling, plus a `limit < 1` guard and tests for bias and shuffle |
+| Task 7, `EnrolScreen.tsx` | The continue button never cleared `recoveryCode`, so the "shown once" guarantee depended on the parent unmounting the component | Clears the state before calling `onFinish` |
+| Task 8, `ItemEditor.test.tsx` | `getByLabelText(/name/i)` also matches "Username" and throws on multiple matches | Anchored to `/^name/i` |
+
+Two further defects were in the **application**, not the plan, and were found only
+because the end-to-end journeys run against a real server:
+
+- `App.tsx` never cleared the `/enroll/<token>` path, so a reload — routine,
+  since the session is memory-only — re-derived the spent invite token and
+  showed the enrolment screen instead of unlock.
+- `App.tsx` awaited the post-enrolment sync **before** returning the recovery
+  code, so a network blip destroyed the one credential that cannot be reissued.
+  `enroll()` now treats a 200 from `POST /api/enroll/:token` as the point of no
+  return and surfaces the code regardless of what fails afterwards.
+
+---
+
 ## Global Constraints
 
 Every task's requirements implicitly include this section.
