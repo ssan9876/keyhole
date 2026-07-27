@@ -294,3 +294,19 @@ func (s *Server) requireAuth(next http.HandlerFunc) http.HandlerFunc {
 		next(w, r.WithContext(ctx))
 	}
 }
+
+// requireAdmin wraps requireAuth and additionally demands the admin role.
+//
+// 403, not 404: unlike a vault row, the existence of the admin surface is not
+// a secret — every client knows the endpoints exist — so hiding it buys
+// nothing, and a 403 tells an honest client the truth about why it failed.
+func (s *Server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
+	return s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
+		user, ok := UserFrom(r.Context())
+		if !ok || user.Role != "admin" {
+			WriteError(w, http.StatusForbidden, CodeForbidden, "this action requires an administrator")
+			return
+		}
+		next(w, r)
+	})
+}

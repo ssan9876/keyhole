@@ -4,9 +4,6 @@ import (
 	"context"
 	"net/http"
 	"testing"
-	"time"
-
-	"github.com/ssan9876/keyhole/internal/store"
 )
 
 type itemResponse struct {
@@ -19,33 +16,6 @@ type itemResponse struct {
 	CreatedAt      string  `json:"createdAt"`
 	UpdatedAt      string  `json:"updatedAt"`
 	DeletedAt      *string `json:"deletedAt"`
-}
-
-// seedTestCollection creates a collection with the given members directly.
-// Task 5 adds the endpoint that does this properly.
-func seedTestCollection(t *testing.T, srv *Server, createdBy string, memberIDs ...string) string {
-	t.Helper()
-	ctx := context.Background()
-	id, err := store.NewID()
-	if err != nil {
-		t.Fatalf("NewID: %v", err)
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err := srv.store.DB().ExecContext(ctx,
-		`INSERT INTO collections (id, name, created_by, created_at) VALUES (?, ?, ?, ?)`,
-		id, "Household", createdBy, now); err != nil {
-		t.Fatalf("insert collection: %v", err)
-	}
-	for _, member := range memberIDs {
-		if _, err := srv.store.DB().ExecContext(ctx,
-			`INSERT INTO collection_memberships
-			 (collection_id, user_id, sealed_collection_key, role, granted_by, granted_at)
-			 VALUES (?, ?, ?, 'member', ?, ?)`,
-			id, member, "sealed-blob", createdBy, now); err != nil {
-			t.Fatalf("insert membership: %v", err)
-		}
-	}
-	return id
 }
 
 func TestCreateItemRequiresAuthentication(t *testing.T) {
@@ -107,15 +77,15 @@ func TestCreateItemRejectsAMissingCiphertext(t *testing.T) {
 
 func TestCreateItemInAForeignCollectionIsNotFound(t *testing.T) {
 	srv := newTestServer(t)
-	owner, _ := loginTestUser(t, srv, "owner@example.com")
+	_, adminToken := loginAdmin(t, srv, "owner@example.com")
 	_, outsiderToken := loginTestUser(t, srv, "outsider@example.com")
 
-	collectionID := seedTestCollection(t, srv, owner.ID, owner.ID)
+	collection := createCollection(t, srv, adminToken, "Household")
 
 	// 404, not 403: a 403 would confirm the collection exists, which is how a
 	// caller maps out the membership graph one guess at a time.
 	rec := doJSON(t, srv, http.MethodPost, "/api/items", outsiderToken, map[string]string{
-		"collectionId": collectionID, "ciphertext": "c", "wrappedItemKey": "k",
+		"collectionId": collection.ID, "ciphertext": "c", "wrappedItemKey": "k",
 	})
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d", rec.Code, http.StatusNotFound)
@@ -206,13 +176,17 @@ func TestUpdatingAnotherUsersItemIsNotFound(t *testing.T) {
 
 func TestAMemberMayEditAnItemTheyDidNotCreate(t *testing.T) {
 	srv := newTestServer(t)
-	owner, ownerToken := loginTestUser(t, srv, "owner@example.com")
+	admin, adminToken := loginAdmin(t, srv, "owner@example.com")
 	member, memberToken := loginTestUser(t, srv, "member@example.com")
 
-	collectionID := seedTestCollection(t, srv, owner.ID, owner.ID, member.ID)
+	collection := createCollection(t, srv, adminToken, "Household")
+	if err := srv.store.FulfilGrantOrAdd(context.Background(),
+		collection.ID, member.ID, "sealed-to-member", "member", admin.ID); err != nil {
+		t.Fatalf("add member: %v", err)
+	}
 
-	created := doJSON(t, srv, http.MethodPost, "/api/items", ownerToken, map[string]string{
-		"collectionId": collectionID, "ciphertext": "v1", "wrappedItemKey": "k",
+	created := doJSON(t, srv, http.MethodPost, "/api/items", adminToken, map[string]string{
+		"collectionId": collection.ID, "ciphertext": "v1", "wrappedItemKey": "k",
 	})
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", created.Code, created.Body.String())
@@ -223,13 +197,12 @@ func TestAMemberMayEditAnItemTheyDidNotCreate(t *testing.T) {
 	// Spec section 5.1: any member may edit any item in a collection.
 	// owner_user_id records who made it and confers no exclusive rights.
 	rec := doJSON(t, srv, http.MethodPut, "/api/items/"+item.ID, memberToken, map[string]any{
-		"collectionId": collectionID, "ciphertext": "v2",
+		"collectionId": collection.ID, "ciphertext": "v2",
 		"wrappedItemKey": "k", "revision": item.Revision,
 	})
 	if rec.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d: %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	_ = member
 }
 
 func TestDeleteItemTombstonesAndIsIdempotentlyNotFound(t *testing.T) {

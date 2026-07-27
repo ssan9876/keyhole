@@ -112,6 +112,20 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET /api/sync", s.requireAuth(s.handleSync))
 
+	// The membership routes are requireAuth, not requireAdmin: a manager who is
+	// not an admin must be able to run their own collection. requireManager
+	// inside each handler enforces the rest.
+	s.mux.HandleFunc("GET /api/collections", s.requireAuth(s.handleListCollections))
+	s.mux.HandleFunc("POST /api/collections", s.requireAdmin(s.handleCreateCollection))
+	s.mux.HandleFunc("GET /api/collections/pending-grants", s.requireAuth(s.handleListPendingGrants))
+	s.mux.HandleFunc("DELETE /api/collections/{id}", s.requireAdmin(s.handleDeleteCollection))
+	s.mux.HandleFunc("GET /api/collections/{id}/members", s.requireAuth(s.handleListMembers))
+	s.mux.HandleFunc("POST /api/collections/{id}/members", s.requireAuth(s.handleAddMember))
+	s.mux.HandleFunc("DELETE /api/collections/{id}/members/{userId}", s.requireAuth(s.handleRemoveMember))
+	s.mux.HandleFunc("POST /api/collections/{id}/grants", s.requireAuth(s.handleFulfilGrant))
+
+	s.mux.HandleFunc("GET /api/directory", s.requireAuth(s.handleDirectory))
+
 	// Anything unmatched is a 404 in the standard envelope rather than Go's
 	// plain-text default, so a client only ever parses one error shape.
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {

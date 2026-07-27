@@ -37,9 +37,15 @@ func (s *Server) handleSync(w http.ResponseWriter, r *http.Request) {
 		folders = append(folders, toFolderJSON(folder))
 	}
 
+	collections := make([]collectionJSON, 0, len(result.Collections))
+	for _, collection := range result.Collections {
+		collections = append(collections, toCollectionJSON(collection))
+	}
+
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"revision": result.Revision,
-		"items":    items,
-		"folders":  folders,
+		"revision":    result.Revision,
+		"items":       items,
+		"folders":     folders,
+		"collections": collections,
 	})
 }

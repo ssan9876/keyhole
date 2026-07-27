@@ -7,9 +7,10 @@ import (
 )
 
 type syncResponse struct {
-	Revision int64            `json:"revision"`
-	Items    []itemResponse   `json:"items"`
-	Folders  []folderResponse `json:"folders"`
+	Revision    int64                `json:"revision"`
+	Items       []itemResponse       `json:"items"`
+	Folders     []folderResponse     `json:"folders"`
+	Collections []collectionResponse `json:"collections"`
 }
 
 func TestSyncRequiresAuthentication(t *testing.T) {
