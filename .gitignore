@@ -9,6 +9,11 @@ dist/
 build/
 apps/web/dist/
 
+# Playwright e2e artifacts
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/blob-report/
+
 # Go
 /keyhole
 /keyhole.exe
