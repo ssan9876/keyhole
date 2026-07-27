@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { encryptItem, generateUserKey, type LoginItem } from "@keyhole/crypto";
+import {
+  encryptItem,
+  generateCollectionKey,
+  generateKeyPair,
+  generateUserKey,
+  sealToUser,
+  type LoginItem,
+} from "@keyhole/crypto";
 import type { ApiClient } from "./api.js";
-import { createSession } from "./session.js";
+import { createSession, type Session } from "./session.js";
 import { createVaultStore } from "./store.js";
 import type { WireItem } from "./items.js";
 
@@ -10,6 +17,18 @@ const LOGIN: LoginItem = {
   name: "Example",
   username: "u",
   password: "p",
+  urls: [],
+  notes: "",
+  favorite: false,
+  folderId: null,
+  passwordHistory: [],
+};
+
+const BLANK: LoginItem = {
+  type: "login",
+  name: "",
+  username: "",
+  password: "",
   urls: [],
   notes: "",
   favorite: false,
@@ -26,6 +45,59 @@ function sessionWith(userKey: Uint8Array) {
     privateKey: new Uint8Array(32),
   });
   return session;
+}
+
+/** Like `sessionWith`, but for tests that need a real keypair so a sealed
+ *  collection key can actually be opened. The userKey is unused filler. */
+function openSession(privateKey: Uint8Array): Session {
+  const session = createSession();
+  session.open({
+    tokens: { accessToken: "a", refreshToken: "r" },
+    user: { id: "u1", email: "a@example.com", name: "A", role: "user" },
+    userKey: new Uint8Array(32).fill(1),
+    privateKey,
+  });
+  return session;
+}
+
+function wireItem(overrides: Partial<WireItem> = {}): WireItem {
+  return {
+    id: "i1",
+    collectionId: null,
+    ownerUserId: "u1",
+    ciphertext: "",
+    wrappedItemKey: "",
+    revision: 1,
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    deletedAt: null,
+    ...overrides,
+  };
+}
+
+interface FakeApiOptions {
+  get?: (path: string) => Promise<unknown>;
+}
+
+/** Like `syncApi`, but the response is computed by a function rather than
+ *  looked up by path — for tests where the only call is `/api/sync` and the
+ *  path itself is not the point. */
+function fakeApi(options: FakeApiOptions): ApiClient {
+  return {
+    async get<T>(path: string): Promise<T> {
+      if (options.get) return (await options.get(path)) as T;
+      throw new Error(`unexpected GET ${path}`);
+    },
+    async post<T>(): Promise<T> {
+      throw new Error("unexpected POST");
+    },
+    async put<T>(): Promise<T> {
+      throw new Error("unexpected PUT");
+    },
+    async del<T>(): Promise<T> {
+      throw new Error("unexpected DELETE");
+    },
+  };
 }
 
 function syncApi(pages: Record<string, unknown>): ApiClient {
@@ -199,5 +271,153 @@ describe("vault store", () => {
     // of the memory-only rule.
     expect(store.getState().items).toHaveLength(0);
     expect(store.getState().status).toBe("empty");
+  });
+});
+
+describe("collections in sync", () => {
+  it("puts the collection key into the session before decrypting the items that need it", async () => {
+    const me = generateKeyPair();
+    const collectionKey = generateCollectionKey();
+    const session = openSession(me.privateKey);
+    const encrypted = await encryptItem({ ...BLANK, name: "Shared router" }, collectionKey);
+
+    const api = fakeApi({
+      get: async () => ({
+        revision: 4,
+        items: [wireItem({ id: "i1", collectionId: "c1", ...encrypted })],
+        folders: [],
+        collections: [
+          {
+            id: "c1",
+            name: "Household",
+            role: "manager",
+            sealedCollectionKey: await sealToUser(collectionKey, me.publicKey),
+            createdBy: "u1",
+            createdAt: "2026-07-27T00:00:00Z",
+          },
+        ],
+      }),
+    });
+
+    const store = createVaultStore();
+    await store.load({ api, session });
+
+    // Ordering is the whole point: adopt first, decrypt second. Reversed, this
+    // item is unreadable on the sync that delivers it and only appears after
+    // some later refresh.
+    expect(store.getState().items[0]?.plaintext?.name).toBe("Shared router");
+    expect(store.getState().collections).toEqual([
+      { id: "c1", name: "Household", role: "manager", usable: true },
+    ]);
+  });
+
+  it("keeps collections from the full list on an incremental resync", async () => {
+    // /api/sync sends collections in full every time, so a resync that merged
+    // them would be harmless but one that ignored them would strand a
+    // newly-granted collection until the next full load.
+    const me = generateKeyPair();
+    const collectionKeyC1 = generateCollectionKey();
+    const collectionKeyC2 = generateCollectionKey();
+    const session = openSession(me.privateKey);
+
+    const c1 = {
+      id: "c1",
+      name: "Household",
+      role: "manager",
+      sealedCollectionKey: await sealToUser(collectionKeyC1, me.publicKey),
+      createdBy: "u1",
+      createdAt: "2026-07-27T00:00:00Z",
+    };
+    const c2 = {
+      id: "c2",
+      name: "Book club",
+      role: "member",
+      sealedCollectionKey: await sealToUser(collectionKeyC2, me.publicKey),
+      createdBy: "u2",
+      createdAt: "2026-07-27T00:00:00Z",
+    };
+
+    const api = syncApi({
+      "/api/sync": { revision: 4, items: [], folders: [], collections: [c1] },
+      "/api/sync?since=4": { revision: 5, items: [], folders: [], collections: [c1, c2] },
+    });
+
+    const store = createVaultStore();
+    await store.load({ api, session });
+    expect(store.getState().collections.map((c) => c.id)).toEqual(["c1"]);
+
+    await store.resync({ api, session });
+
+    expect(store.getState().collections.map((c) => c.id)).toEqual(["c1", "c2"]);
+  });
+
+  it("drops a collection that has disappeared from sync", async () => {
+    const me = generateKeyPair();
+    const collectionKey = generateCollectionKey();
+    const session = openSession(me.privateKey);
+
+    const api = syncApi({
+      "/api/sync": {
+        revision: 4,
+        items: [],
+        folders: [],
+        collections: [
+          {
+            id: "c1",
+            name: "Household",
+            role: "manager",
+            sealedCollectionKey: await sealToUser(collectionKey, me.publicKey),
+            createdBy: "u1",
+            createdAt: "2026-07-27T00:00:00Z",
+          },
+        ],
+      },
+      "/api/sync?since=4": { revision: 5, items: [], folders: [], collections: [] },
+    });
+
+    const store = createVaultStore();
+    await store.load({ api, session });
+    expect(store.getState().collections).toHaveLength(1);
+    expect(session.getCollectionKey("c1")).not.toBeNull();
+
+    await store.resync({ api, session });
+
+    // A revoked membership is expressed by absence, not by a tombstone — the
+    // same asymmetry with items that /api/sync's contract (internal/store/sync.go:17)
+    // makes deliberate.
+    expect(store.getState().collections).toEqual([]);
+    expect(session.getCollectionKey("c1")).toBeNull();
+  });
+
+  it("clears collections on clear()", async () => {
+    const me = generateKeyPair();
+    const collectionKey = generateCollectionKey();
+    const session = openSession(me.privateKey);
+
+    const api = syncApi({
+      "/api/sync": {
+        revision: 4,
+        items: [],
+        folders: [],
+        collections: [
+          {
+            id: "c1",
+            name: "Household",
+            role: "manager",
+            sealedCollectionKey: await sealToUser(collectionKey, me.publicKey),
+            createdBy: "u1",
+            createdAt: "2026-07-27T00:00:00Z",
+          },
+        ],
+      },
+    });
+
+    const store = createVaultStore();
+    await store.load({ api, session });
+    expect(store.getState().collections).toHaveLength(1);
+
+    store.clear();
+
+    expect(store.getState().collections).toEqual([]);
   });
 });

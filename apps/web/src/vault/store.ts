@@ -1,5 +1,6 @@
 import type { ApiClient } from "./api.js";
 import type { Session } from "./session.js";
+import { adoptCollections, type CollectionSummary, type WireCollection } from "./collections.js";
 import { decryptRecords, type ItemRecord, type WireItem } from "./items.js";
 
 /**
@@ -16,6 +17,9 @@ import { decryptRecords, type ItemRecord, type WireItem } from "./items.js";
 export interface VaultState {
   revision: number;
   items: ItemRecord[];
+  /** Sent in full on every sync, so this is a replacement rather than a merge:
+   *  a revoked membership is expressed by absence (internal/store/sync.go:17). */
+  collections: CollectionSummary[];
   status: "empty" | "loading" | "ready" | "error";
   error: string | null;
 }
@@ -23,6 +27,7 @@ export interface VaultState {
 interface SyncResponse {
   revision: number;
   items: WireItem[];
+  collections: WireCollection[];
 }
 
 export interface VaultStore {
@@ -35,7 +40,13 @@ export interface VaultStore {
   clear(): void;
 }
 
-const EMPTY: VaultState = { revision: 0, items: [], status: "empty", error: null };
+const EMPTY: VaultState = {
+  revision: 0,
+  items: [],
+  collections: [],
+  status: "empty",
+  error: null,
+};
 
 export function createVaultStore(): VaultStore {
   let state: VaultState = EMPTY;
@@ -67,10 +78,15 @@ export function createVaultStore(): VaultStore {
     const path = since === null ? "/api/sync" : `/api/sync?since=${since}`;
     try {
       const response = await deps.api.get<SyncResponse>(path);
+      // Before decryptRecords, not after: the items in a collection granted
+      // since the last sync arrive in this same response, and they are
+      // unreadable until their key is in the session.
+      const collections = await adoptCollections(response.collections ?? [], deps.session);
       const records = await decryptRecords(response.items, deps.session);
       set({
         revision: response.revision,
         items: since === null ? merge([], records) : merge(state.items, records),
+        collections,
         status: "ready",
         error: null,
       });
