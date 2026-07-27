@@ -540,18 +540,6 @@ func enrolledUserID(t *testing.T, st *Store, email string) string {
 	t.Helper()
 	return enrolledUser(t, st, email).ID
 }
-	if _, err := st.DB().ExecContext(ctx,
-		`UPDATE users SET status = 'active',
-			kdf_salt = 'c2FsdA==', kdf_params = ?, auth_hash = 'argon2id$stored$hash',
-			protected_user_key = 'puk', recovery_protected_user_key = 'rpuk',
-			recovery_salt = 'rsalt', recovery_kdf_params = ?,
-			public_key = 'pk', encrypted_private_key = 'epk'
-		 WHERE id = ?`,
-		auth.DefaultKDFParamsJSON, auth.DefaultKDFParamsJSON, user.ID); err != nil {
-		t.Fatalf("activate user: %v", err)
-	}
-	return user.ID
-}
 
 func TestCreateItemStoresCiphertextVerbatimAndNumbersIt(t *testing.T) {
 	st := openTemp(t)
