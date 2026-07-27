@@ -28,6 +28,22 @@ export interface Session {
   getAccessToken(): string | null;
   getRefreshToken(): string | null;
   getKeys(): { userKey: Uint8Array; privateKey: Uint8Array };
+  /** The key for one collection, or null when this client holds none — either
+   *  because the user is not a member or because the sealed blob would not
+   *  open. Callers must handle null; an item in that collection is simply
+   *  unreadable here, which is not an error worth throwing over. */
+  getCollectionKey(collectionId: string): Uint8Array | null;
+  /**
+   * Replaces the whole keyring, zeroizing every key the new map does not
+   * carry over.
+   *
+   * Whole-map replacement rather than per-key insertion because that is the
+   * shape of the truth: /api/sync sends the full collection list every time
+   * (internal/store/sync.go:17), so a revoked membership is expressed by
+   * absence. Merging would keep a revoked collection's key alive in memory
+   * indefinitely with nothing to ever remove it.
+   */
+  setCollectionKeys(next: Map<string, Uint8Array>): void;
   open(input: {
     tokens: SessionTokens;
     user: SessionUser;
@@ -68,6 +84,7 @@ export function createSession(): Session {
   let user: SessionUser | null = null;
   let userKey: Uint8Array | null = null;
   let privateKey: Uint8Array | null = null;
+  let collectionKeys = new Map<string, Uint8Array>();
   const listeners = new Set<() => void>();
 
   const notify = (): void => {
@@ -96,7 +113,26 @@ export function createSession(): Session {
       }
       return { userKey, privateKey };
     },
+    getCollectionKey(collectionId) {
+      return collectionKeys.get(collectionId) ?? null;
+    },
+    setCollectionKeys(next) {
+      // Identity, not equality: adoptCollections reuses the existing Uint8Array
+      // for an unchanged collection, and zeroizing a buffer the new map still
+      // points at would silently blank a live key.
+      for (const [id, key] of collectionKeys) {
+        if (next.get(id) !== key) zeroize(key);
+      }
+      collectionKeys = next;
+    },
     open(input) {
+      // Zeroize whatever this session already held. Reachable in ordinary use:
+      // enrol-then-login opens twice, and any future re-authentication would
+      // too. Without this, the first unlock's keys stay live in the heap for
+      // the life of the tab with no reference left to clear them.
+      zeroize(userKey, privateKey, ...collectionKeys.values());
+      collectionKeys = new Map();
+
       tokens = input.tokens;
       user = input.user;
       userKey = input.userKey;
@@ -107,7 +143,8 @@ export function createSession(): Session {
       tokens = next;
     },
     lock() {
-      zeroize(userKey, privateKey);
+      zeroize(userKey, privateKey, ...collectionKeys.values());
+      collectionKeys = new Map();
       userKey = null;
       privateKey = null;
       tokens = null;

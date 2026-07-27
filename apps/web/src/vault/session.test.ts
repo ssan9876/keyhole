@@ -6,6 +6,7 @@ import {
   forgetEmail,
   rememberEmail,
   rememberedEmail,
+  type Session,
 } from "./session.js";
 
 const USER = { id: "u1", email: "a@b.c", name: "A", role: "user" };
@@ -174,5 +175,81 @@ describe("session", () => {
     const session = openSession();
     session.lock();
     expect(() => session.lock()).not.toThrow();
+  });
+});
+
+describe("collection keyring", () => {
+  function openSession(): Session {
+    const session = createSession();
+    session.open({
+      tokens: { accessToken: "a", refreshToken: "r" },
+      user: { id: "u1", email: "a@example.com", name: "A", role: "user" },
+      userKey: new Uint8Array(32).fill(1),
+      privateKey: new Uint8Array(32).fill(2),
+    });
+    return session;
+  }
+
+  it("returns a collection key that was set, and null for one that was not", () => {
+    const session = openSession();
+    const key = new Uint8Array(32).fill(7);
+    session.setCollectionKeys(new Map([["c1", key]]));
+
+    expect(session.getCollectionKey("c1")).toBe(key);
+    expect(session.getCollectionKey("c2")).toBeNull();
+  });
+
+  it("zeroizes a collection key that the replacement map drops", () => {
+    const session = openSession();
+    const revoked = new Uint8Array(32).fill(7);
+    const kept = new Uint8Array(32).fill(9);
+    session.setCollectionKeys(new Map([["c1", revoked], ["c2", kept]]));
+
+    // A membership revoked server-side simply stops appearing in /api/sync.
+    session.setCollectionKeys(new Map([["c2", kept]]));
+
+    expect(revoked.every((byte) => byte === 0)).toBe(true);
+    expect(kept.every((byte) => byte === 9)).toBe(true);
+    expect(session.getCollectionKey("c1")).toBeNull();
+  });
+
+  it("does not zeroize a key the replacement map carries over by identity", () => {
+    const session = openSession();
+    const key = new Uint8Array(32).fill(7);
+    session.setCollectionKeys(new Map([["c1", key]]));
+    session.setCollectionKeys(new Map([["c1", key]]));
+
+    expect(key.every((byte) => byte === 7)).toBe(true);
+  });
+
+  it("zeroizes every collection key on lock", () => {
+    const session = openSession();
+    const first = new Uint8Array(32).fill(7);
+    const second = new Uint8Array(32).fill(8);
+    session.setCollectionKeys(new Map([["c1", first], ["c2", second]]));
+
+    session.lock();
+
+    expect(first.every((byte) => byte === 0)).toBe(true);
+    expect(second.every((byte) => byte === 0)).toBe(true);
+    expect(session.getCollectionKey("c1")).toBeNull();
+  });
+
+  it("zeroizes the keys of a previous session when open() is called again", () => {
+    const session = openSession();
+    const stale = new Uint8Array(32).fill(7);
+    session.setCollectionKeys(new Map([["c1", stale]]));
+    const staleUserKey = session.getKeys().userKey;
+
+    session.open({
+      tokens: { accessToken: "a2", refreshToken: "r2" },
+      user: { id: "u2", email: "b@example.com", name: "B", role: "user" },
+      userKey: new Uint8Array(32).fill(3),
+      privateKey: new Uint8Array(32).fill(4),
+    });
+
+    expect(stale.every((byte) => byte === 0)).toBe(true);
+    expect(staleUserKey.every((byte) => byte === 0)).toBe(true);
+    expect(session.getCollectionKey("c1")).toBeNull();
   });
 });
