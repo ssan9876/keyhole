@@ -1,0 +1,66 @@
+/*
+ * Mono — Swiss and typographic. Design spec 6.4.
+ *
+ * Every value lives here so the warmth dial (paper-white ground and softer
+ * rules versus pure white and black hairlines) is a token change rather than a
+ * redesign. Dark is the same layout with inverted values and hairlines at 12%
+ * white, not a separate theme.
+ */
+:root {
+  --ground: #fdfdfc;
+  --ink: #14140f;
+  --ink-muted: #6b6b63;
+  --rule: rgba(20, 20, 15, 0.14);
+  --rule-strong: rgba(20, 20, 15, 0.28);
+  --focus: #1f4fd8;
+  /* Colour is reserved for meaning: destructive, strength, shared. */
+  --danger: #a3241c;
+  --strength-weak: #a3241c;
+  --strength-fair: #8a6a12;
+  --strength-strong: #1f6b32;
+
+  --font-sans: ui-sans-serif, system-ui, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ground: #111110;
+    --ink: #f2f2ef;
+    --ink-muted: #9a9a92;
+    --rule: rgba(255, 255, 255, 0.12);
+    --rule-strong: rgba(255, 255, 255, 0.24);
+    --focus: #7aa2ff;
+    --danger: #ef6b62;
+    --strength-weak: #ef6b62;
+    --strength-fair: #d9b23a;
+    --strength-strong: #63c07f;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  /* Mobile-first: a list of rule-separated rows is naturally a good phone
+     layout, so there is no separate mobile design to maintain. */
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
