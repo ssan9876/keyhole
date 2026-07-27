@@ -147,14 +147,17 @@ export function VaultScreen({
   const save = useCallback(
     async (next: ItemPlaintext): Promise<void> => {
       if (editing === "new") {
-        store.upsert(await createItem({ api, session }, next));
+        store.upsert(await createItem({ api, session }, next, null));
         setEditing(null);
         setConflict(null);
         return;
       }
       if (editing === null) return;
       try {
-        const updated = await updateItem({ api, session }, editing.id, editing.revision, next);
+        const updated = await updateItem(
+          { api, session },
+          { id: editing.id, revision: editing.revision, collectionId: editing.collectionId, plaintext: next },
+        );
         store.upsert(updated);
         setEditing(null);
         setConflict(null);
@@ -165,10 +168,7 @@ export function VaultScreen({
           // otherwise the only exits. ItemEditor's own form state (what the
           // user typed) is untouched by this, so their edit is still right
           // there to resubmit.
-          const [serverRecord] = await decryptRecords(
-            [error.current],
-            session.getKeys().userKey,
-          );
+          const [serverRecord] = await decryptRecords([error.current], session);
           setEditing({ ...editing, revision: error.current.revision });
           setConflict(serverRecord?.plaintext ?? null);
         }

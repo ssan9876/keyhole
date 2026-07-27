@@ -49,6 +49,30 @@ function toRecord(item: WireItem, plaintext: ItemPlaintext | null): ItemRecord {
 }
 
 /**
+ * The key an item's body is encrypted under: the userKey for a personal item,
+ * the collection key for a shared one.
+ *
+ * Returns null rather than throwing when the collection key is missing —
+ * decryptRecords turns that into an unreadable row, which is the honest
+ * outcome, while the write paths turn it into a thrown error, because writing
+ * an item nobody can open is not something to do quietly.
+ */
+export function parentKeyFor(session: Session, collectionId: string | null): Uint8Array | null {
+  if (collectionId === null) return session.getKeys().userKey;
+  return session.getCollectionKey(collectionId);
+}
+
+function requireParentKey(session: Session, collectionId: string | null): Uint8Array {
+  const key = parentKeyFor(session, collectionId);
+  if (key === null) {
+    throw new Error(
+      `This device cannot open the key for that collection, so it cannot write to it`,
+    );
+  }
+  return key;
+}
+
+/**
  * Decrypts a batch, one row at a time, and never lets one failure sink the rest.
  *
  * A corrupt or unopenable blob is a bad row; it is not a bad vault. Throwing
@@ -57,7 +81,7 @@ function toRecord(item: WireItem, plaintext: ItemPlaintext | null): ItemRecord {
  */
 export async function decryptRecords(
   wire: WireItem[],
-  userKey: Uint8Array,
+  session: Session,
 ): Promise<ItemRecord[]> {
   const records: ItemRecord[] = [];
   for (const item of wire) {
@@ -67,10 +91,18 @@ export async function decryptRecords(
       records.push(toRecord(item, null));
       continue;
     }
+    const parentKey = parentKeyFor(session, item.collectionId);
+    if (parentKey === null) {
+      // An item in a collection whose key this client does not hold. Shown as
+      // undecryptable rather than dropped, for the same reason a corrupt blob
+      // is: a silently missing row reads as data loss.
+      records.push(toRecord(item, null));
+      continue;
+    }
     try {
       const plaintext = await decryptItem(
         { ciphertext: item.ciphertext, wrappedItemKey: item.wrappedItemKey },
-        userKey,
+        parentKey,
       );
       records.push(toRecord(item, plaintext));
     } catch {
@@ -83,10 +115,11 @@ export async function decryptRecords(
 export async function createItem(
   deps: { api: ApiClient; session: Session },
   plaintext: ItemPlaintext,
+  collectionId: string | null,
 ): Promise<ItemRecord> {
-  const { userKey } = deps.session.getKeys();
-  const encrypted = await encryptItem(plaintext, userKey);
+  const encrypted = await encryptItem(plaintext, requireParentKey(deps.session, collectionId));
   const created = await deps.api.post<WireItem>("/api/items", {
+    collectionId,
     ciphertext: encrypted.ciphertext,
     wrappedItemKey: encrypted.wrappedItemKey,
   });
@@ -95,21 +128,34 @@ export async function createItem(
   return toRecord(created, plaintext);
 }
 
+export interface ItemUpdate {
+  id: string;
+  revision: number;
+  /** Always explicit. The server reads an omitted field as "no change", and a
+   *  client that forgets to echo it moves a shared item to personal — which
+   *  every other member's next sync sees as the item vanishing. */
+  collectionId: string | null;
+  plaintext: ItemPlaintext;
+}
+
 export async function updateItem(
   deps: { api: ApiClient; session: Session },
-  id: string,
-  revision: number,
-  plaintext: ItemPlaintext,
+  input: ItemUpdate,
 ): Promise<ItemRecord> {
-  const { userKey } = deps.session.getKeys();
-  const encrypted = await encryptItem(plaintext, userKey);
+  // The parent is the *target* collection: a move re-encrypts the body under
+  // the destination's key in the same write.
+  const encrypted = await encryptItem(
+    input.plaintext,
+    requireParentKey(deps.session, input.collectionId),
+  );
   try {
-    const updated = await deps.api.put<WireItem>(`/api/items/${id}`, {
+    const updated = await deps.api.put<WireItem>(`/api/items/${input.id}`, {
+      collectionId: input.collectionId,
       ciphertext: encrypted.ciphertext,
       wrappedItemKey: encrypted.wrappedItemKey,
-      revision,
+      revision: input.revision,
     });
-    return toRecord(updated, plaintext);
+    return toRecord(updated, input.plaintext);
   } catch (error) {
     if (error instanceof ApiError && error.code === "conflict") {
       const body = error.body as { item?: WireItem };

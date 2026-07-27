@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { encryptItem, generateUserKey, type LoginItem } from "@keyhole/crypto";
+import {
+  decryptItem,
+  encryptItem,
+  generateCollectionKey,
+  generateUserKey,
+  type LoginItem,
+} from "@keyhole/crypto";
 import { ApiError, type ApiClient } from "./api.js";
-import { createSession } from "./session.js";
+import { createSession, type Session } from "./session.js";
 import {
   ItemConflictError,
   createItem,
@@ -22,7 +28,19 @@ const LOGIN: LoginItem = {
   passwordHistory: [],
 };
 
-function wire(overrides: Partial<WireItem> = {}): WireItem {
+const BLANK: LoginItem = {
+  type: "login",
+  name: "",
+  username: "",
+  password: "",
+  urls: [],
+  notes: "",
+  favorite: false,
+  folderId: null,
+  passwordHistory: [],
+};
+
+function wireItem(overrides: Partial<WireItem> = {}): WireItem {
   return {
     id: "i1",
     collectionId: null,
@@ -37,7 +55,7 @@ function wire(overrides: Partial<WireItem> = {}): WireItem {
   };
 }
 
-function sessionWith(userKey: Uint8Array) {
+function sessionWith(userKey: Uint8Array): Session {
   const session = createSession();
   session.open({
     tokens: { accessToken: "a", refreshToken: "r" },
@@ -48,13 +66,37 @@ function sessionWith(userKey: Uint8Array) {
   return session;
 }
 
+interface FakeApiOptions {
+  post?: (path: string, body?: unknown) => Promise<unknown>;
+  put?: (path: string, body?: unknown) => Promise<unknown>;
+}
+
+function fakeApi(options: FakeApiOptions = {}): ApiClient {
+  return {
+    async get<T>(path: string): Promise<T> {
+      throw new Error(`unexpected GET ${path}`);
+    },
+    async post<T>(path: string, body?: unknown): Promise<T> {
+      if (options.post) return (await options.post(path, body)) as T;
+      throw new Error(`unexpected POST ${path}`);
+    },
+    async put<T>(path: string, body?: unknown): Promise<T> {
+      if (options.put) return (await options.put(path, body)) as T;
+      throw new Error(`unexpected PUT ${path}`);
+    },
+    async del<T>(path: string): Promise<T> {
+      throw new Error(`unexpected DELETE ${path}`);
+    },
+  };
+}
+
 describe("decryptRecords", () => {
   it("decrypts what it can", async () => {
     const userKey = generateUserKey();
     const encrypted = await encryptItem(LOGIN, userKey);
     const records = await decryptRecords(
-      [wire({ ciphertext: encrypted.ciphertext, wrappedItemKey: encrypted.wrappedItemKey })],
-      userKey,
+      [wireItem({ ciphertext: encrypted.ciphertext, wrappedItemKey: encrypted.wrappedItemKey })],
+      sessionWith(userKey),
     );
 
     expect(records).toHaveLength(1);
@@ -67,10 +109,10 @@ describe("decryptRecords", () => {
 
     const records = await decryptRecords(
       [
-        wire({ id: "bad", ciphertext: "not-ciphertext", wrappedItemKey: "junk" }),
-        wire({ id: "good", ciphertext: good.ciphertext, wrappedItemKey: good.wrappedItemKey }),
+        wireItem({ id: "bad", ciphertext: "not-ciphertext", wrappedItemKey: "junk" }),
+        wireItem({ id: "good", ciphertext: good.ciphertext, wrappedItemKey: good.wrappedItemKey }),
       ],
-      userKey,
+      sessionWith(userKey),
     );
 
     // One corrupt blob making every password unreachable is a far worse failure
@@ -85,8 +127,8 @@ describe("decryptRecords", () => {
     // DeleteItem blanks ciphertext and wrapped_item_key, so a tombstone has
     // nothing to decrypt and must not be reported as a decryption failure.
     const records = await decryptRecords(
-      [wire({ deletedAt: "2026-01-02T00:00:00Z" })],
-      generateUserKey(),
+      [wireItem({ deletedAt: "2026-01-02T00:00:00Z" })],
+      sessionWith(generateUserKey()),
     );
     expect(records[0]?.plaintext).toBeNull();
     expect(records[0]?.deletedAt).not.toBeNull();
@@ -97,24 +139,15 @@ describe("createItem and updateItem", () => {
   it("uploads ciphertext and never plaintext", async () => {
     const userKey = generateUserKey();
     let sent: unknown = null;
-    const api: ApiClient = {
-      async get<T>(): Promise<T> {
-        throw new Error("unexpected");
-      },
-      async post<T>(_path: string, body?: unknown): Promise<T> {
+    const api = fakeApi({
+      post: async (_path, body) => {
         sent = body;
         const b = body as { ciphertext: string; wrappedItemKey: string };
-        return wire({ ciphertext: b.ciphertext, wrappedItemKey: b.wrappedItemKey }) as T;
+        return wireItem({ ciphertext: b.ciphertext, wrappedItemKey: b.wrappedItemKey });
       },
-      async put<T>(): Promise<T> {
-        throw new Error("unexpected");
-      },
-      async del<T>(): Promise<T> {
-        throw new Error("unexpected");
-      },
-    };
+    });
 
-    await createItem({ api, session: sessionWith(userKey) }, LOGIN);
+    await createItem({ api, session: sessionWith(userKey) }, LOGIN, null);
 
     const dump = JSON.stringify(sent);
     // The server stores an opaque string. If any of these appear, the vault is
@@ -126,30 +159,19 @@ describe("createItem and updateItem", () => {
 
   it("raises a typed conflict carrying the winning copy", async () => {
     const userKey = generateUserKey();
-    const winner = wire({ revision: 9, ciphertext: "theirs" });
-    const api: ApiClient = {
-      async get<T>(): Promise<T> {
-        throw new Error("unexpected");
-      },
-      async post<T>(): Promise<T> {
-        throw new Error("unexpected");
-      },
-      async put<T>(): Promise<T> {
+    const winner = wireItem({ revision: 9, ciphertext: "theirs" });
+    const api = fakeApi({
+      put: async () => {
         throw new ApiError("conflict", 409, "changed", {
           error: { code: "conflict", message: "changed" },
           item: winner,
         });
       },
-      async del<T>(): Promise<T> {
-        throw new Error("unexpected");
-      },
-    };
+    });
 
     const error = (await updateItem(
       { api, session: sessionWith(userKey) },
-      "i1",
-      1,
-      LOGIN,
+      { id: "i1", revision: 1, collectionId: null, plaintext: LOGIN },
     ).catch((e: unknown) => e)) as ItemConflictError;
 
     // Without the winning row the client has nothing to reconcile against and
@@ -157,5 +179,134 @@ describe("createItem and updateItem", () => {
     // spec 9 forbids.
     expect(error).toBeInstanceOf(ItemConflictError);
     expect(error.current.revision).toBe(9);
+  });
+});
+
+describe("collection items", () => {
+  const COLLECTION_KEY = generateCollectionKey();
+  const USER_KEY = new Uint8Array(32).fill(1);
+
+  function sessionWith(collectionKeys: Map<string, Uint8Array>): Session {
+    const session = createSession();
+    session.open({
+      tokens: { accessToken: "a", refreshToken: "r" },
+      user: { id: "u1", email: "a@example.com", name: "A", role: "user" },
+      userKey: USER_KEY,
+      privateKey: new Uint8Array(32).fill(2),
+    });
+    session.setCollectionKeys(collectionKeys);
+    return session;
+  }
+
+  it("decrypts a collection item with the collection key, not the user key", async () => {
+    const plaintext: LoginItem = { ...BLANK, name: "Shared router" };
+    const encrypted = await encryptItem(plaintext, COLLECTION_KEY);
+    const session = sessionWith(new Map([["c1", COLLECTION_KEY]]));
+
+    const [record] = await decryptRecords(
+      [wireItem({ id: "i1", collectionId: "c1", ...encrypted })],
+      session,
+    );
+
+    expect(record?.plaintext?.name).toBe("Shared router");
+  });
+
+  it("leaves a collection item unreadable when the session holds no key for it", async () => {
+    const encrypted = await encryptItem({ ...BLANK, name: "Shared router" }, COLLECTION_KEY);
+    const session = sessionWith(new Map());
+
+    const [record] = await decryptRecords(
+      [wireItem({ id: "i1", collectionId: "c1", ...encrypted })],
+      session,
+    );
+
+    // Not an exception and not a dropped row: the list shows "couldn't
+    // decrypt", which is the honest answer.
+    expect(record?.plaintext).toBeNull();
+    expect(record?.id).toBe("i1");
+  });
+
+  it("still decrypts a personal item with the user key when a keyring is present", async () => {
+    const encrypted = await encryptItem({ ...BLANK, name: "Mine" }, USER_KEY);
+    const session = sessionWith(new Map([["c1", COLLECTION_KEY]]));
+
+    const [record] = await decryptRecords(
+      [wireItem({ id: "i1", collectionId: null, ...encrypted })],
+      session,
+    );
+
+    expect(record?.plaintext?.name).toBe("Mine");
+  });
+
+  it("encrypts a new collection item under the collection key", async () => {
+    const session = sessionWith(new Map([["c1", COLLECTION_KEY]]));
+    type Sent = { ciphertext: string; wrappedItemKey: string; collectionId: string | null };
+    let sent: Sent | null = null;
+    const api = fakeApi({
+      post: async (_path, body) => {
+        sent = body as Sent;
+        return wireItem({ id: "i1", collectionId: "c1", ...(body as object) });
+      },
+    });
+
+    await createItem({ api, session }, { ...BLANK, name: "Shared router" }, "c1");
+
+    expect(sent!.collectionId).toBe("c1");
+    // The proof that the right parent was used: only the collection key opens it.
+    await expect(decryptItem(sent!, COLLECTION_KEY)).resolves.toMatchObject({
+      name: "Shared router",
+    });
+    await expect(decryptItem(sent!, USER_KEY)).rejects.toThrow();
+  });
+
+  it("refuses to create an item in a collection this client cannot open", async () => {
+    const session = sessionWith(new Map());
+    const api = fakeApi({ post: async () => { throw new Error("must not be called"); } });
+
+    await expect(
+      createItem({ api, session }, { ...BLANK, name: "Shared router" }, "c1"),
+    ).rejects.toThrow(/cannot open/i);
+  });
+
+  it("always sends collectionId on update, so an unchanged shared item is never moved to personal", async () => {
+    const session = sessionWith(new Map([["c1", COLLECTION_KEY]]));
+    let sent: Record<string, unknown> | null = null;
+    const api = fakeApi({
+      put: async (_path, body) => {
+        sent = body as Record<string, unknown>;
+        return wireItem({ id: "i1", collectionId: "c1" });
+      },
+    });
+
+    await updateItem(
+      { api, session },
+      { id: "i1", revision: 4, collectionId: "c1", plaintext: { ...BLANK, name: "Edited" } },
+    );
+
+    // The field is present, not merely correct: an omitted collectionId means
+    // "no change" to the server, and relying on that is the data-loss trap
+    // this signature exists to remove.
+    expect(Object.keys(sent!)).toContain("collectionId");
+    expect(sent!["collectionId"]).toBe("c1");
+  });
+
+  it("re-encrypts under the user key when an item is moved out of a collection", async () => {
+    const session = sessionWith(new Map([["c1", COLLECTION_KEY]]));
+    type Sent = { ciphertext: string; wrappedItemKey: string };
+    let sent: Sent | null = null;
+    const api = fakeApi({
+      put: async (_path, body) => {
+        sent = body as Sent;
+        return wireItem({ id: "i1", collectionId: null });
+      },
+    });
+
+    await updateItem(
+      { api, session },
+      { id: "i1", revision: 4, collectionId: null, plaintext: { ...BLANK, name: "Now mine" } },
+    );
+
+    await expect(decryptItem(sent!, USER_KEY)).resolves.toMatchObject({ name: "Now mine" });
+    await expect(decryptItem(sent!, COLLECTION_KEY)).rejects.toThrow();
   });
 });

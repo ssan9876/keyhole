@@ -109,7 +109,7 @@ async function wireFor(
       throw new Error("unexpected DEL");
     },
   };
-  await createItem({ api: capture, session }, plaintext);
+  await createItem({ api: capture, session }, plaintext, null);
   const sent = captured.body;
   if (sent === undefined) throw new Error("createItem never posted a body");
   return {

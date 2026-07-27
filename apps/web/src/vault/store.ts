@@ -67,10 +67,7 @@ export function createVaultStore(): VaultStore {
     const path = since === null ? "/api/sync" : `/api/sync?since=${since}`;
     try {
       const response = await deps.api.get<SyncResponse>(path);
-      const records = await decryptRecords(
-        response.items,
-        deps.session.getKeys().userKey,
-      );
+      const records = await decryptRecords(response.items, deps.session);
       set({
         revision: response.revision,
         items: since === null ? merge([], records) : merge(state.items, records),
