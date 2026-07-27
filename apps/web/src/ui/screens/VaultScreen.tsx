@@ -6,7 +6,9 @@ import type { ApiClient } from "../../vault/api.js";
 import type { Session } from "../../vault/session.js";
 import type { VaultStore } from "../../vault/store.js";
 import {
+  ItemConflictError,
   createItem,
+  decryptRecords,
   deleteItem,
   updateItem,
   type ItemRecord,
@@ -126,6 +128,10 @@ export function VaultScreen({
 }) {
   const state = useVaultState(store);
   const [editing, setEditing] = useState<ItemRecord | "new" | null>(null);
+  // The server's winning copy after a 409, decrypted for display. Cleared
+  // whenever the editor is opened afresh, so a stale conflict from a
+  // previous item can never bleed into the next one.
+  const [conflict, setConflict] = useState<ItemPlaintext | null>(null);
 
   // Re-sync on focus rather than a timer: it catches the realistic case — you
   // edited on your phone, you come back to this tab — with no polling, no
@@ -142,10 +148,32 @@ export function VaultScreen({
     async (next: ItemPlaintext): Promise<void> => {
       if (editing === "new") {
         store.upsert(await createItem({ api, session }, next));
-      } else if (editing !== null) {
-        store.upsert(await updateItem({ api, session }, editing.id, editing.revision, next));
+        setEditing(null);
+        setConflict(null);
+        return;
       }
-      setEditing(null);
+      if (editing === null) return;
+      try {
+        const updated = await updateItem({ api, session }, editing.id, editing.revision, next);
+        store.upsert(updated);
+        setEditing(null);
+        setConflict(null);
+      } catch (error) {
+        if (error instanceof ItemConflictError) {
+          // Adopt the winning revision so a retried Save applies on top of
+          // it instead of conflicting forever -- Cancel or a reload were
+          // otherwise the only exits. ItemEditor's own form state (what the
+          // user typed) is untouched by this, so their edit is still right
+          // there to resubmit.
+          const [serverRecord] = await decryptRecords(
+            [error.current],
+            session.getKeys().userKey,
+          );
+          setEditing({ ...editing, revision: error.current.revision });
+          setConflict(serverRecord?.plaintext ?? null);
+        }
+        throw error;
+      }
     },
     [api, editing, session, store],
   );
@@ -155,6 +183,7 @@ export function VaultScreen({
     await deleteItem({ api, session }, editing.id);
     store.remove(editing.id);
     setEditing(null);
+    setConflict(null);
   }, [api, editing, session, store]);
 
   return (
@@ -191,15 +220,25 @@ export function VaultScreen({
       {editing === null ? (
         <VaultList
           items={state.items}
-          onSelect={setEditing}
-          onNew={() => setEditing("new")}
+          onSelect={(record) => {
+            setEditing(record);
+            setConflict(null);
+          }}
+          onNew={() => {
+            setEditing("new");
+            setConflict(null);
+          }}
         />
       ) : (
         <>
           <ItemEditor
             initial={editing === "new" ? BLANK_LOGIN : (editing.plaintext ?? BLANK_LOGIN)}
+            conflict={conflict}
             onSave={save}
-            onCancel={() => setEditing(null)}
+            onCancel={() => {
+              setEditing(null);
+              setConflict(null);
+            }}
           />
           {editing !== "new" && (
             <Button type="button" variant="danger" onClick={() => void remove()}>

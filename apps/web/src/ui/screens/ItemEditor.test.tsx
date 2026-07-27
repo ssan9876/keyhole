@@ -59,12 +59,20 @@ describe("ItemEditor", () => {
   });
 
   it("surfaces a conflict with both versions rather than overwriting", async () => {
+    // The rejection alone only proves half of design spec 9: that the edit
+    // was not silently overwritten. It says nothing about whether the user
+    // can actually see what they are reconciling against. VaultScreen is what
+    // decrypts the server's winning row and feeds it back in as `conflict` —
+    // this test previously never rendered or asserted that half, despite its
+    // name, so a regression there would have passed silently.
     const onSave = vi.fn().mockRejectedValue(
       Object.assign(new Error("This item changed on the server since you last synced"), {
         name: "ItemConflictError",
       }),
     );
-    render(<ItemEditor initial={LOGIN} onSave={onSave} onCancel={vi.fn()} />);
+    const { rerender } = render(
+      <ItemEditor initial={LOGIN} onSave={onSave} onCancel={vi.fn()} />,
+    );
 
     await userEvent.click(screen.getByRole("button", { name: /save/i }));
 
@@ -74,5 +82,20 @@ describe("ItemEditor", () => {
     await waitFor(() => {
       expect(screen.getByRole("alert")).toHaveTextContent(/changed on the server/i);
     });
+
+    // The user's own edit is still sitting in the form, untouched...
+    expect(screen.getByLabelText(/^name/i)).toHaveValue("Example");
+    // ...and once the parent (VaultScreen) decrypts the winning row and
+    // passes it down, its version is rendered too -- the "both versions"
+    // the test's name promises.
+    rerender(
+      <ItemEditor
+        initial={LOGIN}
+        conflict={{ ...LOGIN, name: "Renamed on another device" }}
+        onSave={onSave}
+        onCancel={vi.fn()}
+      />,
+    );
+    expect(screen.getByText(/renamed on another device/i)).toBeInTheDocument();
   });
 });

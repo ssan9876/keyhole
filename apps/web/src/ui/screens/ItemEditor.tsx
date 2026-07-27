@@ -11,6 +11,12 @@ import { Field } from "../components/Field.js";
 
 interface ItemEditorProps {
   initial: ItemPlaintext;
+  /** The server's winning copy after a 409, once VaultScreen has decrypted
+   *  it. Rendered alongside the conflict message so the user sees both
+   *  versions -- their own edit still sitting in this form, and what is
+   *  actually on the server -- rather than just being told a collision
+   *  happened. */
+  conflict?: ItemPlaintext | null;
   onSave(next: ItemPlaintext): Promise<void>;
   onCancel(): void;
 }
@@ -19,7 +25,7 @@ function isLogin(item: ItemPlaintext): item is LoginItem {
   return item.type === "login";
 }
 
-export function ItemEditor({ initial, onSave, onCancel }: ItemEditorProps) {
+export function ItemEditor({ initial, conflict = null, onSave, onCancel }: ItemEditorProps) {
   const [name, setName] = useState(initial.name);
   const [notes, setNotes] = useState(initial.notes);
   const [username, setUsername] = useState(isLogin(initial) ? initial.username : "");
@@ -78,6 +84,12 @@ export function ItemEditor({ initial, onSave, onCancel }: ItemEditorProps) {
       {error !== null && (
         <p role="alert" style={{ color: "var(--danger)", marginBottom: "var(--space-4)" }}>
           {error}
+        </p>
+      )}
+      {conflict !== null && (
+        <p style={{ color: "var(--ink-muted)", marginBottom: "var(--space-4)" }}>
+          The version currently on the server is named &ldquo;{conflict.name}
+          &rdquo;. Save again to apply your edit on top of it.
         </p>
       )}
       <div style={{ display: "flex", gap: "var(--space-2)" }}>
