@@ -50,8 +50,20 @@ export async function adoptCollections(
   for (const collection of wire) {
     let usable = false;
     try {
-      // Reuse the key already held when the sealed blob is unchanged, so the
-      // session's identity check does not zeroize a live key on every sync.
+      // Reuse the key already held when this id was already held, rather than
+      // opening the sealed blob again. Required: setCollectionKeys zeroizes
+      // by object identity, so handing back a freshly-opened buffer for an
+      // unchanged collection would zeroize the live key on every sync. Sound:
+      // collection keys are never rotated (design spec §5.1 — removing a
+      // member does not rotate the key; rotation is deliberately deferred),
+      // and the grant paths in internal/store/collections.go only ever
+      // re-seal that same key to a new recipient. So a re-sealed blob for an
+      // id we already hold is guaranteed to carry the key we already have.
+      //
+      // If collection-key rotation is ever implemented, this line becomes
+      // wrong: a rotated key would arrive under an id already held and never
+      // be opened, and the vault would silently keep decrypting with a
+      // superseded key.
       const existing = session.getCollectionKey(collection.id);
       next.set(collection.id, existing ?? (await openSealed(collection.sealedCollectionKey, privateKey)));
       usable = true;
