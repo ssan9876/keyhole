@@ -47,6 +47,32 @@ function syncApi(pages: Record<string, unknown>): ApiClient {
   };
 }
 
+/**
+ * Like `syncApi`, but each path serves a queue of bodies, one per call, so a
+ * test can make the same path (e.g. `/api/sync`) answer differently on a
+ * second `.load()` than it did on the first.
+ */
+function sequencedSyncApi(pages: Record<string, unknown[]>): ApiClient {
+  return {
+    async get<T>(path: string): Promise<T> {
+      const queue = pages[path];
+      if (queue === undefined || queue.length === 0) {
+        throw new Error(`no stub for ${path}`);
+      }
+      return queue.shift() as T;
+    },
+    async post<T>(): Promise<T> {
+      throw new Error("unexpected");
+    },
+    async put<T>(): Promise<T> {
+      throw new Error("unexpected");
+    },
+    async del<T>(): Promise<T> {
+      throw new Error("unexpected");
+    },
+  };
+}
+
 describe("vault store", () => {
   it("loads, decrypts, and records the cursor", async () => {
     const userKey = generateUserKey();
@@ -109,6 +135,46 @@ describe("vault store", () => {
     // forever on a screen its owner believes is empty.
     expect(store.getState().items).toHaveLength(0);
     expect(store.getState().revision).toBe(5);
+  });
+
+  it("a full load replaces state wholesale, dropping items absent from the snapshot without a tombstone", async () => {
+    const userKey = generateUserKey();
+    const encrypted = await encryptItem(LOGIN, userKey);
+    const item1: WireItem = {
+      id: "i1",
+      collectionId: null,
+      ownerUserId: "u1",
+      ciphertext: encrypted.ciphertext,
+      wrappedItemKey: encrypted.wrappedItemKey,
+      revision: 4,
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      deletedAt: null,
+    };
+    const item2: WireItem = { ...item1, id: "i2" };
+    const api = sequencedSyncApi({
+      "/api/sync": [
+        { revision: 4, items: [item1, item2], folders: [], collections: [] },
+        // A second full snapshot that simply omits i2 — no tombstone, no
+        // deletedAt. A full `/api/sync` response is authoritative: anything
+        // it doesn't list no longer exists server-side. Merging this into the
+        // existing state (instead of replacing it) would resurrect i2 forever,
+        // since there is no tombstone to ever remove it.
+        { revision: 6, items: [item1], folders: [], collections: [] },
+      ],
+    });
+    const store = createVaultStore();
+    const session = sessionWith(userKey);
+
+    await store.load({ api, session });
+    expect(store.getState().items).toHaveLength(2);
+
+    await store.load({ api, session });
+
+    expect(store.getState().items).toHaveLength(1);
+    expect(store.getState().items[0]?.id).toBe("i1");
+    expect(store.getState().items.some((item) => item.id === "i2")).toBe(false);
+    expect(store.getState().revision).toBe(6);
   });
 
   it("notifies subscribers and clears on lock", async () => {
