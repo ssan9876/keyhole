@@ -1,0 +1,137 @@
+import { beforeEach, describe, expect, it } from "vitest";
+import {
+  EMAIL_STORAGE_KEY,
+  createSession,
+  forgetEmail,
+  rememberEmail,
+  rememberedEmail,
+} from "./session.js";
+
+const USER = { id: "u1", email: "a@b.c", name: "A", role: "user" };
+const TOKENS = { accessToken: "access", refreshToken: "refresh" };
+
+function openSession() {
+  const session = createSession();
+  session.open({
+    tokens: TOKENS,
+    user: USER,
+    userKey: new Uint8Array([1, 2, 3, 4]),
+    privateKey: new Uint8Array([5, 6, 7, 8]),
+  });
+  return session;
+}
+
+beforeEach(() => {
+  localStorage.clear();
+  sessionStorage.clear();
+});
+
+describe("session", () => {
+  it("is locked before open and unlocked after", () => {
+    const session = createSession();
+    expect(session.isUnlocked).toBe(false);
+    expect(session.getAccessToken()).toBeNull();
+    expect(() => session.getKeys()).toThrow();
+
+    session.open({
+      tokens: TOKENS,
+      user: USER,
+      userKey: new Uint8Array(4),
+      privateKey: new Uint8Array(4),
+    });
+    expect(session.isUnlocked).toBe(true);
+    expect(session.getAccessToken()).toBe("access");
+    expect(session.user).toEqual(USER);
+  });
+
+  it("zeroizes the key material on lock", () => {
+    const userKey = new Uint8Array([1, 2, 3, 4]);
+    const privateKey = new Uint8Array([5, 6, 7, 8]);
+    const session = createSession();
+    session.open({ tokens: TOKENS, user: USER, userKey, privateKey });
+
+    session.lock();
+
+    // The caller's arrays are the same objects the session holds, so this
+    // asserts the bytes are actually gone from memory rather than merely
+    // dereferenced and left for the garbage collector to maybe reclaim.
+    expect(Array.from(userKey)).toEqual([0, 0, 0, 0]);
+    expect(Array.from(privateKey)).toEqual([0, 0, 0, 0]);
+    expect(session.isUnlocked).toBe(false);
+    expect(session.getAccessToken()).toBeNull();
+    expect(() => session.getKeys()).toThrow();
+  });
+
+  it("writes nothing but the email to storage, ever", () => {
+    const session = openSession();
+    rememberEmail("a@b.c");
+
+    const dump = JSON.stringify({
+      local: { ...localStorage },
+      session: { ...sessionStorage },
+    });
+
+    // Design spec 6.3, stated as a code-review gate: no key material and no
+    // plaintext outside memory. A stringified dump catches a value written
+    // under any key, which an assertion on known keys would not.
+    for (const forbidden of ["access", "refresh", "1,2,3,4", "5,6,7,8"]) {
+      expect(dump).not.toContain(forbidden);
+    }
+    expect(Object.keys(localStorage)).toEqual([EMAIL_STORAGE_KEY]);
+    expect(Object.keys(sessionStorage)).toHaveLength(0);
+    session.lock();
+  });
+
+  it("survives a remembered email across a fresh session", () => {
+    rememberEmail("person@example.com");
+    expect(rememberedEmail()).toBe("person@example.com");
+    forgetEmail();
+    expect(rememberedEmail()).toBeNull();
+  });
+
+  it("notifies subscribers on open and lock, and stops after unsubscribe", () => {
+    const session = createSession();
+    let calls = 0;
+    const unsubscribe = session.subscribe(() => {
+      calls += 1;
+    });
+
+    session.open({
+      tokens: TOKENS,
+      user: USER,
+      userKey: new Uint8Array(4),
+      privateKey: new Uint8Array(4),
+    });
+    expect(calls).toBe(1);
+
+    session.lock();
+    expect(calls).toBe(2);
+
+    unsubscribe();
+    session.open({
+      tokens: TOKENS,
+      user: USER,
+      userKey: new Uint8Array(4),
+      privateKey: new Uint8Array(4),
+    });
+    expect(calls).toBe(2);
+  });
+
+  it("replaces tokens without disturbing the keys", () => {
+    const session = openSession();
+    const before = session.getKeys();
+
+    session.replaceTokens({ accessToken: "fresh", refreshToken: "fresh-r" });
+
+    expect(session.getAccessToken()).toBe("fresh");
+    // A token refresh must not cost the user their unlocked vault.
+    expect(session.getKeys().userKey).toBe(before.userKey);
+    expect(session.isUnlocked).toBe(true);
+  });
+
+  it("is safe to lock twice", () => {
+    const session = openSession();
+    session.lock();
+    expect(() => session.lock()).not.toThrow();
+  });
+});
