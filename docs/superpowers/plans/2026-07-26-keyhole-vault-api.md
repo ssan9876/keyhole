@@ -178,7 +178,7 @@ Each gets a `_test.go` beside it.
   }
 
   type ItemInput struct {
-      CollectionID   string // "" means a personal item
+      CollectionID   *string // nil = personal on create, "no change" on update
       Ciphertext     string
       WrappedItemKey string
   }
@@ -872,7 +872,7 @@ type Item struct {
 // ItemInput is what a client uploads. Both blobs are opaque: the server checks
 // they are present and stores them byte for byte.
 type ItemInput struct {
-	CollectionID   string // "" means a personal item
+	CollectionID   *string // nil = personal on create, "no change" on update
 	Ciphertext     string
 	WrappedItemKey string
 }
@@ -1602,7 +1602,7 @@ func TestSyncReturnsItemsInCollectionsTheCallerBelongsTo(t *testing.T) {
 
 	collectionID := seedCollection(t, st, owner, owner, member)
 	shared, err := st.CreateItem(ctx, owner, ItemInput{
-		CollectionID: collectionID, Ciphertext: "shared", WrappedItemKey: "k",
+		CollectionID: &collectionID, Ciphertext: "shared", WrappedItemKey: "k",
 	})
 	if err != nil {
 		t.Fatalf("CreateItem: %v", err)
@@ -1775,7 +1775,7 @@ func TestCanAccessItemFollowsOwnershipAndMembership(t *testing.T) {
 	}
 	collectionID := seedCollection(t, st, owner, owner, member)
 	shared, err := st.CreateItem(ctx, owner, ItemInput{
-		CollectionID: collectionID, Ciphertext: "c", WrappedItemKey: "k",
+		CollectionID: &collectionID, Ciphertext: "c", WrappedItemKey: "k",
 	})
 	if err != nil {
 		t.Fatalf("CreateItem: %v", err)
@@ -2658,11 +2658,19 @@ const (
 	maxBulkBody = 8 << 20
 )
 
+// itemRequest's CollectionID is a pointer so an omitted field and an explicit
+// null are distinguishable.
+//
+// With a plain string they are not, and the indistinguishable case loses data:
+// a client that PUTs a new body without echoing collectionId would move a
+// shared item back to personal, and every other member's next sync would drop
+// it with no error anywhere. Task 1's store layer enforces the same
+// distinction — nil means "no change" on update.
 type itemRequest struct {
-	CollectionID   string `json:"collectionId"`
-	Ciphertext     string `json:"ciphertext"`
-	WrappedItemKey string `json:"wrappedItemKey"`
-	Revision       int64  `json:"revision"`
+	CollectionID   *string `json:"collectionId"`
+	Ciphertext     string  `json:"ciphertext"`
+	WrappedItemKey string  `json:"wrappedItemKey"`
+	Revision       int64   `json:"revision"`
 }
 
 func (req itemRequest) input() store.ItemInput {
@@ -2671,6 +2679,15 @@ func (req itemRequest) input() store.ItemInput {
 		Ciphertext:     req.Ciphertext,
 		WrappedItemKey: req.WrappedItemKey,
 	}
+}
+
+// collectionTarget is the id this request wants the item in, or "" for none.
+// Used only for the membership check; the store gets the pointer.
+func (req itemRequest) collectionTarget() string {
+	if req.CollectionID == nil {
+		return ""
+	}
+	return *req.CollectionID
 }
 
 // checkCollectionTarget verifies the caller may place an item in the requested
@@ -2698,7 +2715,7 @@ func (s *Server) handleCreateItem(w http.ResponseWriter, r *http.Request) {
 	if !DecodeJSON(w, r, &req) {
 		return
 	}
-	if !s.checkCollectionTarget(w, r, req.CollectionID, user.ID) {
+	if !s.checkCollectionTarget(w, r, req.collectionTarget(), user.ID) {
 		return
 	}
 
@@ -2733,7 +2750,7 @@ func (s *Server) handleBulkItems(w http.ResponseWriter, r *http.Request) {
 
 	inputs := make([]store.ItemInput, 0, len(req.Items))
 	for _, item := range req.Items {
-		if !s.checkCollectionTarget(w, r, item.CollectionID, user.ID) {
+		if !s.checkCollectionTarget(w, r, item.collectionTarget(), user.ID) {
 			return
 		}
 		inputs = append(inputs, item.input())
@@ -2794,7 +2811,7 @@ func (s *Server) handleUpdateItem(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "not found")
 		return
 	}
-	if !s.checkCollectionTarget(w, r, req.CollectionID, user.ID) {
+	if !s.checkCollectionTarget(w, r, req.collectionTarget(), user.ID) {
 		return
 	}
 
@@ -4036,7 +4053,7 @@ func TestDeleteCollectionRemovesItsItemsMembershipsAndGrants(t *testing.T) {
 		t.Fatalf("CreateCollection: %v", err)
 	}
 	if _, err := st.CreateItem(ctx, creator, ItemInput{
-		CollectionID: collection.ID, Ciphertext: "c", WrappedItemKey: "k",
+		CollectionID: &collection.ID, Ciphertext: "c", WrappedItemKey: "k",
 	}); err != nil {
 		t.Fatalf("CreateItem: %v", err)
 	}
@@ -7277,7 +7294,7 @@ func TestResetUserKeepsCollectionItemsOthersStillNeed(t *testing.T) {
 		t.Fatalf("add member: %v", err)
 	}
 	if _, err := st.CreateItem(ctx, target, ItemInput{
-		CollectionID: collection.ID, Ciphertext: "shared", WrappedItemKey: "k",
+		CollectionID: &collection.ID, Ciphertext: "shared", WrappedItemKey: "k",
 	}); err != nil {
 		t.Fatalf("CreateItem: %v", err)
 	}
