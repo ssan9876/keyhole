@@ -40,6 +40,7 @@ describe("the auto-lock preference", () => {
 describe("startAutoLock", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
+  afterEach(() => vi.restoreAllMocks());
 
   it("locks after the configured idle period", () => {
     const onLock = vi.fn();
@@ -108,6 +109,30 @@ describe("startAutoLock", () => {
     stop();
     window.dispatchEvent(new Event("keydown"));
     vi.advanceTimersByTime(120_000);
+    expect(onLock).not.toHaveBeenCalled();
+  });
+
+  it("stops responding to visibilitychange after teardown, on the idle path", () => {
+    let clock = 0;
+    const onLock = vi.fn();
+    const stop = startAutoLock({ setting: 1, onLock, now: () => clock });
+
+    stop();
+    // Long enough that a live checkElapsed would lock immediately.
+    clock = 120_000;
+    document.dispatchEvent(new Event("visibilitychange"));
+
+    expect(onLock).not.toHaveBeenCalled();
+  });
+
+  it("stops responding to visibilitychange after teardown, on the on-close path", () => {
+    const onLock = vi.fn();
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    const stop = startAutoLock({ setting: "on-close", onLock });
+
+    stop();
+    document.dispatchEvent(new Event("visibilitychange"));
+
     expect(onLock).not.toHaveBeenCalled();
   });
 });
