@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 // Brief defect fix: routed through vault/types.js rather than
 // "@keyhole/crypto" directly — see the comment in ItemEditor.tsx for why.
 import type { ItemPlaintext, LoginItem } from "../../vault/types.js";
@@ -13,10 +13,26 @@ import {
   updateItem,
   type ItemRecord,
 } from "../../vault/items.js";
+import { loadAccount } from "../../vault/account.js";
+import {
+  addMember,
+  createCollection,
+  fulfilGrant,
+  listMembers,
+  loadPendingGrants,
+  removeMember,
+  type CollectionSummary,
+  type Member,
+  type PendingGrant,
+} from "../../vault/collections.js";
+import { loadDirectory, type DirectoryEntry } from "../../vault/directory.js";
 import { Button } from "../components/Button.js";
 import { Field } from "../components/Field.js";
 import { useVaultState } from "../useVault.js";
 import { ItemEditor } from "./ItemEditor.js";
+import { CollectionsScreen } from "./CollectionsScreen.js";
+
+export type Tab = "vault" | "collections" | "settings" | "admin";
 
 const BLANK_LOGIN: LoginItem = {
   type: "login",
@@ -32,16 +48,36 @@ const BLANK_LOGIN: LoginItem = {
 
 interface VaultListProps {
   items: ItemRecord[];
+  /** Used only to resolve a collectionId to a name for the "Shared" badge and
+   *  to populate the filter dropdown -- an empty default keeps every existing
+   *  caller (and test) that never mentions collections unaffected. */
+  collections?: CollectionSummary[];
   onSelect(record: ItemRecord): void;
   onNew(): void;
 }
 
-export function VaultList({ items, onSelect, onNew }: VaultListProps) {
+export function VaultList({ items, collections = [], onSelect, onNew }: VaultListProps) {
   const [query, setQuery] = useState("");
+  const [collectionFilter, setCollectionFilter] = useState("");
+  const filterId = useId();
+
+  const nameById = useMemo(
+    () => new Map(collections.map((collection) => [collection.id, collection.name])),
+    [collections],
+  );
+
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (needle.length === 0) return items;
     return items.filter((item) => {
+      if (collectionFilter === "personal" && item.collectionId !== null) return false;
+      if (
+        collectionFilter !== "" &&
+        collectionFilter !== "personal" &&
+        item.collectionId !== collectionFilter
+      ) {
+        return false;
+      }
+      if (needle.length === 0) return true;
       const name = item.plaintext?.name ?? "";
       const username =
         item.plaintext !== null && item.plaintext.type === "login"
@@ -51,7 +87,7 @@ export function VaultList({ items, onSelect, onNew }: VaultListProps) {
         name.toLowerCase().includes(needle) || username.toLowerCase().includes(needle)
       );
     });
-  }, [items, query]);
+  }, [items, query, collectionFilter]);
 
   return (
     <section>
@@ -68,6 +104,27 @@ export function VaultList({ items, onSelect, onNew }: VaultListProps) {
           Add an item
         </Button>
       </div>
+
+      {collections.length > 0 && (
+        <div style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-4)" }}>
+          <label htmlFor={filterId} style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
+            Filter by collection
+          </label>
+          <select
+            id={filterId}
+            value={collectionFilter}
+            onChange={(e) => setCollectionFilter(e.target.value)}
+          >
+            <option value="">All items</option>
+            <option value="personal">Personal</option>
+            {collections.map((collection) => (
+              <option key={collection.id} value={collection.id}>
+                {collection.name}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
 
       {filtered.length === 0 ? (
         <p style={{ color: "var(--ink-muted)" }}>
@@ -106,6 +163,11 @@ export function VaultList({ items, onSelect, onNew }: VaultListProps) {
                         {item.plaintext.username}
                       </span>
                     )}
+                    {item.collectionId !== null && (
+                      <span style={{ color: "var(--ink-muted)", fontSize: "0.75rem", display: "block" }}>
+                        Shared &middot; {nameById.get(item.collectionId) ?? "Unknown collection"}
+                      </span>
+                    )}
                   </>
                 )}
               </button>
@@ -116,6 +178,12 @@ export function VaultList({ items, onSelect, onNew }: VaultListProps) {
     </section>
   );
 }
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: "vault", label: "Vault" },
+  { id: "collections", label: "Collections" },
+  { id: "settings", label: "Settings" },
+];
 
 export function VaultScreen({
   api,
@@ -132,6 +200,20 @@ export function VaultScreen({
   // whenever the editor is opened afresh, so a stale conflict from a
   // previous item can never bleed into the next one.
   const [conflict, setConflict] = useState<ItemPlaintext | null>(null);
+  // The collection chosen in the editor's picker. Starts at the item's
+  // current collection (null for a new item / a personal one) and only
+  // diverges from it when the user actually changes the selection.
+  const [editorCollectionId, setEditorCollectionId] = useState<string | null>(null);
+  const collectionSelectId = useId();
+
+  const [activeTab, setActiveTab] = useState<Tab>("vault");
+  const [directory, setDirectory] = useState<DirectoryEntry[]>([]);
+  const [pendingGrants, setPendingGrants] = useState<PendingGrant[]>([]);
+  const [collectionsLoaded, setCollectionsLoaded] = useState(false);
+  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
+  const [members, setMembers] = useState<Member[]>([]);
+
+  const isAdmin = session.user?.role === "admin";
 
   // Re-sync on focus rather than a timer: it catches the realistic case — you
   // edited on your phone, you come back to this tab — with no polling, no
@@ -144,10 +226,95 @@ export function VaultScreen({
     return () => window.removeEventListener("focus", onFocus);
   }, [api, session, store]);
 
+  // Loaded lazily on first visit to the Collections tab rather than on every
+  // mount: a user who never opens it should not pay for a directory fetch
+  // and a pending-grants request they will never see.
+  useEffect(() => {
+    if (activeTab !== "collections" || collectionsLoaded) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [dir, grants] = await Promise.all([
+          loadDirectory({ api }),
+          loadPendingGrants({ api, session }),
+        ]);
+        if (!cancelled) {
+          setDirectory(dir);
+          setPendingGrants(grants);
+          setCollectionsLoaded(true);
+        }
+      } catch {
+        // Best-effort: the collections list itself still comes from
+        // state.collections regardless, so the tab is not empty even if this
+        // secondary data fails to load.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, collectionsLoaded, api, session]);
+
+  const handleSelectCollection = useCallback(
+    (collectionId: string | null) => {
+      setSelectedCollectionId(collectionId);
+      if (collectionId === null) {
+        setMembers([]);
+        return;
+      }
+      void listMembers({ api, session }, collectionId)
+        .then(setMembers)
+        .catch(() => setMembers([]));
+    },
+    [api, session],
+  );
+
+  const handleCreateCollection = useCallback(
+    async (name: string): Promise<void> => {
+      const profile = await loadAccount({ api, session });
+      await createCollection({ api, session }, { name, ownPublicKey: profile.publicKey });
+      await store.resync({ api, session });
+    },
+    [api, session, store],
+  );
+
+  const handleFulfil = useCallback(
+    async (grant: PendingGrant, recipient: DirectoryEntry): Promise<void> => {
+      await fulfilGrant({ api, session }, { grant, recipient });
+      setPendingGrants((prev) =>
+        prev.filter((g) => !(g.collectionId === grant.collectionId && g.userId === grant.userId)),
+      );
+      await store.resync({ api, session });
+    },
+    [api, session, store],
+  );
+
+  const handleAddMember = useCallback(
+    async (input: {
+      collectionId: string;
+      recipient: DirectoryEntry;
+      role: "manager" | "member";
+    }): Promise<"granted" | "pending"> => {
+      const outcome = await addMember({ api, session }, input);
+      if (outcome === "granted" && selectedCollectionId === input.collectionId) {
+        setMembers(await listMembers({ api, session }, input.collectionId));
+      }
+      return outcome;
+    },
+    [api, session, selectedCollectionId],
+  );
+
+  const handleRemoveMember = useCallback(
+    async (input: { collectionId: string; userId: string }): Promise<void> => {
+      await removeMember({ api, session }, input);
+      setMembers((prev) => prev.filter((m) => m.userId !== input.userId));
+    },
+    [api, session],
+  );
+
   const save = useCallback(
     async (next: ItemPlaintext): Promise<void> => {
       if (editing === "new") {
-        store.upsert(await createItem({ api, session }, next, null));
+        store.upsert(await createItem({ api, session }, next, editorCollectionId));
         setEditing(null);
         setConflict(null);
         return;
@@ -156,7 +323,7 @@ export function VaultScreen({
       try {
         const updated = await updateItem(
           { api, session },
-          { id: editing.id, revision: editing.revision, collectionId: editing.collectionId, plaintext: next },
+          { id: editing.id, revision: editing.revision, collectionId: editorCollectionId, plaintext: next },
         );
         store.upsert(updated);
         setEditing(null);
@@ -175,7 +342,7 @@ export function VaultScreen({
         throw error;
       }
     },
-    [api, editing, session, store],
+    [api, editing, editorCollectionId, session, store],
   );
 
   const remove = useCallback(async (): Promise<void> => {
@@ -185,6 +352,17 @@ export function VaultScreen({
     setEditing(null);
     setConflict(null);
   }, [api, editing, session, store]);
+
+  const usableCollections = state.collections.filter((c) => c.usable);
+  // Moving a shared item is only a genuine "move out" when it started in a
+  // collection and the picker's selection has actually diverged from that --
+  // not on every render, and not for a brand-new item, which never had
+  // members to lose access.
+  const isMovingOut =
+    editing !== null &&
+    editing !== "new" &&
+    editing.collectionId !== null &&
+    editorCollectionId !== editing.collectionId;
 
   return (
     <main style={{ maxWidth: "40rem", margin: "0 auto", padding: "var(--space-4)" }}>
@@ -211,41 +389,136 @@ export function VaultScreen({
         </Button>
       </header>
 
+      <nav aria-label="Sections" style={{ display: "flex", gap: "var(--space-2)", marginBottom: "var(--space-4)" }}>
+        {TABS.map((tab) => (
+          <button
+            key={tab.id}
+            type="button"
+            aria-current={activeTab === tab.id ? "page" : undefined}
+            onClick={() => setActiveTab(tab.id)}
+            style={{
+              font: "inherit",
+              background: "transparent",
+              border: "none",
+              borderBottom: activeTab === tab.id ? "2px solid var(--ink)" : "2px solid transparent",
+              color: activeTab === tab.id ? "var(--ink)" : "var(--ink-muted)",
+              padding: "var(--space-1) 0",
+              cursor: "pointer",
+            }}
+          >
+            {tab.label}
+          </button>
+        ))}
+        {/* A UI courtesy, not the security boundary: requireAdmin on the
+            server is what actually protects admin-only endpoints. Hiding
+            this button only spares a non-admin the dead end of clicking into
+            a screen that would fail every request. */}
+        {isAdmin && (
+          <button
+            type="button"
+            aria-current={activeTab === "admin" ? "page" : undefined}
+            onClick={() => setActiveTab("admin")}
+            style={{
+              font: "inherit",
+              background: "transparent",
+              border: "none",
+              borderBottom: activeTab === "admin" ? "2px solid var(--ink)" : "2px solid transparent",
+              color: activeTab === "admin" ? "var(--ink)" : "var(--ink-muted)",
+              padding: "var(--space-1) 0",
+              cursor: "pointer",
+            }}
+          >
+            Admin
+          </button>
+        )}
+      </nav>
+
       {state.status === "error" && (
         <p role="alert" style={{ color: "var(--danger)" }}>
           {state.error}
         </p>
       )}
 
-      {editing === null ? (
-        <VaultList
-          items={state.items}
-          onSelect={(record) => {
-            setEditing(record);
-            setConflict(null);
-          }}
-          onNew={() => {
-            setEditing("new");
-            setConflict(null);
-          }}
-        />
-      ) : (
-        <>
-          <ItemEditor
-            initial={editing === "new" ? BLANK_LOGIN : (editing.plaintext ?? BLANK_LOGIN)}
-            conflict={conflict}
-            onSave={save}
-            onCancel={() => {
-              setEditing(null);
+      {activeTab === "vault" &&
+        (editing === null ? (
+          <VaultList
+            items={state.items}
+            collections={state.collections}
+            onSelect={(record) => {
+              setEditing(record);
+              setEditorCollectionId(record.collectionId);
+              setConflict(null);
+            }}
+            onNew={() => {
+              setEditing("new");
+              setEditorCollectionId(null);
               setConflict(null);
             }}
           />
-          {editing !== "new" && (
-            <Button type="button" variant="danger" onClick={() => void remove()}>
-              Delete this item
-            </Button>
-          )}
-        </>
+        ) : (
+          <>
+            <div style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-4)" }}>
+              <label htmlFor={collectionSelectId} style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
+                Collection
+              </label>
+              <select
+                id={collectionSelectId}
+                value={editorCollectionId ?? ""}
+                onChange={(e) => setEditorCollectionId(e.target.value === "" ? null : e.target.value)}
+              >
+                <option value="">Personal</option>
+                {usableCollections.map((collection) => (
+                  <option key={collection.id} value={collection.id}>
+                    {collection.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            {isMovingOut && (
+              <p style={{ color: "var(--danger)", marginBottom: "var(--space-4)" }}>
+                Moving this out does not take back access. A former member who kept the item key
+                can still read it, including future edits.
+              </p>
+            )}
+            <ItemEditor
+              initial={editing === "new" ? BLANK_LOGIN : (editing.plaintext ?? BLANK_LOGIN)}
+              conflict={conflict}
+              onSave={save}
+              onCancel={() => {
+                setEditing(null);
+                setConflict(null);
+              }}
+            />
+            {editing !== "new" && (
+              <Button type="button" variant="danger" onClick={() => void remove()}>
+                Delete this item
+              </Button>
+            )}
+          </>
+        ))}
+
+      {activeTab === "collections" && (
+        <CollectionsScreen
+          role={session.user?.role ?? "user"}
+          collections={state.collections}
+          pendingGrants={pendingGrants}
+          directory={directory}
+          members={members}
+          selectedCollectionId={selectedCollectionId}
+          onSelectCollection={handleSelectCollection}
+          onCreateCollection={handleCreateCollection}
+          onFulfil={handleFulfil}
+          onAddMember={handleAddMember}
+          onRemoveMember={handleRemoveMember}
+        />
+      )}
+
+      {activeTab === "settings" && (
+        <p style={{ color: "var(--ink-muted)" }}>Settings are not built yet.</p>
+      )}
+
+      {activeTab === "admin" && isAdmin && (
+        <p style={{ color: "var(--ink-muted)" }}>The admin console is not built yet.</p>
       )}
     </main>
   );

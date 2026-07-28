@@ -47,9 +47,14 @@ export function EnrolScreen({ inviteToken, onEnrol, onFinish }: EnrolScreenProps
       <main style={{ maxWidth: "28rem", margin: "0 auto", padding: "var(--space-8) var(--space-4)" }}>
         <h1 style={{ fontSize: "1.25rem", fontWeight: 600 }}>Save your recovery code</h1>
         <p style={{ color: "var(--ink-muted)" }}>
-          This is the only way back into your vault if you forget your master
-          password. It is shown once and cannot be recovered afterwards — not by
-          an administrator, and not by anyone with the database.
+          Save this somewhere safe and offline. It is shown once and cannot be
+          recovered afterwards &mdash; not by an administrator, and not by
+          anyone with the database.
+        </p>
+        <p style={{ color: "var(--ink-muted)" }}>
+          Note: redeeming this code is not built yet. Today it protects a copy
+          of your key for a future release; it will not currently get you back
+          into a vault whose master password you have forgotten.
         </p>
         <p
           style={{

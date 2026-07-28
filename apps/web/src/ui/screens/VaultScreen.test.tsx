@@ -11,9 +11,22 @@ import userEvent from "@testing-library/user-event";
 import type { LoginItem } from "../../vault/types.js";
 import { ApiError, type ApiClient } from "../../vault/api.js";
 import { createSession, type Session } from "../../vault/session.js";
-import { createVaultStore } from "../../vault/store.js";
-import { createItem, type ItemRecord, type WireItem } from "../../vault/items.js";
+import { createVaultStore, type VaultState, type VaultStore } from "../../vault/store.js";
+import { createItem, decryptRecords, type ItemRecord, type WireItem } from "../../vault/items.js";
+import { fakeApi, openSession } from "../../vault/test-helpers.js";
 import { VaultList, VaultScreen } from "./VaultScreen.js";
+
+// Wraps the real createItem so "saves a new item into the collection chosen
+// in the editor" can assert on the exact arguments VaultScreen passed it --
+// the collectionId is the whole point of that test, and only a spy on the
+// real function (not a hand-rolled fake api body inspection) matches the
+// brief's own assertion shape. Every other test in this file still gets the
+// real encryption behaviour: the mock delegates to it, it only adds
+// observability.
+vi.mock("../../vault/items.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../vault/items.js")>();
+  return { ...actual, createItem: vi.fn(actual.createItem) };
+});
 
 const LOGIN: LoginItem = {
   type: "login",
@@ -92,6 +105,7 @@ async function wireFor(
   session: Session,
   plaintext: LoginItem,
   meta: { id: string; revision: number },
+  collectionId: string | null = null,
 ): Promise<WireItem> {
   const captured: { body?: { ciphertext: string; wrappedItemKey: string } } = {};
   const capture: ApiClient = {
@@ -112,12 +126,12 @@ async function wireFor(
       throw new Error("unexpected DEL");
     },
   };
-  await createItem({ api: capture, session }, plaintext, null);
+  await createItem({ api: capture, session }, plaintext, collectionId);
   const sent = captured.body;
   if (sent === undefined) throw new Error("createItem never posted a body");
   return {
     id: meta.id,
-    collectionId: null,
+    collectionId,
     ownerUserId: "u1",
     ciphertext: sent.ciphertext,
     wrappedItemKey: sent.wrappedItemKey,
@@ -214,5 +228,183 @@ describe("VaultScreen", () => {
       expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     });
     expect(putCalls).toBe(2);
+  });
+});
+
+/**
+ * A `VaultStore` that serves a fixed, caller-supplied `VaultState` and treats
+ * every mutating method as a no-op.
+ *
+ * The real store's `load`/`resync` route collection metadata through
+ * `adoptCollections`, which opens each sealed key via `openSealed` -- real
+ * X25519 sealing, which needs `@keyhole/crypto` to set up (banned under
+ * src/ui/**). A `CollectionSummary` itself carries no ciphertext, so there is
+ * nothing to open here: this fake lets a test hand VaultScreen collection
+ * metadata directly, exactly as if a real sync had already resolved it.
+ */
+function fakeStore(state: VaultState): VaultStore {
+  return {
+    getState: () => state,
+    subscribe: () => () => undefined,
+    async load() {},
+    async resync() {},
+    upsert() {},
+    remove() {},
+    clear() {},
+  };
+}
+
+describe("VaultScreen collections", () => {
+  it("shows a shared badge on an item that belongs to a collection", async () => {
+    const session = openSession();
+    session.setCollectionKeys(new Map([["c1", new Uint8Array(32).fill(9)]]));
+
+    const shared = await wireFor(session, { ...LOGIN, name: "Household login" }, { id: "i1", revision: 1 }, "c1");
+    const personal = await wireFor(session, { ...LOGIN, name: "Personal login" }, { id: "i2", revision: 1 });
+    const [sharedRecord, personalRecord] = await decryptRecords([shared, personal], session);
+
+    const store = fakeStore({
+      revision: 1,
+      items: [sharedRecord as ItemRecord, personalRecord as ItemRecord],
+      collections: [{ id: "c1", name: "Household", role: "member", usable: true }],
+      status: "ready",
+      error: null,
+    });
+
+    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+
+    expect(await screen.findByText("Household login")).toBeInTheDocument();
+    // Anchored to the start: the badge text is "Shared · Household", and
+    // anchoring rules out a false match against the item's own name (which
+    // also happens to contain "Household") or the personal item's row.
+    const badge = screen.getByText(/^shared/i);
+    expect(badge).toHaveTextContent("Household");
+    // The personal item must never carry the badge.
+    const personalRow = screen.getByText("Personal login").closest("button");
+    expect(personalRow).not.toHaveTextContent(/^shared/i);
+  });
+
+  it("filters the list to one collection when that collection is selected", async () => {
+    const session = openSession();
+    session.setCollectionKeys(new Map([["c1", new Uint8Array(32).fill(9)]]));
+
+    const shared = await wireFor(session, { ...LOGIN, name: "Household login" }, { id: "i1", revision: 1 }, "c1");
+    const personal = await wireFor(session, { ...LOGIN, name: "Personal login" }, { id: "i2", revision: 1 });
+    const [sharedRecord, personalRecord] = await decryptRecords([shared, personal], session);
+
+    const store = fakeStore({
+      revision: 1,
+      items: [sharedRecord as ItemRecord, personalRecord as ItemRecord],
+      collections: [{ id: "c1", name: "Household", role: "member", usable: true }],
+      status: "ready",
+      error: null,
+    });
+
+    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+
+    expect(screen.getByText("Household login")).toBeInTheDocument();
+    expect(screen.getByText("Personal login")).toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText(/filter by collection/i), "c1");
+
+    expect(screen.getByText("Household login")).toBeInTheDocument();
+    expect(screen.queryByText("Personal login")).not.toBeInTheDocument();
+  });
+
+  it("does not render the admin tab for a non-admin session", () => {
+    const session = openSession(); // role "user", per test-helpers.ts
+    const store = fakeStore({ revision: 0, items: [], collections: [], status: "ready", error: null });
+
+    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+
+    expect(screen.queryByRole("button", { name: "Admin" })).not.toBeInTheDocument();
+  });
+
+  it("saves a new item into the collection chosen in the editor", async () => {
+    const session = openSession();
+    session.setCollectionKeys(new Map([["c1", new Uint8Array(32).fill(9)]]));
+
+    const store = fakeStore({
+      revision: 1,
+      items: [],
+      collections: [{ id: "c1", name: "Household", role: "manager", usable: true }],
+      status: "ready",
+      error: null,
+    });
+
+    const api: ApiClient = {
+      async get<T>(path: string): Promise<T> {
+        throw new Error(`unexpected GET ${path}`);
+      },
+      async post<T>(_path: string, body?: unknown): Promise<T> {
+        const sent = body as { collectionId: string | null; ciphertext: string; wrappedItemKey: string };
+        return {
+          id: "i9",
+          collectionId: sent.collectionId,
+          ownerUserId: "u1",
+          ciphertext: sent.ciphertext,
+          wrappedItemKey: sent.wrappedItemKey,
+          revision: 1,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          deletedAt: null,
+        } as T;
+      },
+      async put<T>(): Promise<T> {
+        throw new Error("unexpected PUT");
+      },
+      async patch<T>(): Promise<T> {
+        throw new Error("unexpected PATCH");
+      },
+      async del<T>(): Promise<T> {
+        throw new Error("unexpected DEL");
+      },
+    };
+
+    render(<VaultScreen api={api} session={session} store={store} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /add.*item/i }));
+    await userEvent.type(screen.getByLabelText(/^name/i), "New login");
+    await userEvent.selectOptions(screen.getByLabelText(/^collection$/i), "c1");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    // The assertion is on the collectionId reaching createItem, not on the
+    // control's appearance: a picker that renders and passes null shares
+    // nothing.
+    await waitFor(() => {
+      expect(createItem).toHaveBeenCalledWith(expect.anything(), expect.anything(), "c1");
+    });
+  });
+
+  it("warns that moving a shared item out of its collection does not revoke access", async () => {
+    const session = openSession();
+    session.setCollectionKeys(new Map([["c1", new Uint8Array(32).fill(9)]]));
+
+    const shared = await wireFor(session, LOGIN, { id: "i1", revision: 1 }, "c1");
+    const [sharedRecord] = await decryptRecords([shared], session);
+
+    const store = fakeStore({
+      revision: 1,
+      items: [sharedRecord as ItemRecord],
+      collections: [{ id: "c1", name: "Household", role: "manager", usable: true }],
+      status: "ready",
+      error: null,
+    });
+
+    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+
+    await userEvent.click(screen.getByText(LOGIN.name));
+    // Nothing shown yet: the picker still matches the item's own collection.
+    expect(screen.queryByText(/does not take back access/i)).not.toBeInTheDocument();
+
+    await userEvent.selectOptions(screen.getByLabelText(/^collection$/i), "");
+
+    // The exact copy from packages/crypto/src/item.ts:149, verbatim.
+    expect(
+      screen.getByText(
+        "Moving this out does not take back access. A former member who kept the item key " +
+          "can still read it, including future edits.",
+      ),
+    ).toBeInTheDocument();
   });
 });

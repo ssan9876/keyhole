@@ -44,6 +44,27 @@ describe("EnrolScreen", () => {
     expect(onFinish).toHaveBeenCalledOnce();
   });
 
+  it("does not claim the recovery code can be redeemed today", async () => {
+    // POST /api/account/recovery only rotates the blob for an already-
+    // authenticated user; no endpoint returns recovery_protected_user_key to
+    // someone who cannot log in. Promising redemption here would tell a user
+    // their vault is recoverable when no code path can honour that.
+    const onEnrol = vi.fn().mockResolvedValue({ recoveryCode: "ABCD-EFGH-IJKL" });
+    render(<EnrolScreen inviteToken="tok" onEnrol={onEnrol} onFinish={vi.fn()} />);
+
+    await userEvent.type(screen.getByLabelText(/email/i), "a@b.c");
+    await userEvent.type(screen.getByLabelText(/^master password/i), "correct horse");
+    await userEvent.type(screen.getByLabelText(/confirm/i), "correct horse");
+    await userEvent.click(screen.getByRole("button", { name: /set master password/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("ABCD-EFGH-IJKL")).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText(/only way back into your vault/i)).not.toBeInTheDocument();
+    expect(screen.getByText(/redeeming this code is not built yet/i)).toBeInTheDocument();
+  });
+
   it("never shows the recovery code again after it is acknowledged", async () => {
     const onEnrol = vi.fn().mockResolvedValue({ recoveryCode: "ABCD-EFGH-IJKL" });
     render(<EnrolScreen inviteToken="tok" onEnrol={onEnrol} onFinish={vi.fn()} />);
