@@ -21,9 +21,11 @@ import { TabNav } from "../components/TabNav.js";
 import { useVaultState } from "../useVault.js";
 import { useCollectionsPanel } from "../useCollectionsPanel.js";
 import { useSettingsPanel } from "../useSettingsPanel.js";
+import { useAdminPanel } from "../useAdminPanel.js";
 import { ItemEditor } from "./ItemEditor.js";
 import { CollectionsScreen } from "./CollectionsScreen.js";
 import { SettingsScreen } from "./SettingsScreen.js";
+import { AdminScreen } from "./AdminScreen.js";
 
 export type Tab = "vault" | "collections" | "settings" | "admin";
 
@@ -228,6 +230,16 @@ export function VaultScreen({
     onAutoLockChange,
   });
 
+  // isAdmin folded into `active` itself, not just into whether the tab is
+  // drawn: a stale activeTab === "admin" surviving a role change must not
+  // keep this hook's lazy load armed for a session that is no longer an
+  // admin's. Still only a UI courtesy -- requireAdmin on the server is the
+  // real boundary, same note as the tab filter below.
+  const adminPanel = useAdminPanel({
+    api,
+    active: activeTab === "admin" && isAdmin,
+  });
+
   // Re-sync on focus rather than a timer: it catches the realistic case — you
   // edited on your phone, you come back to this tab — with no polling, no
   // battery cost, and no timer to leak.
@@ -393,9 +405,7 @@ export function VaultScreen({
 
       {activeTab === "settings" && <SettingsScreen {...settingsPanel} />}
 
-      {activeTab === "admin" && isAdmin && (
-        <p style={{ color: "var(--ink-muted)" }}>The admin console is not built yet.</p>
-      )}
+      {activeTab === "admin" && isAdmin && <AdminScreen {...adminPanel} />}
     </main>
   );
 }
