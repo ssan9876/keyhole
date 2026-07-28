@@ -6,6 +6,25 @@ import (
 	"os"
 )
 
+// Version is the compiled-in release version. It is "dev" for any build not
+// produced by the release workflow -- in particular, every local `go build`
+// -- and is overwritten at build time via:
+//
+//	go build -ldflags "-X main.Version=vX.Y.Z"
+//
+// `keyhole update` refuses to run against a "dev" build: there is no
+// release entry to compare a dev build's version against, and updating is
+// a released-binary operation.
+var Version = "dev"
+
+// UpdatePublicKey is the minisign public key release assets are signed
+// with, embedded the same way as Version -- via -ldflags at release-build
+// time, by the release workflow that also generates the keypair and signs
+// SHA256SUMS. It is empty in every build produced anywhere other than that
+// workflow, and `keyhole update` refuses to run without it: no public key
+// means no way to verify what gets downloaded.
+var UpdatePublicKey = ""
+
 const usage = `keyhole — self-hosted end-to-end-encrypted password manager
 
 Usage:
@@ -14,6 +33,7 @@ Usage:
   keyhole admin     <subcommand>                           Administrative commands
   keyhole backup    [--config PATH] [--out DIR] [--keep N] Write a snapshot and prune old ones
   keyhole restore   <file> [--config PATH]                 Replace the database with a snapshot
+  keyhole update    [--check] [--config PATH]              Update to the latest release, with automatic rollback
 
 Run "keyhole admin" for administrative subcommands.
 
@@ -40,6 +60,8 @@ func main() {
 		err = runBackup(os.Args[2:])
 	case "restore":
 		err = runRestore(os.Args[2:])
+	case "update":
+		err = runUpdate(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return

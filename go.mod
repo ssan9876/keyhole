@@ -3,6 +3,7 @@ module github.com/ssan9876/keyhole
 go 1.25.0
 
 require (
+	aead.dev/minisign v0.3.0
 	golang.org/x/crypto v0.54.0
 	modernc.org/sqlite v1.54.0
 )
