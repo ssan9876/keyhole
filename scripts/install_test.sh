@@ -70,6 +70,27 @@ else
   echo "ok: unknown flag rejected"
 fi
 
+# An installer that silently skips verification because nobody filled in the
+# signing key is the worst outcome this file has, and it is the one thing here
+# that a real run must refuse outright rather than warn about.
+#
+# This is the only assertion in the suite that runs install.sh *without*
+# --dry-run, and it is only testable on a machine with no Proxmox on it because
+# of the ordering main() already chose: check_signing_key runs before
+# require_pve, precisely so the operator hears about a placeholder key wherever
+# they are reading the script. Reorder those two and this invocation dies of
+# "this must run on a Proxmox VE host" instead — non-zero, but for the wrong
+# reason, which is why the message is asserted and not just the exit status.
+placeholder_output="$(bash scripts/install.sh --yes --ctid 200 --network tls \
+  --admin-email me@example.com 2>&1)" && placeholder_rc=0 || placeholder_rc=$?
+if [ "$placeholder_rc" -eq 0 ]; then
+  echo "FAIL: the installer ran to completion with a placeholder signing key"; fail=1
+elif ! printf '%s\n' "$placeholder_output" | grep -q 'placeholder'; then
+  echo "FAIL: it refused, but not because of the placeholder key (no 'placeholder' in the message)"; fail=1
+else
+  echo "ok: a real run refuses a placeholder signing key"
+fi
+
 # Both halves of the supply-chain check must be in the plan, and the signature
 # must be checked before the checksums are. sha256sum -c on its own proves only
 # that the binary matches a SHA256SUMS file that arrived over the same
