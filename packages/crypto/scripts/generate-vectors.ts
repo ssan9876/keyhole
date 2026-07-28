@@ -14,7 +14,11 @@ import { encryptBytesWithNonce, serializeEnvelope } from "../src/symmetric.js";
 import { sealToUserWithEphemeral } from "../src/seal.js";
 import { publicKeyFor } from "../src/keys.js";
 import { publicKeyFingerprint } from "../src/fingerprint.js";
-import { deriveRecoveryKey } from "../src/recovery.js";
+import {
+  deriveRecoveryAuthHash,
+  deriveRecoveryKey,
+  deriveRecoveryWrapKey,
+} from "../src/recovery.js";
 import type { LoginItem, NoteItem } from "../src/item.js";
 import { toBase64, utf8Encode } from "../src/encoding.js";
 
@@ -24,6 +28,10 @@ const MASTER_PASSWORD = "correct horse battery staple";
 const KDF_SALT = new Uint8Array(16).fill(0x42);
 const RECOVERY_CODE = "ABCDE-FGHJK-MNPQR-STVWX-YZ234";
 const RECOVERY_SALT = new Uint8Array(16).fill(0x21);
+// The recovery blob wraps the *same* userKey the master-password chain does
+// (COMPOSED_USER_KEY below): one account has one userKey, wrapped twice under
+// two independent keys. Only the nonce belongs to this wrapping alone.
+const RECOVERY_PROTECTED_USER_KEY_NONCE = new Uint8Array(12).fill(0x6e);
 const AES_KEY = new Uint8Array(32).fill(0x07);
 const AES_NONCE = new Uint8Array(12).fill(0x09);
 const AES_PLAINTEXT = utf8Encode("attack at dawn");
@@ -177,6 +185,25 @@ async function main(): Promise<void> {
     throw new Error("Recovery code normalization vector is inconsistent; refusing to write it");
   }
 
+  const recoveryWrapKey = deriveRecoveryWrapKey(recoveryKey);
+  const recoveryAuthHash = deriveRecoveryAuthHash(recoveryKey);
+  // Guard the split, not just its arithmetic. If the two info strings ever
+  // collapse to the same label, or an expansion is dropped so a half becomes
+  // the recovery key itself, every assertion downstream still passes — each
+  // would be a value equal to itself — while the credential the server holds
+  // had quietly become the one that opens the vault.
+  if (
+    toBase64(recoveryWrapKey) === toBase64(recoveryAuthHash) ||
+    toBase64(recoveryWrapKey) === toBase64(recoveryKey) ||
+    toBase64(recoveryAuthHash) === toBase64(recoveryKey)
+  ) {
+    throw new Error(
+      "Recovery split vector collapsed: the recovery key, the wrap half and the auth " +
+        "half are not three distinct values. Freezing them in this state would pin a " +
+        "contract in which the value uploaded to the server decrypts the vault.",
+    );
+  }
+
   const vectors = {
     _comment:
       "Frozen cross-language test vectors for Keyhole. Any client implementation " +
@@ -210,7 +237,17 @@ async function main(): Promise<void> {
           wrap: { utf8: "keyhole:wrap:v1", base64: toBase64(utf8Encode("keyhole:wrap:v1")) },
           auth: { utf8: "keyhole:auth:v1", base64: toBase64(utf8Encode("keyhole:auth:v1")) },
           seal: { utf8: "keyhole:seal:v1", base64: toBase64(utf8Encode("keyhole:seal:v1")) },
+          recoveryWrap: {
+            utf8: "keyhole:recovery-wrap:v1",
+            base64: toBase64(utf8Encode("keyhole:recovery-wrap:v1")),
+          },
+          recoveryAuth: {
+            utf8: "keyhole:recovery-auth:v1",
+            base64: toBase64(utf8Encode("keyhole:recovery-auth:v1")),
+          },
         },
+        recoveryNote:
+          "The recovery key is expanded twice, under recoveryWrap and recoveryAuth. Both halves are 32 bytes and neither announces which label produced it, so an info string copied from the master-key pair yields a plausible-looking key that fails only at redemption.",
       },
       seal: {
         kem: "X25519",
@@ -315,6 +352,30 @@ async function main(): Promise<void> {
       code: RECOVERY_CODE,
       recoverySaltBase64: toBase64(RECOVERY_SALT),
       recoveryKeyBase64: toBase64(recoveryKey),
+    },
+
+    // The recovery key is split in two: the wrap half opens the blob and never
+    // leaves the device, the auth half is uploaded as proof the caller holds
+    // the code. Chains onto the recovery vector above rather than deriving a
+    // second recovery key, the way `composed` chains onto `kdf`.
+    recoverySplit: {
+      _comment:
+        "recoveryCode -> recoveryKey -> {wrapKey, authHash} -> recoveryProtectedUserKey. wrapKey unwraps the userKey and is never transmitted; authHash is stored server-side as recovery_auth_hash and opens nothing. The two are HKDF expansions of one recovery key under different info strings, so they are indistinguishable by inspection — reproduce them, do not assume.",
+      code: RECOVERY_CODE,
+      recoverySaltBase64: toBase64(RECOVERY_SALT),
+      params: { algorithm: "argon2id", memoryKiB: 65536, iterations: 3, parallelism: 4 },
+      recoveryKeyBase64: toBase64(recoveryKey),
+      wrapKeyBase64: toBase64(recoveryWrapKey),
+      authHashBase64: toBase64(recoveryAuthHash),
+      userKeyBase64: toBase64(COMPOSED_USER_KEY),
+      recoveryProtectedUserKeyNonceBase64: toBase64(RECOVERY_PROTECTED_USER_KEY_NONCE),
+      recoveryProtectedUserKey: serializeEnvelope(
+        await encryptBytesWithNonce(
+          COMPOSED_USER_KEY,
+          recoveryWrapKey,
+          RECOVERY_PROTECTED_USER_KEY_NONCE,
+        ),
+      ),
     },
 
     fingerprint: {

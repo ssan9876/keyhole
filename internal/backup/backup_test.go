@@ -40,6 +40,39 @@ func writeFile(t *testing.T, path, contents string) {
 	}
 }
 
+// liveDatabaseAt creates a migrated database with one row at dbPath and
+// closes it, standing in for the database a restore is about to replace.
+func liveDatabaseAt(t *testing.T, dbPath string) {
+	t.Helper()
+	live := openMigratedStore(t, dbPath)
+	if _, err := live.CreatePendingUser(context.Background(), "live@example.com", "Live", "admin"); err != nil {
+		t.Fatalf("CreatePendingUser: %v", err)
+	}
+	if err := live.Close(); err != nil {
+		t.Fatalf("closing the live database: %v", err)
+	}
+}
+
+// snapshotOfAFreshDatabase returns the path to a valid snapshot taken from a
+// database unrelated to any the caller has, so a restore that quietly did
+// nothing is visible in the rows afterwards.
+func snapshotOfAFreshDatabase(t *testing.T) string {
+	t.Helper()
+	ctx := context.Background()
+	src := openMigratedStore(t, filepath.Join(t.TempDir(), "source.db"))
+	if _, err := src.CreatePendingUser(ctx, "snapshot@example.com", "Snap", "admin"); err != nil {
+		t.Fatalf("CreatePendingUser: %v", err)
+	}
+	path, err := Snapshot(ctx, src.DB(), t.TempDir(), time.Date(2026, 7, 27, 14, 30, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+	if err := src.Close(); err != nil {
+		t.Fatalf("closing the source database: %v", err)
+	}
+	return path
+}
+
 func TestSnapshotProducesAReadableDatabaseWithTheSameRows(t *testing.T) {
 	ctx := context.Background()
 	st := openMigratedStore(t, filepath.Join(t.TempDir(), "keyhole.db"))
@@ -397,6 +430,46 @@ func TestRestoreKeepsTheReplacedDatabaseBesideIt(t *testing.T) {
 	}
 	if _, err := old.UserByEmail(ctx, "new@example.com"); err == nil {
 		t.Error("the replaced database contains the post-restore row; it is a copy of the snapshot, not the original")
+	}
+}
+
+// The restored file is created by whoever is running the restore, so
+// without a chmod it comes out at copyFileFsync's 0o600 regardless of what
+// the database it replaced had. On the installed layout that is one half of
+// a vault that will not start after a recovery; the other half is ownership,
+// which TestRestorePreservesTheDatabasesOwner covers where the platform has
+// the concept.
+//
+// The mode is 0o400 and the comparison is against what was read back rather
+// than against a literal, both so that this fails on every platform rather
+// than only on the one that matters. Any mode other than copyFileFsync's own
+// 0o600 is enough on unix. Windows collapses the whole permission set into
+// FILE_ATTRIBUTE_READONLY, so a writable mode -- 0o640, say -- reads back as
+// 0666 before and after and could not tell the two apart; a read-only one
+// reads back as 0444, which the 0o600 copy does not produce.
+func TestRestorePreservesTheDatabasesMode(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "keyhole.db")
+	liveDatabaseAt(t, dbPath)
+
+	if err := os.Chmod(dbPath, 0o400); err != nil {
+		t.Fatalf("chmod %s: %v", dbPath, err)
+	}
+	before, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("stat before restore: %v", err)
+	}
+
+	if err := Restore(snapshotOfAFreshDatabase(t), dbPath); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	after, err := os.Stat(dbPath)
+	if err != nil {
+		t.Fatalf("stat after restore: %v", err)
+	}
+	if after.Mode().Perm() != before.Mode().Perm() {
+		t.Errorf("database mode after restore = %v, want %v: the restored file keeps the mode of the database it replaced, or the service user can no longer open it",
+			after.Mode().Perm(), before.Mode().Perm())
 	}
 }
 

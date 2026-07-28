@@ -12,7 +12,13 @@ import { publicKeyFor, unwrapKey } from "./keys.js";
 import { decryptItem, encryptItem, type ItemPlaintext } from "./item.js";
 import { publicKeyFingerprint } from "./fingerprint.js";
 import { CROCKFORD_ALPHABET, encodeCrockford } from "./crockford.js";
-import { deriveRecoveryKey } from "./recovery.js";
+import {
+  deriveRecoveryAuthHash,
+  deriveRecoveryKey,
+  deriveRecoveryWrapKey,
+  recoverUserKey,
+} from "./recovery.js";
+import { DecryptionError } from "./errors.js";
 import { fromBase64, toBase64, utf8Decode, utf8Encode } from "./encoding.js";
 
 // These assertions are the contract every Keyhole client must satisfy — the
@@ -95,13 +101,23 @@ describe("frozen vectors: the documented parameters match the code", () => {
   });
 
   it("states the HKDF info strings byte-for-byte, in both encodings", () => {
-    const { wrap, auth, seal } = vectors.params.hkdf.info;
+    const { wrap, auth, seal, recoveryWrap, recoveryAuth } = vectors.params.hkdf.info;
     expect(wrap.utf8).toBe("keyhole:wrap:v1");
     expect(auth.utf8).toBe("keyhole:auth:v1");
     expect(seal.utf8).toBe("keyhole:seal:v1");
+    expect(recoveryWrap.utf8).toBe("keyhole:recovery-wrap:v1");
+    expect(recoveryAuth.utf8).toBe("keyhole:recovery-auth:v1");
     expect(toBase64(utf8Encode(wrap.utf8))).toBe(wrap.base64);
     expect(toBase64(utf8Encode(auth.utf8))).toBe(auth.base64);
     expect(toBase64(utf8Encode(seal.utf8))).toBe(seal.base64);
+    expect(toBase64(utf8Encode(recoveryWrap.utf8))).toBe(recoveryWrap.base64);
+    expect(toBase64(utf8Encode(recoveryAuth.utf8))).toBe(recoveryAuth.base64);
+    // Five labels, five domains. A recovery label that collided with a
+    // master-key one would make the recovery key expand into a value already
+    // in use elsewhere in the hierarchy.
+    expect(
+      new Set([wrap.utf8, auth.utf8, seal.utf8, recoveryWrap.utf8, recoveryAuth.utf8]).size,
+    ).toBe(5);
     expect(vectors.params.hkdf.hash).toBe("SHA-256");
     expect(vectors.params.hkdf.outputBytes).toBe(32);
   });
@@ -261,5 +277,96 @@ describe("frozen vectors: composed key hierarchy", () => {
     const userKey = await unwrapKey(vectors.composed.protectedUserKey, wrappingKey);
     const itemKey = await unwrapKey(vectors.composed.wrappedItemKey, userKey);
     expect(toBase64(itemKey)).toBe(vectors.composed.itemKeyBase64);
+  });
+});
+
+// The second route to the same userKey. The recovery key is expanded twice —
+// once into the half that opens the blob, once into the half uploaded as proof
+// the caller holds the code — and nothing about a 32-byte value says which
+// info string produced it. A port that copies the master-key labels, or types
+// `v2`, derives two plausible keys and finds out at redemption: after the user
+// has already lost their master password, with this as the last resort. That
+// is why these are pinned as literals rather than recomputed here.
+describe("frozen vectors: recovery key split", () => {
+  const recoverySalt = fromBase64(vectors.recoverySplit.recoverySaltBase64);
+
+  it("chains onto the recovery vector rather than deriving a second recovery key", () => {
+    expect(vectors.recoverySplit.code).toBe(vectors.recovery.code);
+    expect(vectors.recoverySplit.recoverySaltBase64).toBe(vectors.recovery.recoverySaltBase64);
+    expect(vectors.recoverySplit.recoveryKeyBase64).toBe(vectors.recovery.recoveryKeyBase64);
+  });
+
+  // Recovery carries its own kdf params (spec 4.2 keeps recovery_kdf_params
+  // separate), so the vector must say which ones its pinned key was derived
+  // under rather than leaving a porter to assume the account's.
+  it("states the KDF params the pinned recovery key was derived under", () => {
+    expect(vectors.recoverySplit.params.memoryKiB).toBe(DEFAULT_KDF_PARAMS.memoryKiB);
+    expect(vectors.recoverySplit.params.iterations).toBe(DEFAULT_KDF_PARAMS.iterations);
+    expect(vectors.recoverySplit.params.parallelism).toBe(DEFAULT_KDF_PARAMS.parallelism);
+  });
+
+  it("reproduces both halves from the recovery code", async () => {
+    const recoveryKey = await deriveRecoveryKey(
+      vectors.recoverySplit.code,
+      recoverySalt,
+      DEFAULT_KDF_PARAMS,
+    );
+    expect(toBase64(recoveryKey)).toBe(vectors.recoverySplit.recoveryKeyBase64);
+    expect(toBase64(deriveRecoveryWrapKey(recoveryKey))).toBe(vectors.recoverySplit.wrapKeyBase64);
+    expect(toBase64(deriveRecoveryAuthHash(recoveryKey))).toBe(
+      vectors.recoverySplit.authHashBase64,
+    );
+  });
+
+  // Three distinct literals. If a future change made two of them equal, every
+  // derivation assertion above would still pass — each would be a value equal
+  // to itself — while the credential the server holds had become the one that
+  // opens the vault.
+  it("pins three distinct values, so the uploaded half is not the unwrapping half", () => {
+    const { recoveryKeyBase64, wrapKeyBase64, authHashBase64 } = vectors.recoverySplit;
+    expect(new Set([recoveryKeyBase64, wrapKeyBase64, authHashBase64]).size).toBe(3);
+  });
+
+  it("reproduces recoveryProtectedUserKey byte-for-byte and unwraps it under the wrap half", async () => {
+    const wrapKey = fromBase64(vectors.recoverySplit.wrapKeyBase64);
+    const envelope = await encryptBytesWithNonce(
+      fromBase64(vectors.recoverySplit.userKeyBase64),
+      wrapKey,
+      fromBase64(vectors.recoverySplit.recoveryProtectedUserKeyNonceBase64),
+    );
+    expect(serializeEnvelope(envelope)).toBe(vectors.recoverySplit.recoveryProtectedUserKey);
+    expect(toBase64(await unwrapKey(vectors.recoverySplit.recoveryProtectedUserKey, wrapKey))).toBe(
+      vectors.recoverySplit.userKeyBase64,
+    );
+  });
+
+  // The property the split exists for, frozen rather than merely round-tripped:
+  // the credential the server stores must not open the blob the server stores.
+  it("cannot be opened with the auth half the server holds, nor with the recovery key", async () => {
+    await expect(
+      unwrapKey(
+        vectors.recoverySplit.recoveryProtectedUserKey,
+        fromBase64(vectors.recoverySplit.authHashBase64),
+      ),
+    ).rejects.toThrow(DecryptionError);
+    await expect(
+      unwrapKey(
+        vectors.recoverySplit.recoveryProtectedUserKey,
+        fromBase64(vectors.recoverySplit.recoveryKeyBase64),
+      ),
+    ).rejects.toThrow(DecryptionError);
+  });
+
+  // One account has one userKey, wrapped twice. Recovery that returned some
+  // other key would decrypt nothing in the vault it was supposed to restore.
+  it("recovers, from the code alone, the same userKey the master-password chain unwraps", async () => {
+    expect(vectors.recoverySplit.userKeyBase64).toBe(vectors.composed.userKeyBase64);
+    const userKey = await recoverUserKey(
+      vectors.recoverySplit.recoveryProtectedUserKey,
+      vectors.recoverySplit.code,
+      recoverySalt,
+      DEFAULT_KDF_PARAMS,
+    );
+    expect(toBase64(userKey)).toBe(vectors.recoverySplit.userKeyBase64);
   });
 });

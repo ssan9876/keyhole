@@ -31,8 +31,17 @@
         "seal": {
           "utf8": "keyhole:seal:v1",
           "base64": "a2V5aG9sZTpzZWFsOnYx"
+        },
+        "recoveryWrap": {
+          "utf8": "keyhole:recovery-wrap:v1",
+          "base64": "a2V5aG9sZTpyZWNvdmVyeS13cmFwOnYx"
+        },
+        "recoveryAuth": {
+          "utf8": "keyhole:recovery-auth:v1",
+          "base64": "a2V5aG9sZTpyZWNvdmVyeS1hdXRoOnYx"
         }
-      }
+      },
+      "recoveryNote": "The recovery key is expanded twice, under recoveryWrap and recoveryAuth. Both halves are 32 bytes and neither announces which label produced it, so an info string copied from the master-key pair yields a plausible-looking key that fails only at redemption."
     },
     "seal": {
       "kem": "X25519",
@@ -149,6 +158,23 @@
     "code": "ABCDE-FGHJK-MNPQR-STVWX-YZ234",
     "recoverySaltBase64": "ISEhISEhISEhISEhISEhIQ==",
     "recoveryKeyBase64": "8rx2ex2vcppUBHkXNil5TIjbtlKJ5CJ9FFbz6/lIs3o="
+  },
+  "recoverySplit": {
+    "_comment": "recoveryCode -> recoveryKey -> {wrapKey, authHash} -> recoveryProtectedUserKey. wrapKey unwraps the userKey and is never transmitted; authHash is stored server-side as recovery_auth_hash and opens nothing. The two are HKDF expansions of one recovery key under different info strings, so they are indistinguishable by inspection \u2014 reproduce them, do not assume.",
+    "code": "ABCDE-FGHJK-MNPQR-STVWX-YZ234",
+    "recoverySaltBase64": "ISEhISEhISEhISEhISEhIQ==",
+    "params": {
+      "algorithm": "argon2id",
+      "memoryKiB": 65536,
+      "iterations": 3,
+      "parallelism": 4
+    },
+    "recoveryKeyBase64": "8rx2ex2vcppUBHkXNil5TIjbtlKJ5CJ9FFbz6/lIs3o=",
+    "wrapKeyBase64": "prKuuXDBAoXq0vl+ZEDyJcs7jxVO7jPkw4xQUUrOQI8=",
+    "authHashBase64": "lAbW6FZQtR5EBTS8omal1kgImb1rNd+UVJLbv+cSQWs=",
+    "userKeyBase64": "MTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTE=",
+    "recoveryProtectedUserKeyNonceBase64": "bm5ubm5ubm5ubm5u",
+    "recoveryProtectedUserKey": "{\"v\":1,\"alg\":\"A256GCM\",\"n\":\"bm5ubm5ubm5ubm5u\",\"ct\":\"3cox/rkx3U3jC8FDlLIO6aQQu4d9p5Bg0zOXwU/wQGC3LKhe54fO5RXMwJMx4s80\"}"
   },
   "fingerprint": {
     "email": "user@example.com",

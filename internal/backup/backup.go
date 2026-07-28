@@ -125,7 +125,8 @@ func Prune(dir string, keep int) ([]string, error) {
 //     an operator makes at 2am, and it must not cost them their last copy.
 //  4. Copy the snapshot into place at 0o600, then fsync the file and the
 //     directory.
-//  5. Remove any stale -wal/-shm files beside the old database: leaving them
+//  5. Give the new file the owner and mode the database it replaced had.
+//  6. Remove any stale -wal/-shm files beside the old database: leaving them
 //     applies a journal belonging to a database that no longer exists.
 func Restore(snapshotPath, dbPath string) error {
 	if err := verifySnapshot(snapshotPath); err != nil {
@@ -137,7 +138,21 @@ func Restore(snapshotPath, dbPath string) error {
 		return fmt.Errorf("create database directory: %w", err)
 	}
 
-	if _, err := os.Stat(dbPath); err == nil {
+	// Read before the rename, because after it there is nothing left at
+	// dbPath to ask. Both documented ways of reaching this function run as
+	// root -- `systemctl stop keyhole && keyhole restore ...` from the
+	// README, and the rollback inside `keyhole update` -- while the unit
+	// runs as the unprivileged service user. The copy below creates a fresh
+	// file owned by whoever is running, so without carrying this forward
+	// every recovery ends with a root-owned database the service cannot
+	// open, `Restart=on-failure` looping, and an operator being told the
+	// rollback failed too. nil means there was no database here to inherit
+	// from: a first restore into an empty data directory, where 0o600 owned
+	// by the caller is the right answer and the only one available.
+	var previous os.FileInfo
+
+	if info, err := os.Stat(dbPath); err == nil {
+		previous = info
 		replaced, err := replacedPath(dbPath)
 		if err != nil {
 			return err
@@ -151,6 +166,17 @@ func Restore(snapshotPath, dbPath string) error {
 
 	if err := copyFileFsync(snapshotPath, dbPath); err != nil {
 		return err
+	}
+
+	if previous != nil {
+		// Owner first, then mode: on Linux chown clears the setuid and
+		// setgid bits, so a chmod before it could be silently undone.
+		if err := chownLike(dbPath, previous); err != nil {
+			return err
+		}
+		if err := os.Chmod(dbPath, previous.Mode().Perm()); err != nil {
+			return fmt.Errorf("restore mode %v on %s: %w", previous.Mode().Perm(), dbPath, err)
+		}
 	}
 
 	// Any -wal/-shm sitting beside dbPath belonged to the database that was
@@ -223,6 +249,11 @@ func verifySnapshot(path string) error {
 // copyFileFsync copies src to dst at mode 0o600, then fsyncs the file and
 // (where supported) its directory so the write is durable before Restore
 // reports success.
+//
+// 0o600 is the floor, not the final answer: the file is created by whoever
+// is running, so Restore resets both owner and mode afterwards when it is
+// replacing a database that already existed. The narrow mode here is what
+// keeps the window between the two from being a readable one.
 func copyFileFsync(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
