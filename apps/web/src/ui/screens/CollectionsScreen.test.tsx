@@ -177,6 +177,32 @@ describe("CollectionsScreen", () => {
     expect(onRemoveMember).not.toHaveBeenCalled(); // still behind the confirmation
   });
 
+  it("shows an error instead of silently closing the dialog when removal fails", async () => {
+    // Regression for the finding: the confirm dialog closed and the promise
+    // was fired with `void` and no `.catch()`, so a manager who removed an
+    // adversarial member and got a network failure or a stale-session
+    // rejection would see the dialog close with no indication the removal
+    // never happened.
+    const onRemoveMember = vi.fn().mockRejectedValue(new Error("network unreachable"));
+    render(
+      <CollectionsScreen
+        {...props({
+          members: [
+            { userId: "u2", name: "Bee", email: "bee@example.com", role: "member", grantedAt: "2026-07-01T00:00:00Z" },
+          ],
+          onRemoveMember,
+        })}
+      />,
+    );
+
+    // Anchored exact match: once the confirm dialog is open, a second button
+    // ("Remove member") also contains the word "remove".
+    await userEvent.click(await screen.findByRole("button", { name: "Remove" }));
+    await userEvent.click(screen.getByRole("button", { name: "Remove member" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(/network unreachable/i);
+  });
+
   it("tells an admin that adding a member they cannot seal to is only a request", async () => {
     // addMember returned "pending": this admin does not hold the collection
     // key, so nothing was actually granted.

@@ -109,6 +109,7 @@ function MembersPanel({
   onRemoveMember: CollectionsScreenProps["onRemoveMember"];
 }) {
   const [removing, setRemoving] = useState<Member | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
   const [recipientId, setRecipientId] = useState("");
   const [newRole, setNewRole] = useState<"member" | "manager">("member");
@@ -160,7 +161,14 @@ function MembersPanel({
                   )}
                 </div>
                 {isManager && (
-                  <Button type="button" variant="quiet" onClick={() => setRemoving(member)}>
+                  <Button
+                    type="button"
+                    variant="quiet"
+                    onClick={() => {
+                      setRemoving(member);
+                      setRemoveError(null);
+                    }}
+                  >
                     Remove
                   </Button>
                 )}
@@ -179,9 +187,30 @@ function MembersPanel({
           onConfirm={() => {
             const target = removing;
             setRemoving(null);
-            void onRemoveMember({ collectionId: collection.id, userId: target.userId });
+            setRemoveError(null);
+            // The dialog closes immediately either way -- if the request
+            // then fails (stale session, a server-side requireManager
+            // mismatch, a dropped connection), the manager still needs to
+            // know the removal did not happen. This is the one action in
+            // this screen whose entire justification is "if this removal is
+            // adversarial, change the shared passwords too": failing silent
+            // here is the wrong outcome.
+            void (async () => {
+              try {
+                await onRemoveMember({ collectionId: collection.id, userId: target.userId });
+              } catch (failure) {
+                setRemoveError(
+                  failure instanceof Error ? failure.message : "Could not remove that member",
+                );
+              }
+            })();
           }}
         />
+      )}
+      {removeError !== null && (
+        <p role="alert" style={{ color: "var(--danger)" }}>
+          {removeError}
+        </p>
       )}
 
       {isManager && (
