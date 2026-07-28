@@ -41,6 +41,27 @@ const BLANK_LOGIN: LoginItem = {
   passwordHistory: [],
 };
 
+/**
+ * The plaintext of an existing record, never a default.
+ *
+ * A record with `plaintext === null` must never reach `ItemEditor` -- see the
+ * guard in `onSelect` below, which redirects it to the undecryptable-item
+ * explanation instead of ever calling `setEditing` on it. `BLANK_LOGIN`
+ * exists only for the `editing === "new"` case; sharing it here as a `??`
+ * fallback is exactly the bug this function replaces: it used to hand a
+ * member an empty form for an item they could not decrypt, and whatever they
+ * saved into it silently replaced the real (still-encrypted, still
+ * shared-with-everyone-else) ciphertext. If this is ever reached, that
+ * invariant has already broken, so it throws instead of quietly reopening
+ * the hole.
+ */
+function requirePlaintext(record: ItemRecord): ItemPlaintext {
+  if (record.plaintext === null) {
+    throw new Error("Cannot edit an item this device could not decrypt");
+  }
+  return record.plaintext;
+}
+
 interface VaultListProps {
   items: ItemRecord[];
   /** Used only to resolve a collectionId to a name for the "Shared" badge and
@@ -199,6 +220,11 @@ export function VaultScreen({
 }) {
   const state = useVaultState(store);
   const [editing, setEditing] = useState<ItemRecord | "new" | null>(null);
+  // Set instead of opening the editor when a clicked row's plaintext is
+  // null: this device could not decrypt it (an unreadable collection key,
+  // a corrupt blob), and ItemEditor must never open on nothing. Cleared
+  // whenever the vault list is shown again.
+  const [undecryptable, setUndecryptable] = useState<ItemRecord | null>(null);
   // The server's winning copy after a 409, decrypted for display. Cleared
   // whenever the editor is opened afresh, so a stale conflict from a
   // previous item can never bleed into the next one.
@@ -344,11 +370,29 @@ export function VaultScreen({
       )}
 
       {activeTab === "vault" &&
-        (editing === null ? (
+        (undecryptable !== null ? (
+          <div>
+            <p role="alert" style={{ color: "var(--danger)" }}>
+              This item is in a collection this device can&rsquo;t open. Ask a member of that
+              collection to grant you access again.
+            </p>
+            <Button type="button" variant="quiet" onClick={() => setUndecryptable(null)}>
+              Back
+            </Button>
+          </div>
+        ) : editing === null ? (
           <VaultList
             items={state.items}
             collections={state.collections}
             onSelect={(record) => {
+              // An undecryptable record must never reach ItemEditor -- see
+              // requirePlaintext's comment. This is the one place that
+              // invariant is enforced: every other read of `editing` in this
+              // component trusts it.
+              if (record.plaintext === null) {
+                setUndecryptable(record);
+                return;
+              }
               setEditing(record);
               setEditorCollectionId(record.collectionId);
               setConflict(null);
@@ -385,7 +429,7 @@ export function VaultScreen({
               </p>
             )}
             <ItemEditor
-              initial={editing === "new" ? BLANK_LOGIN : (editing.plaintext ?? BLANK_LOGIN)}
+              initial={editing === "new" ? BLANK_LOGIN : requirePlaintext(editing)}
               conflict={conflict}
               onSave={save}
               onCancel={() => {

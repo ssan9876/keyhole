@@ -408,3 +408,52 @@ describe("VaultScreen collections", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("VaultScreen undecryptable items", () => {
+  it("refuses to open an item this device cannot decrypt, and explains why instead", async () => {
+    // The finding this guards: Bee is a member of a collection whose sealed
+    // key her device cannot open (adoptCollections marks it unusable), so
+    // decryptRecords yields plaintext: null for every item in it. Before this
+    // guard, clicking the row opened ItemEditor on `?? BLANK_LOGIN` -- an
+    // empty form that, saved, silently overwrote the real ciphertext for
+    // every other member.
+    const session = openSession();
+    const store = fakeStore({
+      revision: 1,
+      items: [record({ id: "bad", collectionId: "c1", plaintext: null })],
+      collections: [{ id: "c1", name: "Household", role: "member", usable: false }],
+      status: "ready",
+      error: null,
+    });
+
+    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+
+    await userEvent.click(screen.getByText(/couldn.t decrypt/i));
+
+    expect(
+      screen.getByText(/ask a member of that collection to grant you access again/i),
+    ).toBeInTheDocument();
+    // The item form must not be here at all -- not blank, not present.
+    expect(screen.queryByLabelText(/^name/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^save$/i })).not.toBeInTheDocument();
+  });
+
+  it("still opens the editor for a decryptable row (control case)", async () => {
+    // Without this, a guard that blocked every row -- not just undecryptable
+    // ones -- would also pass the test above.
+    const session = openSession();
+    const store = fakeStore({
+      revision: 1,
+      items: [record()],
+      collections: [],
+      status: "ready",
+      error: null,
+    });
+
+    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+
+    await userEvent.click(screen.getByText("Example"));
+
+    expect(screen.getByLabelText(/^name/i)).toHaveValue("Example");
+  });
+});
