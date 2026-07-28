@@ -13,22 +13,12 @@ import {
   updateItem,
   type ItemRecord,
 } from "../../vault/items.js";
-import { loadAccount } from "../../vault/account.js";
-import {
-  addMember,
-  createCollection,
-  fulfilGrant,
-  listMembers,
-  loadPendingGrants,
-  removeMember,
-  type CollectionSummary,
-  type Member,
-  type PendingGrant,
-} from "../../vault/collections.js";
-import { loadDirectory, type DirectoryEntry } from "../../vault/directory.js";
+import type { CollectionSummary } from "../../vault/collections.js";
 import { Button } from "../components/Button.js";
 import { Field } from "../components/Field.js";
+import { TabNav } from "../components/TabNav.js";
 import { useVaultState } from "../useVault.js";
+import { useCollectionsPanel } from "../useCollectionsPanel.js";
 import { ItemEditor } from "./ItemEditor.js";
 import { CollectionsScreen } from "./CollectionsScreen.js";
 
@@ -183,6 +173,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: "vault", label: "Vault" },
   { id: "collections", label: "Collections" },
   { id: "settings", label: "Settings" },
+  { id: "admin", label: "Admin" },
 ];
 
 export function VaultScreen({
@@ -207,13 +198,16 @@ export function VaultScreen({
   const collectionSelectId = useId();
 
   const [activeTab, setActiveTab] = useState<Tab>("vault");
-  const [directory, setDirectory] = useState<DirectoryEntry[]>([]);
-  const [pendingGrants, setPendingGrants] = useState<PendingGrant[]>([]);
-  const [collectionsLoaded, setCollectionsLoaded] = useState(false);
-  const [selectedCollectionId, setSelectedCollectionId] = useState<string | null>(null);
-  const [members, setMembers] = useState<Member[]>([]);
 
   const isAdmin = session.user?.role === "admin";
+  const tabs = TABS.filter((tab) => tab.id !== "admin" || isAdmin);
+
+  const collectionsPanel = useCollectionsPanel({
+    api,
+    session,
+    store,
+    active: activeTab === "collections",
+  });
 
   // Re-sync on focus rather than a timer: it catches the realistic case — you
   // edited on your phone, you come back to this tab — with no polling, no
@@ -225,91 +219,6 @@ export function VaultScreen({
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [api, session, store]);
-
-  // Loaded lazily on first visit to the Collections tab rather than on every
-  // mount: a user who never opens it should not pay for a directory fetch
-  // and a pending-grants request they will never see.
-  useEffect(() => {
-    if (activeTab !== "collections" || collectionsLoaded) return;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const [dir, grants] = await Promise.all([
-          loadDirectory({ api }),
-          loadPendingGrants({ api, session }),
-        ]);
-        if (!cancelled) {
-          setDirectory(dir);
-          setPendingGrants(grants);
-          setCollectionsLoaded(true);
-        }
-      } catch {
-        // Best-effort: the collections list itself still comes from
-        // state.collections regardless, so the tab is not empty even if this
-        // secondary data fails to load.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeTab, collectionsLoaded, api, session]);
-
-  const handleSelectCollection = useCallback(
-    (collectionId: string | null) => {
-      setSelectedCollectionId(collectionId);
-      if (collectionId === null) {
-        setMembers([]);
-        return;
-      }
-      void listMembers({ api, session }, collectionId)
-        .then(setMembers)
-        .catch(() => setMembers([]));
-    },
-    [api, session],
-  );
-
-  const handleCreateCollection = useCallback(
-    async (name: string): Promise<void> => {
-      const profile = await loadAccount({ api, session });
-      await createCollection({ api, session }, { name, ownPublicKey: profile.publicKey });
-      await store.resync({ api, session });
-    },
-    [api, session, store],
-  );
-
-  const handleFulfil = useCallback(
-    async (grant: PendingGrant, recipient: DirectoryEntry): Promise<void> => {
-      await fulfilGrant({ api, session }, { grant, recipient });
-      setPendingGrants((prev) =>
-        prev.filter((g) => !(g.collectionId === grant.collectionId && g.userId === grant.userId)),
-      );
-      await store.resync({ api, session });
-    },
-    [api, session, store],
-  );
-
-  const handleAddMember = useCallback(
-    async (input: {
-      collectionId: string;
-      recipient: DirectoryEntry;
-      role: "manager" | "member";
-    }): Promise<"granted" | "pending"> => {
-      const outcome = await addMember({ api, session }, input);
-      if (outcome === "granted" && selectedCollectionId === input.collectionId) {
-        setMembers(await listMembers({ api, session }, input.collectionId));
-      }
-      return outcome;
-    },
-    [api, session, selectedCollectionId],
-  );
-
-  const handleRemoveMember = useCallback(
-    async (input: { collectionId: string; userId: string }): Promise<void> => {
-      await removeMember({ api, session }, input);
-      setMembers((prev) => prev.filter((m) => m.userId !== input.userId));
-    },
-    [api, session],
-  );
 
   const save = useCallback(
     async (next: ItemPlaintext): Promise<void> => {
@@ -389,49 +298,13 @@ export function VaultScreen({
         </Button>
       </header>
 
-      <nav aria-label="Sections" style={{ display: "flex", gap: "var(--space-2)", marginBottom: "var(--space-4)" }}>
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            aria-current={activeTab === tab.id ? "page" : undefined}
-            onClick={() => setActiveTab(tab.id)}
-            style={{
-              font: "inherit",
-              background: "transparent",
-              border: "none",
-              borderBottom: activeTab === tab.id ? "2px solid var(--ink)" : "2px solid transparent",
-              color: activeTab === tab.id ? "var(--ink)" : "var(--ink-muted)",
-              padding: "var(--space-1) 0",
-              cursor: "pointer",
-            }}
-          >
-            {tab.label}
-          </button>
-        ))}
-        {/* A UI courtesy, not the security boundary: requireAdmin on the
-            server is what actually protects admin-only endpoints. Hiding
-            this button only spares a non-admin the dead end of clicking into
-            a screen that would fail every request. */}
-        {isAdmin && (
-          <button
-            type="button"
-            aria-current={activeTab === "admin" ? "page" : undefined}
-            onClick={() => setActiveTab("admin")}
-            style={{
-              font: "inherit",
-              background: "transparent",
-              border: "none",
-              borderBottom: activeTab === "admin" ? "2px solid var(--ink)" : "2px solid transparent",
-              color: activeTab === "admin" ? "var(--ink)" : "var(--ink-muted)",
-              padding: "var(--space-1) 0",
-              cursor: "pointer",
-            }}
-          >
-            Admin
-          </button>
-        )}
-      </nav>
+      {/* Admin is folded into `tabs` via the .filter() above rather than
+          special-cased here, so there is exactly one place a tab button is
+          rendered. It is still a UI courtesy, not the security boundary:
+          requireAdmin on the server is what actually protects admin-only
+          endpoints. Hiding this button only spares a non-admin the dead end
+          of clicking into a screen that would fail every request. */}
+      <TabNav tabs={tabs} active={activeTab} onSelect={(id) => setActiveTab(id)} />
 
       {state.status === "error" && (
         <p role="alert" style={{ color: "var(--danger)" }}>
@@ -497,21 +370,7 @@ export function VaultScreen({
           </>
         ))}
 
-      {activeTab === "collections" && (
-        <CollectionsScreen
-          role={session.user?.role ?? "user"}
-          collections={state.collections}
-          pendingGrants={pendingGrants}
-          directory={directory}
-          members={members}
-          selectedCollectionId={selectedCollectionId}
-          onSelectCollection={handleSelectCollection}
-          onCreateCollection={handleCreateCollection}
-          onFulfil={handleFulfil}
-          onAddMember={handleAddMember}
-          onRemoveMember={handleRemoveMember}
-        />
-      )}
+      {activeTab === "collections" && <CollectionsScreen {...collectionsPanel} />}
 
       {activeTab === "settings" && (
         <p style={{ color: "var(--ink-muted)" }}>Settings are not built yet.</p>
