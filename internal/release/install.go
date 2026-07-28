@@ -214,7 +214,7 @@ func Update(ctx context.Context, deps Deps, opts Options) (Outcome, error) {
 		return outcome, fmt.Errorf("stop service failed and the service may be down (%w); %s", err, restart)
 	}
 
-	parked, installErr := installAndStart(ctx, deps, binary)
+	state, installErr := installAndStart(ctx, deps, binary)
 	if installErr == nil {
 		if healthErr := deps.Health.Wait(ctx, opts.healthTimeout()); healthErr != nil {
 			installErr = fmt.Errorf("service did not become healthy within %s: %w", opts.healthTimeout(), healthErr)
@@ -227,7 +227,7 @@ func Update(ctx context.Context, deps Deps, opts Options) (Outcome, error) {
 	}
 
 	deps.logf("update to %s failed (%v); rolling back to %s", release.Version, installErr, opts.CurrentVersion)
-	if rb := rollback(ctx, deps, snapshotPath, parked, opts.healthTimeout()); rb.err != nil {
+	if rb := rollback(ctx, deps, snapshotPath, state, opts.healthTimeout()); rb.err != nil {
 		// The worst case: the new binary is bad AND the rollback itself
 		// could not complete. An operator in that state needs to know to
 		// restore by hand rather than be told "it failed" with no further
@@ -244,32 +244,51 @@ func Update(ctx context.Context, deps Deps, opts Options) (Outcome, error) {
 	return outcome, nil
 }
 
+// installState is what the filesystem cannot tell a rollback afterwards.
+// Both fields exist because the "we did this" and "we never got that far"
+// states are indistinguishable from disk, and only one of each pair is
+// worth undoing.
+type installState struct {
+	// parked reports whether the park rename actually happened: "we moved
+	// the old binary and it is now gone" and "we never moved it" both look
+	// like an absent PreviousPath.
+	parked bool
+	// migrated reports whether the database may have been written to since
+	// the pre-update snapshot -- which is the only reason to restore it.
+	// "The database is unchanged" and "the database was migrated and looks
+	// plausible" are equally silent on disk.
+	migrated bool
+}
+
 // installAndStart performs step 5's binary swap and step 6's migrate-then-
 // start, in the order the design spec lays out: the currently running
 // binary is parked at PreviousPath before the new one is written, so a
 // failure at any point after this still has an original to roll back to.
-//
-// parked reports whether that park rename actually happened. It is the one
-// thing the filesystem cannot tell a rollback afterwards -- "we moved the
-// old binary and it is now gone" and "we never moved it" both look like an
-// absent PreviousPath -- and only the first is a state worth trying to undo
-// or worth telling an operator about.
-func installAndStart(ctx context.Context, deps Deps, binary []byte) (parked bool, err error) {
+func installAndStart(ctx context.Context, deps Deps, binary []byte) (state installState, err error) {
 	if err := os.Rename(deps.BinaryPath, deps.PreviousPath); err != nil {
-		return false, fmt.Errorf("move running binary to %s: %w", deps.PreviousPath, err)
+		return state, fmt.Errorf("move running binary to %s: %w", deps.PreviousPath, err)
 	}
+	state.parked = true
 	if err := writeBinaryAtomically(deps.BinaryPath, binary); err != nil {
-		return true, fmt.Errorf("write new binary: %w", err)
+		return state, fmt.Errorf("write new binary: %w", err)
 	}
+
+	// Set before either of the two things that write, not after them.
+	// Migrate runs under the new binary and a migration that failed partway
+	// has still written; serve() migrates on start as well, so an attempted
+	// Start counts even when Migrate is nil. "We do not know" has to mean
+	// "restore" -- the snapshot is the only way back from a migration.
+	state.migrated = true
+
 	if deps.Migrate != nil {
 		if err := deps.Migrate(ctx); err != nil {
-			return true, fmt.Errorf("run migrations: %w", err)
+			return state, fmt.Errorf("run migrations: %w", err)
 		}
 	}
 	if err := deps.Service.Start(ctx); err != nil {
-		return true, fmt.Errorf("start service: %w", err)
+		return state, fmt.Errorf("start service: %w", err)
 	}
-	return true, nil
+	return state, nil
 }
 
 // writeBinaryAtomically writes data to a temp file in the same directory as
@@ -360,9 +379,10 @@ type rollbackResult struct {
 // here is an operator who needs to know exactly what still needs fixing by
 // hand.
 //
-// parked comes from installAndStart and says whether there is a parked
-// binary to move back at all.
-func rollback(ctx context.Context, deps Deps, snapshotPath string, parked bool, healthTimeout time.Duration) rollbackResult {
+// state comes from installAndStart and says how far it got: whether there
+// is a parked binary to move back at all, and whether anything can have
+// written to the database since the snapshot.
+func rollback(ctx context.Context, deps Deps, snapshotPath string, state installState, healthTimeout time.Duration) rollbackResult {
 	var res rollbackResult
 	var errs []error
 
@@ -378,7 +398,7 @@ func rollback(ctx context.Context, deps Deps, snapshotPath string, parked bool, 
 	// so they are told to hand-restore a binary and a database that were
 	// never touched, while Start below has already brought the untouched
 	// service back up.
-	if parked {
+	if state.parked {
 		if err := restoreBinary(deps); err != nil {
 			errs = append(errs, fmt.Errorf("restore previous binary: %w", err))
 			res.binaryNotRestored = true
@@ -389,9 +409,19 @@ func rollback(ctx context.Context, deps Deps, snapshotPath string, parked bool, 
 	// code's migrations already rewrote. Migrations are not reversible, so
 	// the snapshot taken in step 4 is the only way back to a database the
 	// restored binary can read.
-	if err := backup.Restore(snapshotPath, deps.DBPath); err != nil {
-		errs = append(errs, fmt.Errorf("restore database snapshot %s onto %s: %w", snapshotPath, deps.DBPath, err))
-		res.dbNotRestored = true
+	//
+	// Guarded for the same reason restoreBinary is. A restore that runs
+	// when nothing ever wrote to the database is not a no-op: Restore
+	// renames the live file aside to keyhole.db.replaced-<stamp>, and
+	// nothing ever prunes those. A failed update that never got past the
+	// park rename would leave one behind every time it was retried, each a
+	// full-size copy of the database in the same directory, for a rollback
+	// that had nothing to undo.
+	if state.migrated {
+		if err := backup.Restore(snapshotPath, deps.DBPath); err != nil {
+			errs = append(errs, fmt.Errorf("restore database snapshot %s onto %s: %w", snapshotPath, deps.DBPath, err))
+			res.dbNotRestored = true
+		}
 	}
 	if err := deps.Service.Start(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("start service after rollback: %w", err))

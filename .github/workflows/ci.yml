@@ -69,6 +69,18 @@ jobs:
       - run: pnpm --filter @keyhole/web lint
       - run: pnpm -r test
 
+      # Typecheck and lint are not a build. A Vite failure — a bad import in
+      # index.html, a plugin that cannot resolve, an asset that is not there —
+      # passes both and then breaks the release job, which is the first place
+      # this ever ran. Last in this job because it is the slowest step and the
+      # one least likely to fail; the fast signals should not queue behind it.
+      #
+      # It writes into internal/webui/dist with emptyOutDir, deleting the
+      # committed placeholder.html. That matters on a developer's machine and
+      # not at all on a throwaway checkout, and no later step in this job reads
+      # the directory.
+      - run: pnpm --filter @keyhole/web build
+
   shell:
     runs-on: ubuntu-latest
     steps:

@@ -106,11 +106,33 @@ the halves in four places:
 | secret key (contents of `minisign.key`) | GitHub repository secret `MINISIGN_SECRET_KEY` |
 | its passphrase | GitHub repository secret `MINISIGN_PASSWORD` |
 | public key (the single base64 line, beginning `RW`) | `MINISIGN_PUBKEY` in `scripts/install.sh` |
-| the same public key | the two `minisign -Vm` lines above |
+| the same public key | the `minisign -Vm` line above |
+
+Those four are not the whole job. Two more things in the repository know about
+the placeholder, and both go red on the commit that replaces it — so skipping
+either turns CI red on the release commit itself:
+
+1. **Re-record both goldens.** `scripts/testdata/dry-run-tunnel.golden` and
+   `dry-run-lan.golden` contain the key — it appears in the plan's
+   `minisign -Vm ... -P '<key>'` line — and the warning block `print_plan`
+   emits while it is a placeholder. Regenerate them by rerunning the two
+   commands at the top of `scripts/install_test.sh` with their output
+   redirected over the `.golden` files, and read the diff before committing:
+   the only changes should be the key and the disappearance of that warning.
+2. **Drop the placeholder-refusal assertion.** `scripts/install_test.sh`
+   asserts that a run without `--dry-run` refuses to start on a placeholder
+   key. It is the one assertion there that runs the installer for real, and a
+   real key makes it untestable — there is no longer a refusal to reach. It
+   goes away with the placeholder.
 
 Both repository secrets must exist before the first `v*` tag is pushed:
-`.github/workflows/release.yml` checks for them in its first step and fails the
-run immediately if either is missing, rather than after building everything.
+`.github/workflows/release.yml` checks for them before it builds anything and
+fails the run immediately if either is missing.
+
+The same workflow refuses to publish while `scripts/install.sh` pins a version
+other than the tag being released, so pushing `v1.1.0` also means updating
+`VERSION` in that script, the `curl` URLs in its header comment, and the two
+install commands at the top of this file.
 
 The release workflow derives the public key from the secret key with
 `minisign -R` and prints it to the job summary, so after the first release you

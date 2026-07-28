@@ -513,6 +513,18 @@ func TestUpdateDoesNotClaimAHandRecoveryIsNeededWhenNothingWasMoved(t *testing.T
 	if status := userStatus(t, h.dbPath, h.userEmail); status != "pending" {
 		t.Errorf("user status = %q, want pending: the migration never ran, so the database was never changed", status)
 	}
+	// ...and the rollback must not have restored the snapshot over it
+	// either. backup.Restore renames the live database aside to
+	// keyhole.db.replaced-<stamp> and nothing ever prunes those, so an
+	// unconditional restore leaves a full-size copy of the database behind
+	// on every retry of an update that never wrote anything.
+	replaced, err := filepath.Glob(h.dbPath + ".replaced-*")
+	if err != nil {
+		t.Fatalf("Glob: %v", err)
+	}
+	if len(replaced) != 0 {
+		t.Errorf("rollback left %v beside the database: it restored a snapshot over a database no migration ever touched", replaced)
+	}
 }
 
 func TestUpdateDoesNotStopTheServiceWhenVerificationFails(t *testing.T) {
