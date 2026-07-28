@@ -160,8 +160,9 @@ https://<your host>/enroll/<token>
    container — can recover it for you.
 3. **Save the recovery code.** It is 25 characters in Crockford Base32 (the
    alphabet omits I, L, O, and U so nothing can be misread), shown in five
-   groups of five, and shown exactly once. Read the section below before you
-   decide how much weight to put on it.
+   groups of five, and shown exactly once. It is the only way back in if you
+   forget your master password — the section below is exactly what redeeming
+   it does.
 
 The vault locks itself after **15 minutes** idle by default. That is a setting
 in the app: 1, 5, 15, 30 or 60 minutes, when the tab closes, or never.
@@ -189,27 +190,58 @@ spec, §3.9:
 
 ---
 
-## What the recovery code does, and does not do today
+## What the recovery code does
 
 The recovery code protects a second copy of your user key: at enrolment the key
 is wrapped a second time under a key derived from the code, and that blob is
 stored on the server.
 
-**Redeeming it is not implemented.** There is no endpoint that will hand the
-recovery blob to someone who cannot already log in. The only recovery-related
-endpoint is `POST /api/account/recovery`, which requires a valid session and a
-correct master password, and it *rotates* the code rather than redeeming it. So
-today the code is a copy of your key waiting for a future release, not a way
-back in.
+**Redeeming it works.** On the unlock screen, *Forgot your master password?*
+asks for your email address and the code, and then for a new master password.
+Everything is derived in your browser. The code itself never leaves it: the
+server is sent only the authentication half of the key derived from it — which
+cannot open the recovery blob — and stores only a hash of that.
 
-What that means concretely: **if you forget your master password, an
-administrator must reset your account.** That reset deletes every personal item
-you own and every folder, revokes all your collection memberships, destroys all
-your key material, and returns you to a fresh setup link. Items inside shared
+Redeeming it:
+
+- **replaces your master password** with the new one you type;
+- **issues a new recovery code**, shown once — the old one stops working, so a
+  code you suspect someone else has read is worth redeeming for that reason
+  alone;
+- **signs out every device**, everywhere, including any session the person who
+  may have read the old code was holding;
+- **leaves your vault exactly as it was.** The same user key is re-wrapped
+  under the new password, so no item, folder, or collection membership is
+  touched, and nothing has to be re-encrypted.
+
+You have ten minutes between the code being accepted and the new password being
+set, and the token that spans that gap can be spent only once.
+
+A refusal is deliberately uninformative. An unknown address, a wrong code, a
+disabled account, and an account whose code cannot be redeemed all produce the
+same answer, so that this page cannot be used to find out who has an account on
+your server. Attempts are rate-limited on the same budget as failed logins,
+deliberately — a code and a password are two guesses at one account: the fifth
+failure for an address, or from a source address, starts a two-second delay
+that doubles with every failure after it, up to five minutes.
+
+**Codes issued by an older Keyhole cannot be redeemed.** Redemption needs a
+hash the server did not store before this release (migration `0004`, which
+leaves `recovery_auth_hash` NULL for accounts enrolled earlier), and the
+endpoints treat a NULL there exactly like an unknown address — so an old code
+fails with the same message a wrong one gets. If your account predates this
+release, open **Settings → Recovery code → New recovery code**, which asks for
+your master password and issues one that can be redeemed. Do it before you need
+it.
+
+**If you lose the code as well as the password, an administrator must reset
+your account.** That reset deletes every personal item you own and every
+folder, revokes all your collection memberships, destroys all your key
+material, and returns you to a fresh setup link. Items inside shared
 collections survive, because other members still hold the collection key —
 nothing else does.
 
-This is also stated on the screen that shows you the code. It is here as well
+The screen that shows you the code says most of this too. It is here as well
 because someone deciding whether to trust this with their passwords should read
 it before installing, not after.
 
