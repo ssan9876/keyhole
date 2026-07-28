@@ -1,0 +1,30 @@
+{
+  "AUTHENTIFIANT": [
+    {
+      "title": "Example Mail",
+      "domain": "mail.example.com",
+      "email": "ada@example.com",
+      "login": "",
+      "password": "fixture-pw-8Hq2vN",
+      "note": "GENERATED FIXTURE - no real credential appears in this file",
+      "category": "Personal",
+      "otpSecret": ""
+    },
+    {
+      "title": "Example Forum",
+      "domain": "forum.example.org",
+      "email": "",
+      "login": "ada",
+      "password": "fixture,pw,with,commas",
+      "note": "",
+      "category": "Personal",
+      "otpSecret": ""
+    }
+  ],
+  "SECURENOTE": [
+    {
+      "title": "Router notes",
+      "content": "first line\nsecond line"
+    }
+  ]
+}

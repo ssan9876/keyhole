@@ -5,3 +5,7 @@
 *.png binary
 *.jpg binary
 *.ico binary
+# A .1pux is a ZIP archive, and the import fixture is a real one. Without this,
+# `text=auto` has to guess, and a guess of "text" would rewrite bytes inside the
+# archive and break both its CRCs and the ZIP magic detection keys on.
+*.1pux binary

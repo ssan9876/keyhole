@@ -1,0 +1,5 @@
+url,username,password,totp,extra,name,grouping,fav
+https://mail.example.com,ada@example.com,fixture-pw-8Hq2vN,,GENERATED FIXTURE - no real credential appears in this file,Example Mail,Personal,1
+https://forum.example.org,ada,"fixture,pw,with,commas",,,Example Forum,Personal\Forums,0
+http://sn,,,,"first line
+second line",Router notes,Work,0

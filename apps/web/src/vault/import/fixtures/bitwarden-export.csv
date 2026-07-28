@@ -1,0 +1,5 @@
+folder,favorite,type,name,notes,fields,reprompt,login_uri,login_username,login_password,login_totp
+Personal,1,login,Example Mail,GENERATED FIXTURE - no real credential appears in this file,,0,https://mail.example.com,ada@example.com,fixture-pw-8Hq2vN,
+,0,login,Example Forum,,,0,https://forum.example.org,ada,"fixture,pw,with,commas",
+Work,0,note,Router notes,"first line
+second line",,0,,,,

@@ -1,0 +1,32 @@
+{
+  "shared_folders": [
+    {
+      "path": "Personal",
+      "manage_users": false,
+      "manage_records": false,
+      "can_edit": false,
+      "can_share": false,
+      "permissions": []
+    }
+  ],
+  "records": [
+    {
+      "title": "Example Mail",
+      "login": "ada@example.com",
+      "password": "fixture-pw-8Hq2vN",
+      "login_url": "https://mail.example.com",
+      "notes": "GENERATED FIXTURE - no real credential appears in this file",
+      "custom_fields": {},
+      "folders": [{ "folder": "Personal" }]
+    },
+    {
+      "title": "Example Forum",
+      "login": "ada",
+      "password": "fixture,pw,with,commas",
+      "login_url": "https://forum.example.org",
+      "notes": "",
+      "custom_fields": {},
+      "folders": [{ "folder": "Personal" }]
+    }
+  ]
+}

@@ -1,0 +1,3 @@
+name,url,additional_urls,username,password,note,cardholdername,cardnumber,cvc,expirydate,zipcode,folder,full_name,phone_number,email,address1,address2,city,country,state,type,custom_fields
+Example Mail,https://mail.example.com,,ada@example.com,fixture-pw-8Hq2vN,GENERATED FIXTURE - no real credential appears in this file,,,,,,Personal,,,,,,,,,password,
+Example Forum,https://forum.example.org,,ada,"fixture,pw,with,commas",,,,,,,Personal,,,,,,,,,password,
