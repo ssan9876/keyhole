@@ -1,10 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-  DEFAULT_KDF_PARAMS_JSON,
-  enrollUser,
-  toBase64,
-  type KdfParams,
-} from "@keyhole/crypto";
+import { DEFAULT_KDF_PARAMS_JSON, enrollUser, toBase64 } from "@keyhole/crypto";
 import { ApiError, type ApiClient } from "./api.js";
 import { createSession, rememberedEmail } from "./session.js";
 import { WrongMasterPasswordError, unlock } from "./unlock.js";
