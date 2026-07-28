@@ -56,6 +56,7 @@ Every prompt has a flag, so the script is usable non-interactively.
 | `--tunnel-token-file PATH` | prompted for in tunnel mode, never echoed |
 | `--hostname-external NAME` | required by tunnel and proxy modes |
 | `--admin-email ADDR` | prompt |
+| `--backup-keep N` | `14` snapshots kept by the nightly backup timer |
 | `--dry-run` | print the plan, change nothing |
 | `--yes` | skip the confirmation |
 
@@ -206,8 +207,29 @@ keyhole update --check                  # report what is available, install noth
 **`keyhole backup`** writes `keyhole-<UTC timestamp>.db` into
 `<data_dir>/backups` (override with `--out`) using SQLite's `VACUUM INTO`, so it
 does not need the server stopped. It then prunes to the 14 most recent snapshots
-(`--keep N`; `--keep 0` keeps them all). Nothing schedules this — run it from
-cron or a systemd timer if you want it regularly.
+(`--keep N`; `--keep 0` keeps them all).
+
+**The installer schedules it.** `scripts/install.sh` writes
+`keyhole-backup.service` — a `oneshot` running `keyhole backup` as the `keyhole`
+service user, under the same systemd hardening as the server itself — and
+`keyhole-backup.timer`, which it enables. The timer is `OnCalendar=daily`, so it
+fires at 00:00 in the container's timezone, plus a `RandomizedDelaySec` of up to
+30 minutes so that several containers on one host do not all snapshot at once.
+It is `Persistent=true`: a container that was powered off overnight takes its
+missed backup on the next boot rather than skipping a day silently.
+
+Retention is the installer's `--backup-keep N`, default 14, written into the
+unit's `ExecStart` as `--keep N`. To change it afterwards, edit that line in
+`/etc/systemd/system/keyhole-backup.service` and run `systemctl daemon-reload`.
+To see when it last ran and when it runs next:
+
+```bash
+systemctl list-timers keyhole-backup.timer
+journalctl -u keyhole-backup
+```
+
+An install done by hand rather than by `scripts/install.sh` has no timer; the
+two unit files in that script are the whole of the schedule.
 
 **A snapshot is entirely ciphertext.** Item bodies, names, and URLs are
 encrypted under keys the server has never held, so replicating a snapshot
@@ -243,6 +265,8 @@ The installer also writes `/usr/local/bin/update` as a shim for
 | `/var/lib/keyhole/server.secret` | server secret, written `0600` on first run |
 | `/var/lib/keyhole/backups/` | snapshots |
 | `/etc/keyhole/tls.crt`, `tls.key` | TLS material, in `tls` mode only |
+| `/etc/systemd/system/keyhole.service` | the server unit |
+| `/etc/systemd/system/keyhole-backup.{service,timer}` | the nightly backup |
 
 ### Configuration
 

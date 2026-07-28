@@ -10,6 +10,8 @@ Keyhole v1.0.0 will be installed as follows.
   Data         /var/lib/keyhole (SQLite; entirely ciphertext)
   Config       /etc/keyhole/config.yml
   Service      systemd unit "keyhole", running as keyhole
+  Backups      nightly, by systemd timer "keyhole-backup", keeping the
+               14 most recent snapshots in /var/lib/keyhole/backups
   Admin        me@example.com
 
 Nothing has been changed yet.
@@ -124,11 +126,69 @@ KEYHOLE_EOF
 chown 'root:root' '/etc/systemd/system/keyhole.service'
 chmod '0644' '/etc/systemd/system/keyhole.service'
 RUN: pct exec 200 -- systemctl daemon-reload
+RUN: pct exec 200 -- sh -c set -eu
+umask 077
+cat > '/etc/systemd/system/keyhole-backup.service' <<'KEYHOLE_EOF'
+[Unit]
+Description=Keyhole nightly backup
+After=keyhole.service
+
+[Service]
+Type=oneshot
+User=keyhole
+Group=keyhole
+ExecStart=/usr/local/bin/keyhole backup --config /etc/keyhole/config.yml --keep 14
+
+# The same hardening as keyhole.service. It is the same binary reading the same
+# database and writing into the same one directory, so there is no reason for
+# the backup job to run with more of the container available to it than the
+# server does — and the job that reads every row is a poor place to relax it.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/keyhole
+KEYHOLE_EOF
+chown 'root:root' '/etc/systemd/system/keyhole-backup.service'
+chmod '0644' '/etc/systemd/system/keyhole-backup.service'
+RUN: pct exec 200 -- sh -c set -eu
+umask 077
+cat > '/etc/systemd/system/keyhole-backup.timer' <<'KEYHOLE_EOF'
+[Unit]
+Description=Nightly Keyhole backup
+
+[Timer]
+OnCalendar=daily
+# A container that was powered off overnight has missed its run. Without this
+# the next backup is simply tomorrow's, and the gap is invisible until someone
+# needs a snapshot from a day that has none.
+Persistent=true
+# Several containers on one host would otherwise all VACUUM INTO at exactly
+# 00:00 and contend for the same disk.
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target
+KEYHOLE_EOF
+chown 'root:root' '/etc/systemd/system/keyhole-backup.timer'
+chmod '0644' '/etc/systemd/system/keyhole-backup.timer'
+RUN: pct exec 200 -- systemctl daemon-reload
 RUN: pct exec 200 -- keyhole migrate --config /etc/keyhole/config.yml
 RUN: pct exec 200 -- chown -R keyhole:keyhole /var/lib/keyhole
 RUN: pct exec 200 -- systemctl enable --now keyhole
 RUN: sh -c i=0; while [ $i -lt 30 ]; do pct exec 200 -- curl -fsSk -o /dev/null 'https://127.0.0.1:8477/healthz' >/dev/null 2>&1 && exit 0; i=$((i+1)); sleep 1; done; exit 1
 RUN: pct exec 200 -- runuser -u keyhole -- keyhole admin create --email me@example.com --config /etc/keyhole/config.yml
+RUN: pct exec 200 -- systemctl enable --now keyhole-backup.timer
 
 That is the entire plan for Keyhole v1.0.0 in container 200. Nothing was changed.
 The setup link is printed by "keyhole admin create" at the end of a real run.
@@ -142,7 +202,11 @@ Worth knowing:
 
   Data          /var/lib/keyhole inside container 200 — item bodies, names and
                 URLs are ciphertext the server has never held a key for
-  Back up       pct exec 200 -- keyhole backup
+  Back up       nightly, shortly after 00:00 in the container's timezone, into
+                /var/lib/keyhole/backups; the 14 most recent snapshots
+                are kept and older ones pruned
+                pct exec 200 -- systemctl list-timers keyhole-backup.timer
+                pct exec 200 -- keyhole backup   (one now, off schedule)
                 (a snapshot is entirely ciphertext, so copying it somewhere
                 less trusted than this host is a reasonable thing to do)
   Update        pct exec 200 -- update

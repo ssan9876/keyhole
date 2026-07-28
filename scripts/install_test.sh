@@ -217,6 +217,73 @@ else
   echo "FAIL: abort_stopped no longer runs pct stop (its body has no 'run pct stop \"\$CTID\"')"; fail=1
 fi
 
+# The nightly backup: §8.3 asks for a timer with configurable retention, and
+# `keyhole backup` alone is only half of it. Both goldens cover the default, so
+# what is asserted here is the part they cannot see — that --backup-keep is
+# threaded through to the unit rather than a constant printed next to a flag
+# that goes nowhere.
+#
+# 5 rather than 14 for exactly that reason: a hard-coded ExecStart still matches
+# a plan generated with the default, and this suite would say so.
+backup_plan=""
+if ! backup_plan="$(bash scripts/install.sh --dry-run --yes --ctid 200 --network tls \
+                      --admin-email me@example.com --backup-keep 5 2>&1)"; then
+  echo "FAIL: the --backup-keep dry run did not exit 0"; fail=1
+fi
+
+# Matched with `case` rather than `grep -q` for the reason spelled out above the
+# token-leak check: under `set -o pipefail` a pipeline into `grep -q` reports the
+# producer's EPIPE, so the assertion inverts.
+case "$backup_plan" in
+  *"cat > '/etc/systemd/system/keyhole-backup.service'"*)
+    echo "ok: the plan writes keyhole-backup.service" ;;
+  *)
+    echo "FAIL: the plan never writes /etc/systemd/system/keyhole-backup.service"; fail=1 ;;
+esac
+case "$backup_plan" in
+  *"cat > '/etc/systemd/system/keyhole-backup.timer'"*)
+    echo "ok: the plan writes keyhole-backup.timer" ;;
+  *)
+    echo "FAIL: the plan never writes /etc/systemd/system/keyhole-backup.timer"; fail=1 ;;
+esac
+
+# The timer is what has to be enabled, not the oneshot it triggers. Enabling
+# keyhole-backup.service instead schedules nothing: it runs once at boot and
+# never again, and every other assertion here still passes.
+case "$backup_plan" in
+  *"RUN: pct exec 200 -- systemctl enable --now keyhole-backup.timer"*)
+    echo "ok: the plan enables the timer" ;;
+  *)
+    echo "FAIL: the plan does not enable keyhole-backup.timer"; fail=1 ;;
+esac
+
+case "$backup_plan" in
+  *"ExecStart=/usr/local/bin/keyhole backup --config /etc/keyhole/config.yml --keep 5"*)
+    echo "ok: --backup-keep reaches the unit's ExecStart" ;;
+  *)
+    echo "FAIL: --backup-keep 5 did not reach keyhole-backup.service's ExecStart"; fail=1 ;;
+esac
+# ...and the default it was given instead of must be gone, or "threaded through"
+# means an ExecStart with two --keep flags on it.
+case "$backup_plan" in
+  *"--keep 14"*)
+    echo "FAIL: the unit still carries the default --keep 14 after --backup-keep 5"; fail=1 ;;
+  *)
+    echo "ok: --backup-keep replaces the default rather than adding to it" ;;
+esac
+
+# A non-numeric retention would be interpolated straight into ExecStart, where
+# systemd loads the unit happily and the job fails every night in the journal.
+backup_keep_output="$(bash scripts/install.sh --dry-run --yes --ctid 200 --network tls \
+  --admin-email me@example.com --backup-keep nightly 2>&1)" && backup_keep_rc=0 || backup_keep_rc=$?
+if [ "$backup_keep_rc" -eq 0 ]; then
+  echo "FAIL: a non-numeric --backup-keep was accepted"; fail=1
+elif ! printf '%s\n' "$backup_keep_output" | grep -q -- '--backup-keep'; then
+  echo "FAIL: it stopped, but not because of --backup-keep (no mention of it in the message)"; fail=1
+else
+  echo "ok: a non-numeric --backup-keep is rejected"
+fi
+
 # The pinned version and key must be real values, not placeholders.
 grep -q 'OWNER="ssan9876"' scripts/install.sh || { echo "FAIL: OWNER"; fail=1; }
 grep -qE '^VERSION="v[0-9]+\.[0-9]+\.[0-9]+"' scripts/install.sh || { echo "FAIL: VERSION not a pinned tag"; fail=1; }

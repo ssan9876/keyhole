@@ -60,6 +60,9 @@ readonly WORK_DIR="/tmp/keyhole-install"
 CTID=""; HOSTNAME_CT="keyhole"; CORES="2"; RAM="1024"; DISK="8"
 STORAGE="local-lvm"; BRIDGE="vmbr0"; NETWORK=""; TUNNEL_TOKEN_FILE=""
 HOSTNAME_EXTERNAL=""; ADMIN_EMAIL=""; DRY_RUN="no"; ASSUME_YES="no"
+# Snapshots the nightly timer keeps. Matches defaultBackupKeep in
+# cmd/keyhole/backup.go; 0 means keep every snapshot forever.
+BACKUP_KEEP="14"
 
 # Derived from the above once the flags and prompts have settled.
 TUNNEL_TOKEN=""; ADDR=""; BASE_URL=""; BASE_URL_HUMAN=""; HEALTH_URL=""
@@ -159,6 +162,8 @@ Usage: bash install.sh [options]
   --hostname-external NAME  the public hostname, for base_url
                             (required by tunnel and proxy modes)
   --admin-email ADDR        the first administrator          (default: prompt)
+  --backup-keep N           snapshots the nightly backup timer
+                            keeps; 0 keeps every one          (default: 14)
   --dry-run                 print every command that would run, change nothing
   --yes                     skip the confirmation
   -h, --help                this text
@@ -193,6 +198,7 @@ parse_args() {
       --tunnel-token-file) [ $# -ge 2 ] || die "--tunnel-token-file needs a value"; TUNNEL_TOKEN_FILE="$2"; shift 2 ;;
       --hostname-external) [ $# -ge 2 ] || die "--hostname-external needs a value"; HOSTNAME_EXTERNAL="$2"; shift 2 ;;
       --admin-email) [ $# -ge 2 ] || die "--admin-email needs a value"; ADMIN_EMAIL="$2"; shift 2 ;;
+      --backup-keep) [ $# -ge 2 ] || die "--backup-keep needs a value"; BACKUP_KEEP="$2"; shift 2 ;;
       --dry-run) DRY_RUN="yes"; shift ;;
       --yes) ASSUME_YES="yes"; shift ;;
       -h|--help) usage; exit 0 ;;
@@ -225,6 +231,10 @@ validate_args() {
   [[ "$CORES" =~ ^[0-9]+$ ]] || die "--cores must be a number (got: ${CORES})"
   [[ "$RAM" =~ ^[0-9]+$ ]] || die "--ram must be a number of MB (got: ${RAM})"
   [[ "$DISK" =~ ^[0-9]+$ ]] || die "--disk must be a number of GB (got: ${DISK})"
+  # Interpolated into keyhole-backup.service's ExecStart. A non-number there is
+  # a unit systemd loads and a backup that fails every night in the journal.
+  [[ "$BACKUP_KEEP" =~ ^[0-9]+$ ]] \
+    || die "--backup-keep must be a number of snapshots (got: ${BACKUP_KEEP})"
   [[ "$STORAGE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
     || die "--storage is not a Proxmox storage name (got: ${STORAGE})"
   [[ "$BRIDGE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
@@ -388,6 +398,8 @@ Keyhole ${VERSION} will be installed as follows.
   Data         ${DATA_DIR} (SQLite; entirely ciphertext)
   Config       ${CONFIG_DIR}/config.yml
   Service      systemd unit "keyhole", running as ${SERVICE_USER}
+  Backups      nightly, by systemd timer "keyhole-backup", keeping the
+               ${BACKUP_KEEP} most recent snapshots in ${DATA_DIR}/backups
   Admin        ${ADMIN_EMAIL}
 
 Nothing has been changed yet.
@@ -676,6 +688,75 @@ WantedBy=multi-user.target"
   in_ct systemctl daemon-reload
 }
 
+# §8.3 of the design asks for a nightly snapshot with configurable retention, and
+# `keyhole backup` on its own is only half of that — nothing runs it.
+#
+# The snapshot is taken with VACUUM INTO, so the server does not need stopping
+# and this can be an ordinary oneshot beside the running service.
+#
+# It reloads systemd itself rather than leaning on write_unit's reload: the two
+# steps are independent in main(), and a unit file systemd has not been told
+# about is one `systemctl enable` away from an error nobody expects.
+write_backup_units() {
+  # No [Install] section, deliberately. This unit is pulled in by the timer
+  # below, and leaving it un-enablable means `systemctl enable
+  # keyhole-backup.service` — enabling the job instead of the schedule, so it
+  # runs once at boot and never again — fails loudly rather than looking right.
+  ct_write /etc/systemd/system/keyhole-backup.service 0644 root:root "[Unit]
+Description=Keyhole nightly backup
+After=keyhole.service
+
+[Service]
+Type=oneshot
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
+ExecStart=/usr/local/bin/keyhole backup --config ${CONFIG_DIR}/config.yml --keep ${BACKUP_KEEP}
+
+# The same hardening as keyhole.service. It is the same binary reading the same
+# database and writing into the same one directory, so there is no reason for
+# the backup job to run with more of the container available to it than the
+# server does — and the job that reads every row is a poor place to relax it.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+ReadWritePaths=${DATA_DIR}"
+
+  ct_write /etc/systemd/system/keyhole-backup.timer 0644 root:root "[Unit]
+Description=Nightly Keyhole backup
+
+[Timer]
+OnCalendar=daily
+# A container that was powered off overnight has missed its run. Without this
+# the next backup is simply tomorrow's, and the gap is invisible until someone
+# needs a snapshot from a day that has none.
+Persistent=true
+# Several containers on one host would otherwise all VACUUM INTO at exactly
+# 00:00 and contend for the same disk.
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target"
+  in_ct systemctl daemon-reload
+}
+
+# Enabled after bootstrap_admin, not with the units: arming the schedule before
+# `keyhole migrate` has created the database would leave a window — small, but
+# real on a slow first boot — in which the timer can fire on nothing.
+enable_backup_timer() {
+  in_ct systemctl enable --now keyhole-backup.timer
+}
+
 bootstrap_admin() {
   # Migrate as root before the service ever runs, so the first thing the
   # unprivileged unit does is not a schema change.
@@ -745,7 +826,11 @@ Worth knowing:
 
   Data          ${DATA_DIR} inside container ${CTID} — item bodies, names and
                 URLs are ciphertext the server has never held a key for
-  Back up       pct exec ${CTID} -- keyhole backup
+  Back up       nightly, shortly after 00:00 in the container's timezone, into
+                ${DATA_DIR}/backups; the ${BACKUP_KEEP} most recent snapshots
+                are kept and older ones pruned
+                pct exec ${CTID} -- systemctl list-timers keyhole-backup.timer
+                pct exec ${CTID} -- keyhole backup   (one now, off schedule)
                 (a snapshot is entirely ciphertext, so copying it somewhere
                 less trusted than this host is a reasonable thing to do)
   Update        pct exec ${CTID} -- update
@@ -781,7 +866,9 @@ main() {
   configure_network
   write_config
   write_unit
+  write_backup_units
   bootstrap_admin
+  enable_backup_timer
   print_next_steps
 }
 
