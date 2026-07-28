@@ -59,32 +59,26 @@ RUN: pct exec 200 -- sh -c set -eu
 id -u 'keyhole' >/dev/null 2>&1 || useradd --system --home-dir '/var/lib/keyhole' --shell /usr/sbin/nologin 'keyhole'
 RUN: pct exec 200 -- install -d -o keyhole -g keyhole -m 0700 /var/lib/keyhole
 RUN: pct exec 200 -- install -d -o root -g root -m 0755 /etc/keyhole
+RUN: pct exec 200 -- sh -c hostname -I | cut -d' ' -f1
 RUN: pct exec 200 -- sh -c set -eu
-ip=$(hostname -I | cut -d' ' -f1)
-[ -n "$ip" ] || { echo 'the container has no IPv4 address yet' >&2; exit 1; }
 umask 077
-openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=$ip" -addext "subjectAltName=IP:$ip" -keyout '/etc/keyhole/tls.key' -out '/etc/keyhole/tls.crt'
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj '/CN=<container-ipv4>' -addext 'subjectAltName=IP:<container-ipv4>' -keyout '/etc/keyhole/tls.key' -out '/etc/keyhole/tls.crt'
 chown root:keyhole '/etc/keyhole/tls.key' '/etc/keyhole/tls.crt'
 chmod 0640 '/etc/keyhole/tls.key' '/etc/keyhole/tls.crt'
 RUN: pct exec 200 -- openssl x509 -noout -fingerprint -sha256 -in /etc/keyhole/tls.crt
 RUN: pct exec 200 -- sh -c set -eu
-ip=$(hostname -I | cut -d' ' -f1)
-# An empty $ip here would write "base_url: https://:8477" and produce a vault
-# whose setup links point nowhere, with nothing to say why. configure_network
-# already fails on this, so reaching it means the two were reordered.
-[ -n "$ip" ] || { echo 'the container has no IPv4 address yet' >&2; exit 1; }
 umask 077
-cat > '/etc/keyhole/config.yml' <<EOF
+cat > '/etc/keyhole/config.yml' <<'KEYHOLE_EOF'
 # Written by scripts/install.sh (Keyhole v1.0.0).
 addr: 0.0.0.0:8477
 data_dir: /var/lib/keyhole
-base_url: https://$ip:8477
+base_url: https://<container-ipv4>:8477
 log_level: info
 tls_cert: /etc/keyhole/tls.crt
 tls_key: /etc/keyhole/tls.key
-EOF
+KEYHOLE_EOF
 chown 'root:keyhole' '/etc/keyhole/config.yml'
-chmod 0640 '/etc/keyhole/config.yml'
+chmod '0640' '/etc/keyhole/config.yml'
 RUN: pct exec 200 -- sh -c set -eu
 umask 077
 cat > '/etc/systemd/system/keyhole.service' <<'KEYHOLE_EOF'
