@@ -88,6 +88,16 @@ type loginRequest struct {
 	DeviceLabel string `json:"deviceLabel"`
 }
 
+// dummyAuthHash is what a credential is verified against when the account does
+// not exist or holds nothing to check. It is well formed, so VerifyAuthHash
+// runs Argon2id on it and fails, and an absent account costs exactly what a
+// wrong credential costs.
+//
+// Shared by every endpoint that verifies an auth hash against an address a
+// caller chose. A second endpoint with its own early return would reintroduce
+// the timing oracle for its own path.
+const dummyAuthHash = "argon2id$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
 // invalidCredentials is the single response for every failed login. One
 // message, one code, one status, whatever actually went wrong.
 func invalidCredentials(w http.ResponseWriter) {
@@ -135,7 +145,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Verify unconditionally, against a dummy value when the account does not
 	// exist, so that the Argon2id cost is paid either way. Returning early
 	// would make an unknown address measurably faster to probe.
-	stored := "argon2id$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+	stored := dummyAuthHash
 	if err == nil && user.AuthHash.Valid {
 		stored = user.AuthHash.String
 	}

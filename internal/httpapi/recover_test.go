@@ -10,12 +10,56 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ssan9876/keyhole/internal/auth"
 	"github.com/ssan9876/keyhole/internal/store"
 )
 
-const recoverPreloginPath = "/api/auth/recover/prelogin"
+const (
+	recoverPreloginPath = "/api/auth/recover/prelogin"
+	recoverPath         = "/api/auth/recover"
+	recoverCompletePath = "/api/auth/recover/complete"
+)
+
+// recoverCompleteBody is what a client uploads once it has unwrapped its
+// userKey with the recovery code: a complete new master-password credential and
+// a complete new recovery blob, because redeeming a code retires it.
+func recoverCompleteBody(token string) map[string]string {
+	return map[string]string{
+		"recoveryToken":            token,
+		"kdfSalt":                  "bmV3c2FsdG5ld3NhbHQxNg==",
+		"params":                   auth.DefaultKDFParamsJSON,
+		"authHash":                 "bmV3LWF1dGgtaGFzaC0zMi1ieXRlcy1iNg==",
+		"protectedUserKey":         `{"v":1,"alg":"A256GCM","n":"bm9uY2U=","ct":"bmV3d3JhcA=="}`,
+		"recoverySalt":             "bmV3cmVjb3ZlcnlzYWx0MQ==",
+		"recoveryKdfParams":        auth.DefaultKDFParamsJSON,
+		"recoveryProtectedUserKey": `{"v":1,"alg":"A256GCM","n":"bm9uY2U=","ct":"bmV3cmVjb3Zlcnk="}`,
+		"recoveryAuthHash":         "bmV3LXJlY292ZXJ5LWF1dGgtaGFzaA==",
+	}
+}
+
+// redeemRecoveryCode runs the redeem step with the enrolled account's real
+// recovery auth hash and returns the one-time token it mints.
+func redeemRecoveryCode(t *testing.T, srv *Server, email string) string {
+	t.Helper()
+
+	rec := postJSON(t, srv, recoverPath, map[string]string{
+		"email":            email,
+		"recoveryAuthHash": enrollBody()["recoveryAuthHash"],
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("redeem failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		RecoveryToken string `json:"recoveryToken"`
+	}
+	decodeInto(t, rec, &body)
+	if body.RecoveryToken == "" {
+		t.Fatalf("redeem returned no recoveryToken: %s", rec.Body.String())
+	}
+	return body.RecoveryToken
+}
 
 // decodeObject returns a response body as a plain map together with a sorted
 // "field:gotype" rendering of it.
@@ -282,5 +326,463 @@ func TestRecoverPreloginSharesTheEnumerationBudgetWithLoginPrelogin(t *testing.T
 	if rec.Code != http.StatusTooManyRequests {
 		t.Errorf("status = %d after 25 login prelogins from the same address, want %d",
 			rec.Code, http.StatusTooManyRequests)
+	}
+}
+
+func TestRecoverReturnsTheBlobsForACorrectRecoveryAuthHash(t *testing.T) {
+	srv := newTestServer(t)
+	enrollTestUser(t, srv, "person@example.com")
+
+	rec := postJSON(t, srv, recoverPath, map[string]string{
+		"email":            "PERSON@example.com",
+		"recoveryAuthHash": enrollBody()["recoveryAuthHash"],
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var body struct {
+		RecoveryProtectedUserKey string  `json:"recoveryProtectedUserKey"`
+		EncryptedPrivateKey      string  `json:"encryptedPrivateKey"`
+		RecoveryToken            string  `json:"recoveryToken"`
+		ExpiresIn                float64 `json:"expiresIn"`
+	}
+	decodeInto(t, rec, &body)
+
+	// The blob the recovery code opens, and the private key wrapped by the
+	// userKey inside it. Both are useless to anyone who cannot derive the
+	// recovery wrap key, which is why proving possession of the auth half is
+	// enough to be handed them.
+	if body.RecoveryProtectedUserKey != enrollBody()["recoveryProtectedUserKey"] {
+		t.Errorf("recoveryProtectedUserKey = %q, want the enrolled blob", body.RecoveryProtectedUserKey)
+	}
+	if body.EncryptedPrivateKey != enrollBody()["encryptedPrivateKey"] {
+		t.Errorf("encryptedPrivateKey = %q, want the enrolled one", body.EncryptedPrivateKey)
+	}
+	if body.RecoveryToken == "" {
+		t.Error("no recoveryToken; the caller has no way to finish the recovery")
+	}
+	if want := store.RecoveryTokenTTL.Seconds(); body.ExpiresIn != want {
+		t.Errorf("expiresIn = %v, want %v", body.ExpiresIn, want)
+	}
+}
+
+func TestRecoverRejectsAWrongRecoveryAuthHash(t *testing.T) {
+	srv := newTestServer(t)
+	enrollTestUser(t, srv, "person@example.com")
+
+	wrong := postJSON(t, srv, recoverPath, map[string]string{
+		"email":            "person@example.com",
+		"recoveryAuthHash": "bm90LXRoZS1yaWdodC1jb2Rl",
+	})
+	if wrong.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body %s", wrong.Code, http.StatusUnauthorized, wrong.Body.String())
+	}
+
+	// Byte-identical to the answer an address with no account gets. A distinct
+	// message for "that account exists, the code is wrong" would say out loud
+	// which addresses are worth grinding.
+	unknown := postJSON(t, srv, recoverPath, map[string]string{
+		"email":            "ghost@example.com",
+		"recoveryAuthHash": "bm90LXRoZS1yaWdodC1jb2Rl",
+	})
+	if wrong.Code != unknown.Code || wrong.Body.String() != unknown.Body.String() {
+		t.Errorf("a wrong code answers %d %s but an unknown address answers %d %s",
+			wrong.Code, wrong.Body.String(), unknown.Code, unknown.Body.String())
+	}
+}
+
+// TestRecoverRejectsAnAccountWithNoRecoveryAuthHash covers every blob written
+// before migration 0004. There is nothing to check possession against, so the
+// account cannot be redeemed — and it has to be refused in exactly the words an
+// unknown address is refused in, or the refusal itself confirms the account.
+func TestRecoverRejectsAnAccountWithNoRecoveryAuthHash(t *testing.T) {
+	srv := newTestServer(t)
+	user, _ := enrollTestUser(t, srv, "person@example.com")
+
+	if _, err := srv.store.DB().ExecContext(context.Background(),
+		`UPDATE users SET recovery_auth_hash = NULL WHERE id = ?`, user.ID); err != nil {
+		t.Fatalf("blank the recovery auth hash: %v", err)
+	}
+
+	oldFormat := postJSON(t, srv, recoverPath, map[string]string{
+		"email":            "person@example.com",
+		"recoveryAuthHash": enrollBody()["recoveryAuthHash"],
+	})
+	if oldFormat.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body %s",
+			oldFormat.Code, http.StatusUnauthorized, oldFormat.Body.String())
+	}
+	if strings.Contains(oldFormat.Body.String(), enrollBody()["recoveryProtectedUserKey"]) {
+		t.Error("the refusal carried the recovery blob anyway")
+	}
+
+	unknown := postJSON(t, srv, recoverPath, map[string]string{
+		"email":            "ghost@example.com",
+		"recoveryAuthHash": enrollBody()["recoveryAuthHash"],
+	})
+	if oldFormat.Body.String() != unknown.Body.String() {
+		t.Errorf("an old-format account answers %s but an unknown address answers %s",
+			oldFormat.Body.String(), unknown.Body.String())
+	}
+}
+
+// TestRecoverRefusesADisabledAccountHoldingACorrectRecoveryAuthHash is the one
+// failure the auth hash alone cannot catch: the code is right, and an admin has
+// turned the account off. Redeeming it would hand the vault back to exactly the
+// person the account was disabled to keep out.
+func TestRecoverRefusesADisabledAccountHoldingACorrectRecoveryAuthHash(t *testing.T) {
+	srv := newTestServer(t)
+	user, _ := enrollTestUser(t, srv, "person@example.com")
+
+	if _, err := srv.store.DB().ExecContext(context.Background(),
+		`UPDATE users SET status = 'disabled' WHERE id = ?`, user.ID); err != nil {
+		t.Fatalf("disable the account: %v", err)
+	}
+
+	rec := postJSON(t, srv, recoverPath, map[string]string{
+		"email":            "person@example.com",
+		"recoveryAuthHash": enrollBody()["recoveryAuthHash"],
+	})
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want %d; body %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), enrollBody()["recoveryProtectedUserKey"]) {
+		t.Errorf("a disabled account was handed its recovery blob: %s", rec.Body.String())
+	}
+}
+
+// TestRecoverNeverReturnsTheProtectedUserKeyWrappedByTheMasterPassword pins the
+// one blob that has no business on this path.
+//
+// The caller has proved possession of the recovery code, not the master
+// password, and cannot open a master-password-wrapped blob — so shipping it
+// only widens what a stolen response is worth. The field-name check normalizes
+// case and underscores because Go marshals a struct with no JSON tags in
+// PascalCase, which is how this class of test has silently passed before.
+func TestRecoverNeverReturnsTheProtectedUserKeyWrappedByTheMasterPassword(t *testing.T) {
+	srv := newTestServer(t)
+	enrollTestUser(t, srv, "person@example.com")
+
+	rec := postJSON(t, srv, recoverPath, map[string]string{
+		"email":            "person@example.com",
+		"recoveryAuthHash": enrollBody()["recoveryAuthHash"],
+	})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	body := rec.Body.String()
+	assertNoKeyMaterialExcept(t, "the redeem response", body,
+		"recoveryProtectedUserKey", "encryptedPrivateKey")
+	// And by value as well as by name, so renaming the field on the way out
+	// does not slip past.
+	if strings.Contains(body, enrollBody()["protectedUserKey"]) {
+		t.Errorf("the redeem response carries the master-password-wrapped blob: %s", body)
+	}
+	if strings.Contains(body, enrollBody()["authHash"]) {
+		t.Errorf("the redeem response carries the login auth hash: %s", body)
+	}
+}
+
+// TestRecoverPaysTheSameArgon2idForAnUnknownAddressAsForAWrongCode keeps the
+// two refusals apart in words only. Returning before the hash when the address
+// is unknown would make it about 50 ms faster, and a timing difference is an
+// enumeration oracle that no amount of identical response bodies hides.
+func TestRecoverPaysTheSameArgon2idForAnUnknownAddressAsForAWrongCode(t *testing.T) {
+	srv := newTestServer(t)
+	enrollTestUser(t, srv, "person@example.com")
+
+	before := auth.Argon2Calls()
+	postJSON(t, srv, recoverPath, map[string]string{
+		"email": "ghost@example.com", "recoveryAuthHash": "bm90LXJpZ2h0",
+	})
+	unknown := auth.Argon2Calls() - before
+
+	before = auth.Argon2Calls()
+	postJSON(t, srv, recoverPath, map[string]string{
+		"email": "person@example.com", "recoveryAuthHash": "bm90LXJpZ2h0",
+	})
+	wrong := auth.Argon2Calls() - before
+
+	if unknown != wrong {
+		t.Errorf("an unknown address cost %d Argon2id computations and a wrong code cost %d",
+			unknown, wrong)
+	}
+	if wrong != 1 {
+		t.Errorf("a failed redemption ran %d Argon2id computations, want exactly 1", wrong)
+	}
+}
+
+// TestRecoverIsRateLimitedOnTheAccountAcrossSourceAddresses is the half a
+// per-IP limiter cannot do. Every attempt below comes from a different address,
+// so only a key on the account itself can stop them.
+func TestRecoverIsRateLimitedOnTheAccountAcrossSourceAddresses(t *testing.T) {
+	srv := newTestServer(t)
+	enrollTestUser(t, srv, "person@example.com")
+
+	var last int
+	for i := 0; i < 8; i++ {
+		last = postJSONFrom(t, srv, fmt.Sprintf("198.51.100.%d:5555", i+1), recoverPath,
+			map[string]string{
+				"email": "person@example.com", "recoveryAuthHash": "bm90LXJpZ2h0",
+			}).Code
+	}
+	if last != http.StatusTooManyRequests {
+		t.Errorf("status = %d after 8 wrong codes for one account from 8 addresses, want %d",
+			last, http.StatusTooManyRequests)
+	}
+}
+
+// TestRecoverIsRateLimitedOnTheSourceAddressAcrossAccounts is the other half.
+// Every attempt below names a different account, so only a key on the source
+// address can stop one host grinding through an address list.
+func TestRecoverIsRateLimitedOnTheSourceAddressAcrossAccounts(t *testing.T) {
+	srv := newTestServer(t)
+
+	var last int
+	for i := 0; i < 8; i++ {
+		last = postJSONFrom(t, srv, "198.51.100.200:5555", recoverPath, map[string]string{
+			"email": fmt.Sprintf("probe%d@example.com", i), "recoveryAuthHash": "bm90LXJpZ2h0",
+		}).Code
+	}
+	if last != http.StatusTooManyRequests {
+		t.Errorf("status = %d after 8 attempts on 8 accounts from one address, want %d",
+			last, http.StatusTooManyRequests)
+	}
+}
+
+// TestRecoverCompleteRotatesBothCredentialsAndRevokesEverySession is the whole
+// point of the flow: the user is back in, under a password they chose, holding
+// a code that opens the new blob, and every device that was signed in before is
+// not.
+func TestRecoverCompleteRotatesBothCredentialsAndRevokesEverySession(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	user, laptopToken := loginTestUser(t, srv, "person@example.com")
+
+	phone := postJSON(t, srv, "/api/auth/login", map[string]string{
+		"email": "person@example.com", "authHash": enrollBody()["authHash"], "deviceLabel": "phone",
+	})
+	if phone.Code != http.StatusOK {
+		t.Fatalf("second sign-in: %d %s", phone.Code, phone.Body.String())
+	}
+	var phoneBody struct {
+		AccessToken string `json:"accessToken"`
+	}
+	decodeInto(t, phone, &phoneBody)
+
+	body := recoverCompleteBody(redeemRecoveryCode(t, srv, "person@example.com"))
+	if rec := postJSON(t, srv, recoverCompletePath, body); rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body %s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+
+	stored, err := srv.store.UserByID(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.KDFSalt.String != body["kdfSalt"] {
+		t.Errorf("kdf_salt = %q, want %q", stored.KDFSalt.String, body["kdfSalt"])
+	}
+	if stored.ProtectedUserKey.String != body["protectedUserKey"] {
+		t.Errorf("protected_user_key = %q, want the re-wrapped blob", stored.ProtectedUserKey.String)
+	}
+	if !auth.VerifyAuthHash(body["authHash"], stored.AuthHash.String) {
+		t.Error("the new master password does not verify against the stored auth hash")
+	}
+	if auth.VerifyAuthHash(enrollBody()["authHash"], stored.AuthHash.String) {
+		t.Error("the old master password still verifies")
+	}
+	if stored.RecoverySalt.String != body["recoverySalt"] {
+		t.Errorf("recovery_salt = %q, want %q", stored.RecoverySalt.String, body["recoverySalt"])
+	}
+	if stored.RecoveryProtectedUserKey.String != body["recoveryProtectedUserKey"] {
+		t.Errorf("recovery_protected_user_key = %q, want the new blob", stored.RecoveryProtectedUserKey.String)
+	}
+	if !auth.VerifyAuthHash(body["recoveryAuthHash"], stored.RecoveryAuthHash.String) {
+		t.Error("the new recovery code does not verify against the stored recovery auth hash")
+	}
+	// Spec 3.6's "invalidate the old": the code just used must not still work.
+	if auth.VerifyAuthHash(enrollBody()["recoveryAuthHash"], stored.RecoveryAuthHash.String) {
+		t.Error("the recovery code that was just redeemed still verifies")
+	}
+
+	// Someone who has just proved they lost their password should not leave a
+	// session alive on a device they may no longer control.
+	sessions, err := srv.store.SessionsForUser(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 0 {
+		t.Errorf("%d sessions survived the recovery, want 0", len(sessions))
+	}
+	for name, token := range map[string]string{"laptop": laptopToken, "phone": phoneBody.AccessToken} {
+		if rec := doJSON(t, srv, http.MethodGet, "/api/account", token, nil); rec.Code != http.StatusUnauthorized {
+			t.Errorf("the %s access token still works: %d", name, rec.Code)
+		}
+	}
+
+	// And the user can actually get back in with what they just set.
+	if rec := postJSON(t, srv, "/api/auth/login", map[string]string{
+		"email": "person@example.com", "authHash": body["authHash"], "deviceLabel": "after recovery",
+	}); rec.Code != http.StatusOK {
+		t.Errorf("sign-in with the new master password = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestRecoverCompleteRejectsAReusedToken(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	user, _ := enrollTestUser(t, srv, "person@example.com")
+
+	token := redeemRecoveryCode(t, srv, "person@example.com")
+	first := recoverCompleteBody(token)
+	if rec := postJSON(t, srv, recoverCompletePath, first); rec.Code != http.StatusNoContent {
+		t.Fatalf("first completion: %d %s", rec.Code, rec.Body.String())
+	}
+
+	replay := recoverCompleteBody(token)
+	replay["kdfSalt"] = "cmVwbGF5c2FsdHJlcGxheQ=="
+	rec := postJSON(t, srv, recoverCompletePath, replay)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d; body %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+
+	// Status alone would also pass if the write had landed and only the response
+	// was wrong. This is what proves the replay changed nothing.
+	stored, err := srv.store.UserByID(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.KDFSalt.String != first["kdfSalt"] {
+		t.Errorf("kdf_salt = %q, want the first completion's %q — the replay was applied",
+			stored.KDFSalt.String, first["kdfSalt"])
+	}
+}
+
+func TestRecoverCompleteRejectsAnExpiredToken(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	user, _ := enrollTestUser(t, srv, "person@example.com")
+
+	_, expired, err := srv.store.CreateRecoveryToken(ctx, user.ID, -time.Minute)
+	if err != nil {
+		t.Fatalf("CreateRecoveryToken: %v", err)
+	}
+	rec := postJSON(t, srv, recoverCompletePath, recoverCompleteBody(expired))
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d; body %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+	stored, err := srv.store.UserByID(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.KDFSalt.String == recoverCompleteBody("")["kdfSalt"] {
+		t.Error("an expired token rotated the master password")
+	}
+
+	// A live token minted exactly the same way completes, so the refusal above
+	// was the expiry and not the fixture.
+	_, live, err := srv.store.CreateRecoveryToken(ctx, user.ID, store.RecoveryTokenTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec := postJSON(t, srv, recoverCompletePath, recoverCompleteBody(live)); rec.Code != http.StatusNoContent {
+		t.Errorf("a live token was refused: %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestRecoverCompletePinsTheKDFParams keeps every account's kdf_params equal to
+// the string the login prelogin decoy emits. The moment one account differs,
+// asking prelogin for an address and comparing that field answers "does this
+// address have an account here".
+func TestRecoverCompletePinsTheKDFParams(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	user, _ := enrollTestUser(t, srv, "person@example.com")
+
+	body := recoverCompleteBody(redeemRecoveryCode(t, srv, "person@example.com"))
+	body["params"] = `{"algorithm":"argon2id","memoryKiB":16384,"iterations":2,"parallelism":1}`
+
+	before := auth.Argon2Calls()
+	rec := postJSON(t, srv, recoverCompletePath, body)
+	spent := auth.Argon2Calls() - before
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d; body %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	// Byte equality is checkable before anything expensive happens, and this is
+	// an unauthenticated endpoint that otherwise runs two 64 MiB Argon2id
+	// computations per call.
+	if spent != 0 {
+		t.Errorf("unpinned params cost %d Argon2id computations, want 0", spent)
+	}
+	stored, err := srv.store.UserByID(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.KDFParams.String != auth.DefaultKDFParamsJSON {
+		t.Errorf("kdf_params = %q, want %q", stored.KDFParams.String, auth.DefaultKDFParamsJSON)
+	}
+}
+
+// TestRecoverCompleteRewritesOnlyTheAccountItsTokenWasMintedFor is the plan's
+// "a token minted for one user must not complete a recovery for another". The
+// request names no user, so the property is that the token alone decides whose
+// account is rewritten — and everyone else's credentials and sessions survive.
+func TestRecoverCompleteRewritesOnlyTheAccountItsTokenWasMintedFor(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+
+	recovering, _ := enrollTestUser(t, srv, "recovering@example.com")
+	bystander, bystanderToken := loginTestUser(t, srv, "bystander@example.com")
+
+	body := recoverCompleteBody(redeemRecoveryCode(t, srv, "recovering@example.com"))
+	if rec := postJSON(t, srv, recoverCompletePath, body); rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body %s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+
+	rewritten, err := srv.store.UserByID(ctx, recovering.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rewritten.KDFSalt.String != body["kdfSalt"] {
+		t.Fatalf("the token's own account was not rewritten: kdf_salt = %q", rewritten.KDFSalt.String)
+	}
+
+	untouched, err := srv.store.UserByID(ctx, bystander.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if untouched.KDFSalt.String != enrollBody()["kdfSalt"] {
+		t.Errorf("a bystander's kdf_salt changed: %q", untouched.KDFSalt.String)
+	}
+	if !auth.VerifyAuthHash(enrollBody()["authHash"], untouched.AuthHash.String) {
+		t.Error("a bystander's master password stopped verifying")
+	}
+	if !auth.VerifyAuthHash(enrollBody()["recoveryAuthHash"], untouched.RecoveryAuthHash.String) {
+		t.Error("a bystander's recovery code stopped verifying")
+	}
+	// One household member recovering must not sign the rest of the house out.
+	if rec := doJSON(t, srv, http.MethodGet, "/api/account", bystanderToken, nil); rec.Code != http.StatusOK {
+		t.Errorf("a bystander's session was revoked: %d", rec.Code)
+	}
+}
+
+// TestRecoverCompleteRefusesAnUnknownTokenWithoutHashing keeps the endpoint
+// from being a free Argon2id oracle: it is unauthenticated, its only input is a
+// caller-chosen token, and it hashes two credentials per call.
+func TestRecoverCompleteRefusesAnUnknownTokenWithoutHashing(t *testing.T) {
+	srv := newTestServer(t)
+
+	before := auth.Argon2Calls()
+	rec := postJSON(t, srv, recoverCompletePath, recoverCompleteBody("not-a-real-token"))
+	spent := auth.Argon2Calls() - before
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want %d; body %s", rec.Code, http.StatusUnauthorized, rec.Body.String())
+	}
+	if spent != 0 {
+		t.Errorf("an unknown recovery token cost %d Argon2id computations, want 0", spent)
 	}
 }

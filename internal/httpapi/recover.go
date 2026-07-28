@@ -71,3 +71,216 @@ func (s *Server) handleRecoverPrelogin(w http.ResponseWriter, r *http.Request) {
 
 	WriteJSON(w, http.StatusOK, response)
 }
+
+type recoverRequest struct {
+	Email            string `json:"email"`
+	RecoveryAuthHash string `json:"recoveryAuthHash"`
+}
+
+// recoveryRefused is the single response for every failed redemption: an
+// unknown address, a wrong code, a disabled account, a blob that predates the
+// auth-hash split. One message, one code, one status.
+func recoveryRefused(w http.ResponseWriter) {
+	WriteError(w, http.StatusUnauthorized, CodeUnauthorized, "email or recovery code is incorrect")
+}
+
+// handleRecover hands back the recovery blob to a caller who proves possession
+// of the recovery code, along with a short-lived token to finish with.
+//
+// What it returns is safe to hand over on that proof alone: the blob is wrapped
+// under the *wrap* half of the recovery key and the auth half proved here
+// cannot open it, and encryptedPrivateKey is wrapped under the userKey inside
+// it. What it must never return is protected_user_key — the same userKey
+// wrapped under the master password. The caller has not proved they know the
+// master password, cannot open that blob, and has no use for it; shipping it
+// would only widen what a stolen response is worth.
+func (s *Server) handleRecover(w http.ResponseWriter, r *http.Request) {
+	var req recoverRequest
+	if !DecodeJSON(w, r, &req) {
+		return
+	}
+
+	// Two keys, consulted at deliberately different points, exactly as
+	// handleLogin does — and deliberately the *same* two keys. A recovery code
+	// and a master password are two guesses at one account from one host, so
+	// giving this endpoint budgets of its own would hand an attacker twice the
+	// allowance for alternating between them.
+	//
+	// The IP key gates before the hash: it is the CPU defence, so it has to stop
+	// the work from starting. The account key gates only failures and is
+	// therefore consulted after verification — checked up front it would be a
+	// lockout weapon against the one person who has already lost their password.
+	ipKey := "ip:" + ClientIP(r)
+	accountKey := "account:" + store.NormalizeEmail(req.Email)
+
+	if allowed, retryAfter := s.limiter.Allow(ipKey); !allowed {
+		tooManyAttempts(w, retryAfter)
+		return
+	}
+
+	user, err := s.store.UserByEmail(r.Context(), req.Email)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		s.logger.Error("recover lookup", "id", RequestIDFrom(r.Context()), "error", err)
+		WriteError(w, http.StatusInternalServerError, CodeInternal, "could not process the request")
+		return
+	}
+
+	// Verified unconditionally, against a dummy when there is nothing to check,
+	// so an unknown address and an old-format blob cost the same Argon2id as a
+	// wrong code. A response that is identical but arrives 50 ms sooner is still
+	// an enumeration oracle.
+	stored := dummyAuthHash
+	if err == nil && user.RecoveryAuthHash.Valid {
+		stored = user.RecoveryAuthHash.String
+	}
+	ok := auth.VerifyAuthHash(req.RecoveryAuthHash, stored)
+
+	if err != nil || !ok || user.Status != "active" {
+		// Read the account key's verdict before recording, so the sequence of
+		// statuses a failing caller sees does not itself distinguish the cases.
+		allowed, retryAfter := s.limiter.Allow(accountKey)
+		s.limiter.RecordFailure(ipKey)
+		s.limiter.RecordFailure(accountKey)
+		if !allowed {
+			tooManyAttempts(w, retryAfter)
+			return
+		}
+		recoveryRefused(w)
+		return
+	}
+
+	_, token, err := s.store.CreateRecoveryToken(r.Context(), user.ID, store.RecoveryTokenTTL)
+	if err != nil {
+		s.logger.Error("create recovery token", "id", RequestIDFrom(r.Context()), "error", err)
+		WriteError(w, http.StatusInternalServerError, CodeInternal, "could not start the recovery")
+		return
+	}
+
+	// A correct code is proof the traffic is real, so it clears both counters.
+	s.limiter.Reset(ipKey)
+	s.limiter.Reset(accountKey)
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"recoveryProtectedUserKey": user.RecoveryProtectedUserKey.String,
+		"encryptedPrivateKey":      user.EncryptedPrivateKey.String,
+		"recoveryToken":            token,
+		"expiresIn":                int(store.RecoveryTokenTTL.Seconds()),
+	})
+}
+
+type recoverCompleteRequest struct {
+	RecoveryToken            string `json:"recoveryToken"`
+	KDFSalt                  string `json:"kdfSalt"`
+	Params                   string `json:"params"`
+	AuthHash                 string `json:"authHash"`
+	ProtectedUserKey         string `json:"protectedUserKey"`
+	RecoverySalt             string `json:"recoverySalt"`
+	RecoveryKDFParams        string `json:"recoveryKdfParams"`
+	RecoveryProtectedUserKey string `json:"recoveryProtectedUserKey"`
+	RecoveryAuthHash         string `json:"recoveryAuthHash"`
+}
+
+// handleRecoverComplete replaces both credentials and ends every session.
+//
+// Both halves are mandatory. Rotating only the master password would leave a
+// recovery code that still opens the vault, in the hands of whoever the user
+// suspects read it; and rotating only the recovery blob would leave them locked
+// out exactly as they were.
+func (s *Server) handleRecoverComplete(w http.ResponseWriter, r *http.Request) {
+	var req recoverCompleteRequest
+	if !DecodeJSON(w, r, &req) {
+		return
+	}
+
+	// Unauthenticated, and it runs two 64 MiB Argon2id computations per call, so
+	// it is throttled per source address exactly as enrollment is. There is no
+	// account key here: the request names a token, not an address.
+	ipKey := "ip:" + ClientIP(r)
+	if allowed, retryAfter := s.limiter.Allow(ipKey); !allowed {
+		tooManyAttempts(w, retryAfter)
+		return
+	}
+
+	// Hashing an empty string succeeds and costs exactly as much as hashing a
+	// real one, so these are checked before the hash rather than after. Worded
+	// by hand to match (*store.ValidationError).Error(), which is what every
+	// other missing field in this payload renders as.
+	if req.AuthHash == "" {
+		WriteError(w, http.StatusBadRequest, CodeBadRequest, "field \"authHash\" is required")
+		return
+	}
+	if req.RecoveryAuthHash == "" {
+		WriteError(w, http.StatusBadRequest, CodeBadRequest, "field \"recoveryAuthHash\" is required")
+		return
+	}
+	// Pinned so the prelogin decoy stays indistinguishable from a real account,
+	// exactly as the other two paths that write kdf_params pin it. Byte
+	// equality, and checked here so an unpinned payload is refused before
+	// anything expensive happens.
+	if req.Params != auth.DefaultKDFParamsJSON {
+		WriteError(w, http.StatusBadRequest, CodeBadRequest,
+			"params must match the server's current KDF parameters exactly")
+		return
+	}
+
+	// Establish that the token is live before paying for two Argon2id. This is
+	// an optimisation, not the security boundary: CompleteRecovery spends the
+	// token inside its transaction, which is what makes it single-use under
+	// concurrency. Both checks stay.
+	if _, err := s.store.RecoveryTokenByToken(r.Context(), req.RecoveryToken); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			s.limiter.RecordFailure(ipKey)
+			WriteError(w, http.StatusUnauthorized, CodeUnauthorized, "this recovery session is no longer valid")
+			return
+		}
+		s.logger.Error("recovery token lookup", "id", RequestIDFrom(r.Context()), "error", err)
+		WriteError(w, http.StatusInternalServerError, CodeInternal, "could not complete the recovery")
+		return
+	}
+
+	hashed, err := auth.HashAuthHash(req.AuthHash)
+	if err != nil {
+		s.logger.Error("hash auth hash", "id", RequestIDFrom(r.Context()), "error", err)
+		WriteError(w, http.StatusInternalServerError, CodeInternal, "could not complete the recovery")
+		return
+	}
+	hashedRecovery, err := auth.HashAuthHash(req.RecoveryAuthHash)
+	if err != nil {
+		s.logger.Error("hash recovery auth hash", "id", RequestIDFrom(r.Context()), "error", err)
+		WriteError(w, http.StatusInternalServerError, CodeInternal, "could not complete the recovery")
+		return
+	}
+
+	err = s.store.CompleteRecovery(r.Context(), req.RecoveryToken,
+		store.PasswordRotation{
+			KDFSalt:          req.KDFSalt,
+			KDFParams:        req.Params,
+			AuthHash:         hashed,
+			ProtectedUserKey: req.ProtectedUserKey,
+		},
+		store.RecoveryRotation{
+			RecoverySalt:             req.RecoverySalt,
+			RecoveryKDFParams:        req.RecoveryKDFParams,
+			RecoveryProtectedUserKey: req.RecoveryProtectedUserKey,
+			RecoveryAuthHash:         hashedRecovery,
+		})
+	var validationErr *store.ValidationError
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		// The token was spent by a racing request, or the account is no longer
+		// active. Same answer as an unknown token, for the same reason.
+		s.limiter.RecordFailure(ipKey)
+		WriteError(w, http.StatusUnauthorized, CodeUnauthorized, "this recovery session is no longer valid")
+		return
+	case errors.As(err, &validationErr):
+		WriteError(w, http.StatusBadRequest, CodeBadRequest, validationErr.Error())
+		return
+	case err != nil:
+		s.logger.Error("complete recovery", "id", RequestIDFrom(r.Context()), "error", err)
+		WriteError(w, http.StatusInternalServerError, CodeInternal, "could not complete the recovery")
+		return
+	}
+
+	s.limiter.Reset(ipKey)
+	w.WriteHeader(http.StatusNoContent)
+}

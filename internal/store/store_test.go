@@ -31,7 +31,7 @@ func TestMigrateCreatesEveryTable(t *testing.T) {
 		"users", "invites", "sessions", "items", "folders",
 		"collections", "collection_memberships", "pending_grants",
 		"audit_log", "server_settings", "schema_migrations",
-		"revision_sequence",
+		"revision_sequence", "recovery_tokens",
 	}
 	for _, table := range want {
 		var name string

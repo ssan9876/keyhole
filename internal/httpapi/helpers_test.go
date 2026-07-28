@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -98,8 +99,29 @@ func normalizeFieldNames(s string) string {
 // returns user records.
 func assertNoKeyMaterial(t *testing.T, what, body string) {
 	t.Helper()
+	assertNoKeyMaterialExcept(t, what, body)
+}
+
+// assertNoKeyMaterialExcept is assertNoKeyMaterial for the one endpoint that is
+// supposed to return some: the recovery redeem path, which hands back the blob
+// the recovery code opens and the encrypted private key, and nothing else.
+//
+// The allowed names are cut out of the body before the search, because these
+// field names nest. Normalized, "recoveryprotecteduserkey" *contains*
+// "protecteduserkey" — so without the removal, a response carrying only the
+// recovery blob would report the master-password blob as present, and the
+// obvious fix for that false positive is to drop the needle that matters most.
+func assertNoKeyMaterialExcept(t *testing.T, what, body string, allowed ...string) {
+	t.Helper()
+
 	normalized := normalizeFieldNames(body)
+	for _, field := range allowed {
+		normalized = strings.ReplaceAll(normalized, normalizeFieldNames(field), "")
+	}
 	for _, field := range keyMaterialFields {
+		if slices.Contains(allowed, field) {
+			continue
+		}
 		if strings.Contains(normalized, normalizeFieldNames(field)) {
 			t.Errorf("%s carries %q: %s", what, field, body)
 		}

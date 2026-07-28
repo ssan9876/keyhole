@@ -66,11 +66,32 @@ func (s *Store) RotatePassword(ctx context.Context, userID string, in PasswordRo
 	defer func() { _ = tx.Rollback() }()
 
 	now := time.Now().UTC().Format(time.RFC3339)
+	if err := writePasswordCredential(ctx, tx, userID, in, keepSessionID, now); err != nil {
+		return err
+	}
+	if err := appendAudit(ctx, tx, userID, "account.password.rotate", "user:"+userID, ""); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit password rotation: %w", err)
+	}
+	return nil
+}
 
+// writePasswordCredential is RotatePassword's body without the audit entry or
+// the transaction, parameterized over the executor so a caller already inside a
+// transaction can rotate a password as part of a larger unit of work.
+// CompleteRecovery is that caller: a recovery that rewrote the password and
+// then failed to revoke the sessions, or failed to spend its token, would leave
+// the user believing something that is not true.
+//
+// It assumes in.validate() has already run. Both callers do it up front, before
+// opening a transaction, because a rejected payload should not cost one.
+func writePasswordCredential(ctx context.Context, db execer, userID string, in PasswordRotation, keepSessionID, now string) error {
 	// The recovery columns are deliberately untouched: that blob is wrapped by
 	// the recovery code, not the master password, so clearing it here would
 	// silently destroy the user's last way back in.
-	result, err := tx.ExecContext(ctx,
+	result, err := db.ExecContext(ctx,
 		`UPDATE users SET kdf_salt = ?, kdf_params = ?, auth_hash = ?,
 			protected_user_key = ?, revision = revision + 1, updated_at = ?
 		 WHERE id = ? AND status = 'active'`,
@@ -86,18 +107,12 @@ func (s *Store) RotatePassword(ctx context.Context, userID string, in PasswordRo
 		return ErrNotFound
 	}
 
-	if _, err := tx.ExecContext(ctx,
+	// An empty keepSessionID matches no row, so every live session goes.
+	if _, err := db.ExecContext(ctx,
 		`UPDATE sessions SET revoked_at = ?
 		 WHERE user_id = ? AND revoked_at IS NULL AND id != ?`,
 		now, userID, keepSessionID); err != nil {
 		return fmt.Errorf("revoke other sessions: %w", err)
-	}
-
-	if err := appendAudit(ctx, tx, userID, "account.password.rotate", "user:"+userID, ""); err != nil {
-		return err
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("commit password rotation: %w", err)
 	}
 	return nil
 }
@@ -144,14 +159,28 @@ func (s *Store) RotateRecovery(ctx context.Context, userID string, in RecoveryRo
 	if err := in.validate(); err != nil {
 		return err
 	}
+	if err := writeRecoveryCredential(ctx, s.db, userID,
+		in, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		return err
+	}
+	return s.AppendAudit(ctx, userID, "account.recovery.rotate", "user:"+userID, "")
+}
 
-	result, err := s.db.ExecContext(ctx,
+// writeRecoveryCredential is writePasswordCredential's counterpart for the
+// recovery blob, parameterized over the executor for the same reason: a
+// completed recovery replaces both credentials, and it must do so in one
+// transaction or a failure between them leaves an account whose recovery code
+// and master password disagree about which vault they open.
+//
+// It assumes in.validate() has already run.
+func writeRecoveryCredential(ctx context.Context, db execer, userID string, in RecoveryRotation, now string) error {
+	result, err := db.ExecContext(ctx,
 		`UPDATE users SET recovery_salt = ?, recovery_kdf_params = ?,
 			recovery_protected_user_key = ?, recovery_auth_hash = ?,
 			revision = revision + 1, updated_at = ?
 		 WHERE id = ? AND status = 'active'`,
 		in.RecoverySalt, in.RecoveryKDFParams, in.RecoveryProtectedUserKey,
-		in.RecoveryAuthHash, time.Now().UTC().Format(time.RFC3339), userID)
+		in.RecoveryAuthHash, now, userID)
 	if err != nil {
 		return fmt.Errorf("rotate recovery: %w", err)
 	}
@@ -162,7 +191,7 @@ func (s *Store) RotateRecovery(ctx context.Context, userID string, in RecoveryRo
 	if affected == 0 {
 		return ErrNotFound
 	}
-	return s.AppendAudit(ctx, userID, "account.recovery.rotate", "user:"+userID, "")
+	return nil
 }
 
 // SessionsForUser lists a user's live sessions, newest activity first. Revoked

@@ -137,6 +137,8 @@ func (s *Server) routes() {
 	// someone who cannot sign in. What stands in for a session is possession of
 	// the code, proved to the server by the auth half of the split recovery key.
 	s.mux.HandleFunc("POST /api/auth/recover/prelogin", s.handleRecoverPrelogin)
+	s.mux.HandleFunc("POST /api/auth/recover", s.handleRecover)
+	s.mux.HandleFunc("POST /api/auth/recover/complete", s.handleRecoverComplete)
 
 	s.mux.HandleFunc("POST /api/items", s.requireAuth(s.handleCreateItem))
 	s.mux.HandleFunc("POST /api/items/bulk", s.requireAuth(s.handleBulkItems))
