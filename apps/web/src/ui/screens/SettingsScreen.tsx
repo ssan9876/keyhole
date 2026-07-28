@@ -4,6 +4,7 @@ import { ApiError, NetworkError } from "../../vault/api.js";
 import type { DeviceSession } from "../../vault/account.js";
 import type { AutoLockSetting } from "../../vault/autolock.js";
 import { Button } from "../components/Button.js";
+import { Confirm } from "../components/Confirm.js";
 import { Field } from "../components/Field.js";
 
 export interface SettingsScreenProps {
@@ -173,6 +174,12 @@ function SessionsSection({
 }: Pick<SettingsScreenProps, "sessions" | "onRevokeSession" | "onLock">) {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Only the current session's revoke goes through a confirmation dialog:
+  // revoking another device is a one-click "I don't recognise that, kill it
+  // now" action that costs nothing (the device just signs back in), while
+  // revoking this one locks the vault immediately and costs a full
+  // master-password re-entry and Argon2id derivation for a misclick.
+  const [confirming, setConfirming] = useState<DeviceSession | null>(null);
 
   async function handleRevoke(target: DeviceSession): Promise<void> {
     setBusyId(target.id);
@@ -220,9 +227,15 @@ function SessionsSection({
               </div>
               <Button
                 type="button"
-                variant="quiet"
+                variant={deviceSession.current ? "danger" : "quiet"}
                 disabled={busyId === deviceSession.id}
-                onClick={() => void handleRevoke(deviceSession)}
+                onClick={() => {
+                  if (deviceSession.current) {
+                    setConfirming(deviceSession);
+                  } else {
+                    void handleRevoke(deviceSession);
+                  }
+                }}
               >
                 {deviceSession.current ? "Sign out this device" : "Revoke session"}
               </Button>
@@ -234,6 +247,19 @@ function SessionsSection({
         <p role="alert" style={{ color: "var(--danger)" }}>
           {error}
         </p>
+      )}
+      {confirming !== null && (
+        <Confirm
+          title="Sign out this device?"
+          body="This signs out this device and locks the vault. You will need your master password to get back in."
+          confirmLabel="Sign out this device"
+          onCancel={() => setConfirming(null)}
+          onConfirm={() => {
+            const target = confirming;
+            setConfirming(null);
+            void handleRevoke(target);
+          }}
+        />
       )}
     </section>
   );

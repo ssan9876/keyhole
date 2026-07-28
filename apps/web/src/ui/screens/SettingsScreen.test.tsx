@@ -184,25 +184,55 @@ describe("SettingsScreen recovery code", () => {
 });
 
 describe("SettingsScreen sessions", () => {
-  it("locks the vault when the current session is revoked", async () => {
+  it("locks the vault when the current session is revoked and confirmed", async () => {
     const onLock = vi.fn();
     const onRevokeSession = vi.fn().mockResolvedValue(undefined);
     render(<SettingsScreen {...baseProps({ onLock, onRevokeSession })} />);
 
     await userEvent.click(screen.getByRole("button", { name: "Sign out this device" }));
+    // Two buttons now share this name: the row button that opened the
+    // dialog, and the dialog's own confirm button.
+    await userEvent.click(screen.getAllByRole("button", { name: "Sign out this device" })[1]!);
 
     await waitFor(() => expect(onRevokeSession).toHaveBeenCalledWith("s1"));
     expect(onLock).toHaveBeenCalledOnce();
   });
 
-  it("does not lock the vault when a different session is revoked", async () => {
+  it("does not call onRevokeSession for the current device until the confirm dialog is confirmed", async () => {
+    const onRevokeSession = vi.fn().mockResolvedValue(undefined);
+    render(<SettingsScreen {...baseProps({ onRevokeSession })} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Sign out this device" }));
+
+    // The dialog is up and the call has not happened yet.
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+    expect(onRevokeSession).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getAllByRole("button", { name: "Sign out this device" })[1]!);
+
+    await waitFor(() => expect(onRevokeSession).toHaveBeenCalledWith("s1"));
+  });
+
+  it("revokes a non-current session immediately, with no confirmation dialog", async () => {
     const onLock = vi.fn();
     const onRevokeSession = vi.fn().mockResolvedValue(undefined);
     render(<SettingsScreen {...baseProps({ onLock, onRevokeSession })} />);
 
     await userEvent.click(screen.getByRole("button", { name: "Revoke session" }));
 
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     await waitFor(() => expect(onRevokeSession).toHaveBeenCalledWith("s2"));
     expect(onLock).not.toHaveBeenCalled();
+  });
+
+  it("reports an unreachable server as a connection problem, never as a password problem, when a revoke fails", async () => {
+    const onRevokeSession = vi.fn().mockRejectedValue(new NetworkError(new Error("down")));
+    render(<SettingsScreen {...baseProps({ onRevokeSession })} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Revoke session" }));
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(/could not reach/i);
+    expect(alert).not.toHaveTextContent(/password/i);
   });
 });
