@@ -94,7 +94,15 @@ abort_stopped() {
   printf 'keyhole: stopping container %s. Nothing was installed; inspect it with\n' "$CTID" >&2
   printf '         "pct start %s && pct enter %s", or remove it with "pct destroy %s".\n' \
     "$CTID" "$CTID" "$CTID" >&2
-  run pct stop "$CTID" || true
+  # pct stop loses to a config lock or a concurrent pct operation often enough
+  # that swallowing its status is not acceptable here: the three lines above
+  # have already told the operator the container is being stopped, and someone
+  # who walks away from a running, half-provisioned container believing it is
+  # stopped was misled by this script rather than by the failure.
+  if ! run pct stop "$CTID"; then
+    printf 'keyhole: pct stop %s FAILED — the container is still running; stop it yourself\n' \
+      "$CTID" >&2
+  fi
   exit 1
 }
 
