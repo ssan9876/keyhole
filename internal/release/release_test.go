@@ -46,6 +46,44 @@ func TestVerifyAcceptsAGenuineSignatureAndChecksum(t *testing.T) {
 	}
 }
 
+// TestVerifyAcceptsTheSingleLinePublicKeyThatLdflagsEmbeds pins the *other*
+// public-key form -- the one every shipped binary actually holds.
+//
+// genMinisignKeypair returns MarshalText's two-line output (untrusted
+// comment, then base64), and every other test here uses it. But an -ldflags
+// value cannot contain a newline, so .github/workflows/release.yml embeds
+// `tail -n 1` of the .pub file: the bare base64 line, and that is what
+// main.UpdatePublicKey is set to in every released binary. Nothing else in
+// this package exercises that form.
+//
+// Without this test, a minisign upgrade that tightened UnmarshalText, or a
+// simplification of the key handling here, leaves `go test ./...` green while
+// every installed binary's `keyhole update` fails with "parse public key"
+// against every genuine release.
+func TestVerifyAcceptsTheSingleLinePublicKeyThatLdflagsEmbeds(t *testing.T) {
+	priv, pubText := genMinisignKeypair(t)
+
+	lines := strings.Split(pubText, "\n")
+	if len(lines) < 2 {
+		t.Fatalf("public key text has %d line(s), want at least 2: %q", len(lines), pubText)
+	}
+	// Line 1, exactly as `tail -n 1 "$pub"` yields it. Asserting it carries
+	// no newline is what stops this test from quietly degrading into a
+	// duplicate of the two-line cases if MarshalText's shape ever changes.
+	singleLine := lines[1]
+	if singleLine == "" || strings.Contains(singleLine, "\n") {
+		t.Fatalf("the ldflags form must be one non-empty line with no newline, got %q", singleLine)
+	}
+
+	binary := []byte("pretend keyhole binary contents for linux/amd64")
+	checksums := sumLine("keyhole-linux-amd64", binary)
+	signature := minisign.Sign(priv, []byte(checksums))
+
+	if err := Verify(binary, checksums, signature, singleLine, "keyhole-linux-amd64"); err != nil {
+		t.Fatalf("Verify() = %v, want nil for the bare base64 public key line the release workflow embeds", err)
+	}
+}
+
 func TestVerifyRejectsATamperedBinary(t *testing.T) {
 	priv, pubText := genMinisignKeypair(t)
 	binary := []byte("pretend keyhole binary contents for linux/amd64")
