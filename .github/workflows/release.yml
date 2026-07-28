@@ -54,6 +54,12 @@ jobs:
           key="$RUNNER_TEMP/minisign.key"
           pub="$RUNNER_TEMP/minisign.pub"
 
+          # The explicit shred below only runs if every command before it
+          # succeeded. This one runs even when minisign fails, so a wrong
+          # passphrase does not leave the decrypted-key file sitting in
+          # RUNNER_TEMP on a self-hosted runner that reuses its workspace.
+          trap 'shred -u "$key" 2>/dev/null || true' EXIT
+
           # umask in a subshell so the key file is 0600 from the instant it
           # exists rather than 0644 until someone remembers to chmod it.
           #
@@ -157,6 +163,9 @@ jobs:
         # signature to dist/SHA256SUMS.minisig.
         run: |
           key="$RUNNER_TEMP/minisign.key"
+          # As in the key-preparation step: the shred below is skipped if
+          # signing fails, and this is what removes the key anyway.
+          trap 'shred -u "$key" 2>/dev/null || true' EXIT
           (umask 077; printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key")
           printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -s "$key" -m dist/SHA256SUMS
           shred -u "$key"
@@ -201,7 +210,16 @@ jobs:
         # "keyhole-<GOOS>-<GOARCH>". Renaming any of them breaks every existing
         # installation's `keyhole update`.
         run: |
-          gh release create "$GITHUB_REF_NAME" \
+          # This workflow triggers on "v*", which matches v0.0.1-rc1 as
+          # happily as v0.1.0, and a release created without --prerelease is
+          # marked "latest". internal/release's GitHub source polls
+          # /releases/latest, which serves the newest *non-prerelease* release
+          # — so a throwaway rc tag would be offered as an update to every
+          # installed server. A semver pre-release is exactly a tag with a
+          # "-" identifier after the version, so that is what this matches.
+          case "$GITHUB_REF_NAME" in *-*) PRE=--prerelease ;; *) PRE= ;; esac
+          # shellcheck disable=SC2086 # PRE is empty or one flag; quoting it would pass an empty asset path.
+          gh release create "$GITHUB_REF_NAME" $PRE \
             dist/keyhole-linux-amd64 dist/keyhole-linux-arm64 \
             dist/SHA256SUMS dist/SHA256SUMS.minisig \
             --generate-notes

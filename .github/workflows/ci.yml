@@ -7,6 +7,12 @@ on: [push, pull_request]
 permissions:
   contents: read
 
+# Stated rather than inherited, matching release.yml: GitHub's default Linux
+# shell is `bash -e {0}`, and every `run:` here is written expecting bash.
+defaults:
+  run:
+    shell: bash
+
 # A push to a branch that already has a run in flight supersedes it. Push and
 # pull_request runs land in different groups (github.ref is refs/heads/<branch>
 # for one and refs/pull/<n>/merge for the other), so neither cancels the other.
