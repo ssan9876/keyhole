@@ -164,7 +164,10 @@ describe("CollectionsScreen", () => {
         })}
       />,
     );
-    await userEvent.click(await screen.findByRole("button", { name: /remove/i }));
+    // Anchored exact: unanchored /remove/i is unambiguous only because this
+    // fixture has exactly one member -- this ambiguity class (a broader
+    // query that happens not to collide yet) has shipped twice in this repo.
+    await userEvent.click(await screen.findByRole("button", { name: /^remove$/i }));
 
     // The exact copy from design spec 5.1, stating the real limitation.
     expect(

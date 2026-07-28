@@ -1,9 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import type { ApiClient } from "../vault/api.js";
 import type { VaultState, VaultStore } from "../vault/store.js";
 import { openSession } from "../vault/test-helpers.js";
-import { createCollection } from "../vault/collections.js";
+import { createCollection, type PendingGrant } from "../vault/collections.js";
+import type { DirectoryEntry } from "../vault/directory.js";
 import { useCollectionsPanel } from "./useCollectionsPanel.js";
 
 // The round trip this test exists to prove: handleCreateCollection has no
@@ -84,5 +85,93 @@ describe("useCollectionsPanel", () => {
       expect.anything(),
       expect.objectContaining({ name: "Household", ownPublicKey: "own-public-key-b64" }),
     );
+  });
+
+  it("refreshes members after fulfilling a grant for the collection currently open", async () => {
+    // Finding 3b: handleAddMember already refreshed members when the added
+    // member's collection matched the one selected; handleFulfil did not,
+    // so a manager who fulfilled a grant for the collection they were
+    // looking at saw a stale Members panel until they collapsed and
+    // reopened it.
+    const session = openSession();
+    session.setCollectionKeys(new Map([["c1", new Uint8Array(32).fill(9)]]));
+    const store = fakeStore();
+
+    let membersCalls = 0;
+    const api: ApiClient = {
+      async get<T>(path: string): Promise<T> {
+        if (path === "/api/collections/c1/members") {
+          membersCalls += 1;
+          const members =
+            membersCalls === 1
+              ? []
+              : [
+                  {
+                    userId: "u2",
+                    name: "Bee",
+                    email: "bee@example.com",
+                    role: "member",
+                    grantedAt: "2026-07-27T00:00:00Z",
+                  },
+                ];
+          return { members } as T;
+        }
+        throw new Error(`unexpected GET ${path}`);
+      },
+      async post<T>(path: string): Promise<T> {
+        if (path === "/api/collections/c1/grants") return {} as T;
+        throw new Error(`unexpected POST ${path}`);
+      },
+      async put<T>(): Promise<T> {
+        throw new Error("unexpected PUT");
+      },
+      async patch<T>(): Promise<T> {
+        throw new Error("unexpected PATCH");
+      },
+      async del<T>(): Promise<T> {
+        throw new Error("unexpected DEL");
+      },
+    };
+
+    const { result } = renderHook(() =>
+      useCollectionsPanel({ api, session, store, active: false }),
+    );
+
+    act(() => {
+      result.current.onSelectCollection("c1");
+    });
+    await waitFor(() => expect(membersCalls).toBe(1));
+
+    const grant: PendingGrant = {
+      collectionId: "c1",
+      collectionName: "Household",
+      userId: "u2",
+      role: "member",
+      requestedBy: "u1",
+      createdAt: "2026-07-27T00:00:00Z",
+    };
+    // A real (if arbitrary) 32-byte X25519 public key -- fulfilGrant is the
+    // real vault-layer function here, not mocked, and it really seals to it.
+    const recipient: DirectoryEntry = {
+      id: "u2",
+      name: "Bee",
+      email: "bee@example.com",
+      publicKey: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+      fingerprint: "x",
+    };
+
+    await act(async () => {
+      await result.current.onFulfil(grant, recipient);
+    });
+
+    expect(result.current.members).toEqual([
+      {
+        userId: "u2",
+        name: "Bee",
+        email: "bee@example.com",
+        role: "member",
+        grantedAt: "2026-07-27T00:00:00Z",
+      },
+    ]);
   });
 });

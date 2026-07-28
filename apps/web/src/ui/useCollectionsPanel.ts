@@ -104,8 +104,14 @@ export function useCollectionsPanel({
         prev.filter((g) => !(g.collectionId === grant.collectionId && g.userId === grant.userId)),
       );
       await store.resync({ api, session });
+      // Mirrors handleAddMember: a manager who fulfils a grant for the
+      // collection they currently have open would otherwise see a stale
+      // Members panel until they collapse and reopen it.
+      if (selectedCollectionId === grant.collectionId) {
+        setMembers(await listMembers({ api, session }, grant.collectionId));
+      }
     },
-    [api, session, store],
+    [api, session, store, selectedCollectionId],
   );
 
   const handleAddMember = useCallback(
