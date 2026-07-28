@@ -28,6 +28,25 @@ const githubReleasesURL = "https://api.github.com/repos/ssan9876/keyhole/release
 // 6) installs Keyhole under.
 const systemdUnit = "keyhole"
 
+// migrateTimeout and systemctlTimeout bound the two subprocesses `keyhole
+// update` runs while the service is stopped. Neither had a deadline before:
+// exec.CommandContext only kills on its context, and that context comes from
+// context.Background(). A hung `keyhole migrate` -- or a systemctl call
+// blocked on a wedged D-Bus -- left the vault down indefinitely, and the
+// rollback was never reached, because nothing ever returned in order to
+// reach it. Any finite bound is better than that.
+//
+// The values are generous for real work and finite anyway, which is the
+// whole point. Migrations on a household-scale SQLite file finish in well
+// under a second; five minutes covers a large vault on slow storage.
+// systemd's own default stop-job timeout is 90 seconds before it escalates
+// to SIGKILL, so anything under that would fire on a unit that is merely
+// slow to stop -- two minutes clears it with margin.
+const (
+	migrateTimeout   = 5 * time.Minute
+	systemctlTimeout = 2 * time.Minute
+)
+
 const updateUsage = `keyhole update [--check] [--config PATH]
 
 Fetches the latest release, verifies it against a signed checksum list, and
@@ -86,7 +105,7 @@ func runUpdate(args []string) error {
 		PreviousPath: binaryPath + ".prev",
 		DBPath:       cfg.DBPath(),
 		BackupDir:    filepath.Join(cfg.DataDir, "backups"),
-		Migrate:      execMigrate(binaryPath, *configPath),
+		Migrate:      execMigrate(binaryPath, *configPath, migrateTimeout),
 		Logf:         func(format string, args ...any) { fmt.Printf(format+"\n", args...) },
 	}
 
@@ -203,13 +222,27 @@ type systemctlService struct {
 func (s systemctlService) Stop(ctx context.Context) error  { return runSystemctl(ctx, "stop", s.unit) }
 func (s systemctlService) Start(ctx context.Context) error { return runSystemctl(ctx, "start", s.unit) }
 
-func runSystemctl(ctx context.Context, args ...string) error {
+func runSystemctl(parent context.Context, args ...string) error {
+	ctx, cancel := context.WithTimeout(parent, systemctlTimeout)
+	defer cancel()
+
 	cmd := exec.CommandContext(ctx, "systemctl", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if timedOut(ctx) {
+			return fmt.Errorf("systemctl %s: timed out after %s: %s", strings.Join(args, " "), systemctlTimeout, strings.TrimSpace(string(out)))
+		}
 		return fmt.Errorf("systemctl %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// timedOut reports whether ctx's own deadline is what ended a subprocess.
+// It exists so the error can say "timed out after 5m0s" rather than the
+// "signal: killed" a context-killed process actually reports, which names
+// the symptom and hides the cause.
+func timedOut(ctx context.Context) bool {
+	return errors.Is(ctx.Err(), context.DeadlineExceeded)
 }
 
 // httpHealth is the real release.Health: it polls /healthz on cfg.Addr,
@@ -277,11 +310,22 @@ func (h httpHealth) probe(ctx context.Context) error {
 // execMigrate runs `<binaryPath> migrate --config <configPath>` -- the new
 // binary, not this one, per design spec step 6: migrations must run under
 // the code that will actually read the migrated schema afterward.
-func execMigrate(binaryPath, configPath string) func(ctx context.Context) error {
-	return func(ctx context.Context) error {
+//
+// timeout is a parameter rather than a package constant read in here because
+// this is the one of the two bounded subprocesses a test can actually drive:
+// runSystemctl execs a binary that does not exist off Linux, while this
+// execs whatever path it is handed.
+func execMigrate(binaryPath, configPath string, timeout time.Duration) func(ctx context.Context) error {
+	return func(parent context.Context) error {
+		ctx, cancel := context.WithTimeout(parent, timeout)
+		defer cancel()
+
 		cmd := exec.CommandContext(ctx, binaryPath, "migrate", "--config", configPath)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
+			if timedOut(ctx) {
+				return fmt.Errorf("%s migrate: timed out after %s: %s", binaryPath, timeout, strings.TrimSpace(string(out)))
+			}
 			return fmt.Errorf("%s migrate: %w: %s", binaryPath, err, strings.TrimSpace(string(out)))
 		}
 		return nil

@@ -2,11 +2,66 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"fmt"
+	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ssan9876/keyhole/internal/release"
 )
+
+// childSleepEnv turns a re-exec of this test binary into a subprocess that
+// hangs. execMigrate runs `<binary> migrate --config <path>`, so pointing it
+// at os.Args[0] makes the test binary its own child -- and without the
+// intercept in TestMain that child would re-run the whole package's tests
+// instead of hanging.
+const childSleepEnv = "KEYHOLE_TEST_CHILD_SLEEP"
+
+func TestMain(m *testing.M) {
+	if d := os.Getenv(childSleepEnv); d != "" {
+		dur, err := time.ParseDuration(d)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "%s=%q: %v\n", childSleepEnv, d, err)
+			os.Exit(2)
+		}
+		time.Sleep(dur)
+		os.Exit(0)
+	}
+	os.Exit(m.Run())
+}
+
+// TestMigrateIsBoundedByATimeout proves the migrate subprocess cannot hang
+// forever. `keyhole migrate` runs with the service stopped, and its context
+// came from context.Background(): with no deadline, a migrate that never
+// returns leaves the vault down indefinitely, and the automatic rollback is
+// never reached because nothing ever returns in order to reach it. A hang is
+// the one failure mode the rollback cannot rescue, which is what makes the
+// bound load-bearing rather than tidy.
+func TestMigrateIsBoundedByATimeout(t *testing.T) {
+	// The child would sit here far longer than any test timeout; the bound
+	// is the only thing that ends it.
+	t.Setenv(childSleepEnv, "10m")
+	const bound = 100 * time.Millisecond
+
+	start := time.Now()
+	err := execMigrate(os.Args[0], "irrelevant.yml", bound)(context.Background())
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("execMigrate() error = nil, want an error: the child never exits on its own")
+	}
+	if elapsed > 30*time.Second {
+		t.Errorf("execMigrate() returned after %s, want it bounded near %s", elapsed, bound)
+	}
+	// "signal: killed" names the symptom and hides the cause. An operator
+	// reading this at 2am needs to know the migration ran out of time, not
+	// that something killed a process.
+	if !strings.Contains(err.Error(), "timed out") {
+		t.Errorf("execMigrate() error = %q, want it to name the timeout rather than the kill it caused", err)
+	}
+}
 
 // TestUpdateRefusesADevBuild proves runUpdate stops before ever touching
 // the network, config, or filesystem for a build whose Version is still the
