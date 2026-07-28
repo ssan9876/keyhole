@@ -125,6 +125,28 @@ func (s *Server) handleRotateRecovery(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusBadRequest, CodeBadRequest, "field \"recoveryAuthHash\" is required")
 		return
 	}
+	// Pinned so the recovery prelogin decoy stays indistinguishable from a real
+	// account, exactly as handleRotatePassword pins params.
+	//
+	// This comment used to say the opposite: that recoveryKdfParams leaks
+	// nothing because no endpoint returns it. POST /api/auth/recover/prelogin
+	// now does — it hands this value to an unauthenticated caller and answers an
+	// unknown address with auth.DefaultKDFParamsJSON — so an account holding
+	// anything else here is distinguishable from a decoy, which is the exact
+	// oracle that endpoint's decoy exists to close.
+	//
+	// Spec 4.2's "record what the blob was actually wrapped under" survives in
+	// fact: every blob is made under the client's DEFAULT_KDF_PARAMS, which is
+	// this string. Raising the default means re-wrapping every blob, which is a
+	// migration rather than a per-account drift.
+	//
+	// Checked here as well as in the store, and before verifyCurrentCredential,
+	// so a payload that cannot land costs no Argon2id.
+	if req.RecoveryKDFParams != auth.DefaultKDFParamsJSON {
+		WriteError(w, http.StatusBadRequest, CodeBadRequest,
+			"recoveryKdfParams must match the server's current KDF parameters exactly")
+		return
+	}
 	if !s.verifyCurrentCredential(w, user, req.CurrentAuthHash) {
 		return
 	}
@@ -139,18 +161,9 @@ func (s *Server) handleRotateRecovery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// recoveryKdfParams is NOT pinned. Recording the parameters the blob was
-	// actually wrapped under is what keeps a correct recovery code from failing
-	// later (spec section 4.2); pinning would overwrite that record with
-	// whatever today's default happens to be.
-	//
-	// The older form of this comment said the field leaks nothing because no
-	// endpoint returns it. That stopped being true when /api/auth/recover/prelogin
-	// arrived: it hands this value to an unauthenticated caller and answers an
-	// unknown address with auth.DefaultKDFParamsJSON, so an account holding
-	// anything else here is distinguishable from a decoy. Every client writes
-	// the default, which is why the parity holds in practice — but unlike
-	// kdf_params, nothing enforces it.
+	// RecoveryKDFParams is passed through as received; it was pinned to
+	// auth.DefaultKDFParamsJSON above, and store.RecoveryRotation.validate pins
+	// it again for every non-HTTP caller.
 	if err := s.store.RotateRecovery(r.Context(), user.ID, store.RecoveryRotation{
 		RecoverySalt:             req.RecoverySalt,
 		RecoveryKDFParams:        req.RecoveryKDFParams,

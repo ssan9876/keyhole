@@ -221,6 +221,14 @@ func TestRecoverPreloginIsDeterministicForTheSameUnknownAddress(t *testing.T) {
 // stored recoveryKdfParams that is deliberately *not* the default, because
 // that is the only way to tell "returns what the blob was made with" apart
 // from "returns the constant it would have returned anyway".
+//
+// The divergent value is written straight to the column, because no write path
+// will accept one any more: every endpoint that writes recovery_kdf_params now
+// pins it byte-equal to auth.DefaultKDFParamsJSON. What is simulated here is a
+// row from before that pin, or one left mid-migration by a future parameter
+// bump — the cases this read path still has to serve correctly, since deriving
+// a recovery key under any other parameters yields a different key and the user
+// would discover that at the moment recovery was their last resort.
 func TestRecoverPreloginReturnsTheRealSaltAndParamsForARedeemableAccount(t *testing.T) {
 	srv := newTestServer(t)
 	user, _ := enrollTestUser(t, srv, "person@example.com")
@@ -231,11 +239,15 @@ func TestRecoverPreloginReturnsTheRealSaltAndParamsForARedeemableAccount(t *test
 	)
 	if err := srv.store.RotateRecovery(context.Background(), user.ID, store.RecoveryRotation{
 		RecoverySalt:             storedSalt,
-		RecoveryKDFParams:        storedParams,
+		RecoveryKDFParams:        auth.DefaultKDFParamsJSON,
 		RecoveryProtectedUserKey: `{"v":1,"alg":"A256GCM","n":"bm9uY2U=","ct":"cmVjb3Zlcnk="}`,
 		RecoveryAuthHash:         "argon2id$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
 	}); err != nil {
 		t.Fatalf("RotateRecovery: %v", err)
+	}
+	if _, err := srv.store.DB().ExecContext(context.Background(),
+		`UPDATE users SET recovery_kdf_params = ? WHERE id = ?`, storedParams, user.ID); err != nil {
+		t.Fatalf("seed a legacy recovery_kdf_params: %v", err)
 	}
 
 	rec := postJSON(t, srv, recoverPreloginPath, map[string]string{"email": "PERSON@example.com"})
@@ -723,6 +735,49 @@ func TestRecoverCompletePinsTheKDFParams(t *testing.T) {
 	}
 	if stored.KDFParams.String != auth.DefaultKDFParamsJSON {
 		t.Errorf("kdf_params = %q, want %q", stored.KDFParams.String, auth.DefaultKDFParamsJSON)
+	}
+}
+
+// TestRecoverCompletePinsTheRecoveryKDFParams is the kdf_params pin's twin for
+// the column this endpoint's own prelogin hands out.
+//
+// handleRecoverPrelogin answers an unknown address with
+// auth.DefaultKDFParamsJSON. A completed recovery writes a fresh recovery blob,
+// so it is a place a divergent value could enter — and one account whose
+// recovery_kdf_params differs makes that address answerable by comparison, which
+// is precisely the oracle the decoy exists to close.
+func TestRecoverCompletePinsTheRecoveryKDFParams(t *testing.T) {
+	srv := newTestServer(t)
+	ctx := context.Background()
+	user, _ := enrollTestUser(t, srv, "person@example.com")
+
+	body := recoverCompleteBody(redeemRecoveryCode(t, srv, "person@example.com"))
+	// Semantically identical to the default, byte-different.
+	body["recoveryKdfParams"] = `{"algorithm":"argon2id","iterations":3,"memoryKiB":65536,"parallelism":4}`
+
+	before := auth.Argon2Calls()
+	rec := postJSON(t, srv, recoverCompletePath, body)
+	spent := auth.Argon2Calls() - before
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d; body %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	// Same reasoning as the params pin above: this is an unauthenticated
+	// endpoint that otherwise runs two 64 MiB Argon2id computations per call,
+	// and a byte comparison is checkable before any of that.
+	if spent != 0 {
+		t.Errorf("unpinned recoveryKdfParams cost %d Argon2id computations, want 0", spent)
+	}
+	stored, err := srv.store.UserByID(ctx, user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.RecoveryKDFParams.String != auth.DefaultKDFParamsJSON {
+		t.Errorf("recovery_kdf_params = %q, want %q",
+			stored.RecoveryKDFParams.String, auth.DefaultKDFParamsJSON)
+	}
+	if stored.RecoveryProtectedUserKey.String == body["recoveryProtectedUserKey"] {
+		t.Error("the rejected completion wrote its recovery blob anyway")
 	}
 }
 

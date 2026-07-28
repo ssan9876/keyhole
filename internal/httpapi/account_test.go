@@ -286,6 +286,62 @@ func TestRotatingTheRecoveryCodeRejectsAnEmptyAuthHash(t *testing.T) {
 	}
 }
 
+// TestRotatingTheRecoveryCodeRejectsNonDefaultRecoveryKDFParams closes the
+// enumeration oracle POST /api/auth/recover/prelogin opened.
+//
+// That endpoint returns recovery_kdf_params to an unauthenticated caller and
+// answers an unknown address with auth.DefaultKDFParamsJSON. This is one of the
+// endpoints that could have written the first account whose value differs —
+// after which asking recover/prelogin for an address and comparing that field
+// answers "does this address have an account here".
+func TestRotatingTheRecoveryCodeRejectsNonDefaultRecoveryKDFParams(t *testing.T) {
+	srv := newTestServer(t)
+	_, authHash := enrollTestUser(t, srv, "person@example.com")
+
+	login := postJSON(t, srv, "/api/auth/login", map[string]string{
+		"email": "person@example.com", "authHash": authHash, "deviceLabel": "test",
+	})
+	var loginBody struct {
+		AccessToken string `json:"accessToken"`
+	}
+	decodeInto(t, login, &loginBody)
+
+	before := auth.Argon2Calls()
+	rec := doJSON(t, srv, http.MethodPost, "/api/account/recovery", loginBody.AccessToken,
+		map[string]string{
+			"currentAuthHash": authHash,
+			"recoverySalt":    "ZGl2ZXJnZW50LXNhbHQ=",
+			// Semantically identical to the default, byte-different: the decoy
+			// emits one exact string, so byte equality is the only comparison
+			// that keeps a real account indistinguishable from it.
+			"recoveryKdfParams":        `{"algorithm":"argon2id","iterations":3,"memoryKiB":65536,"parallelism":4}`,
+			"recoveryProtectedUserKey": "divergent-blob",
+			"recoveryAuthHash":         "ZGl2ZXJnZW50LXJlY292ZXJ5LWF1dGg=",
+		})
+	spent := auth.Argon2Calls() - before
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	// Byte equality is checkable before anything expensive happens, and this
+	// endpoint otherwise verifies one Argon2id hash and computes another.
+	if spent != 0 {
+		t.Errorf("unpinned recoveryKdfParams cost %d Argon2id computations, want 0", spent)
+	}
+
+	stored, err := srv.store.UserByEmail(context.Background(), "person@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.RecoveryProtectedUserKey.String == "divergent-blob" {
+		t.Error("the rejected rotation wrote its blob anyway")
+	}
+	if stored.RecoveryKDFParams.String != auth.DefaultKDFParamsJSON {
+		t.Errorf("recovery_kdf_params = %q, want %q",
+			stored.RecoveryKDFParams.String, auth.DefaultKDFParamsJSON)
+	}
+}
+
 func TestListingSessionsMarksTheCurrentOneAndHidesTokens(t *testing.T) {
 	srv := newTestServer(t)
 	_, token := loginTestUser(t, srv, "person@example.com")

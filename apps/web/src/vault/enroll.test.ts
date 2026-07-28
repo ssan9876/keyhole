@@ -111,6 +111,12 @@ describe("enroll", () => {
     // the object literal is declared in that key order — one reordering away
     // from a 400 nobody can explain.
     expect(body.params).toBe(DEFAULT_KDF_PARAMS_JSON);
+    // recoveryKdfParams is pinned the same way now: POST
+    // /api/auth/recover/prelogin returns it and answers an unknown address with
+    // this exact string, so an account recording anything else would be
+    // distinguishable from a decoy. The server rejects a divergent value with
+    // 400 (internal/store/enroll.go's validate).
+    expect(body.recoveryKdfParams).toBe(DEFAULT_KDF_PARAMS_JSON);
   }, 60_000);
 
   it("produces a recovery code that actually opens the vault", async () => {

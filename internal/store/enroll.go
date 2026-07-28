@@ -60,13 +60,27 @@ func (in EnrollmentInput) validate() error {
 	// anything that serializes differently is distinguishable even when it
 	// means the same thing.
 	//
-	// recovery_kdf_params is deliberately NOT pinned: spec 4.2's reason for
-	// recording it as it actually was outweighs the parity, and the recovery
-	// prelogin endpoint that returns it decoys an unknown address with the
-	// default. See internal/httpapi/account.go for the full note.
 	if in.KDFParams != auth.DefaultKDFParamsJSON {
 		return &ValidationError{
 			Field:   "params",
+			Message: "must match the server's current KDF parameters exactly",
+		}
+	}
+	// recovery_kdf_params is pinned for exactly the same reason, and the reason
+	// now applies to it: POST /api/auth/recover/prelogin returns this column to
+	// an unauthenticated caller and answers an unknown address with
+	// DefaultKDFParamsJSON, so one account holding anything else is one address
+	// an attacker can confirm exists.
+	//
+	// Spec 4.2's intent — record what the blob was actually wrapped under, so a
+	// correct code never derives the wrong key — is preserved in fact rather
+	// than by permissiveness: every blob is made under the client's
+	// DEFAULT_KDF_PARAMS, which is this string. If the default ever rises, every
+	// blob has to be re-wrapped anyway, and that is a migration with a version
+	// bump, not a silent per-account divergence.
+	if in.RecoveryKDFParams != auth.DefaultKDFParamsJSON {
+		return &ValidationError{
+			Field:   "recoveryKdfParams",
 			Message: "must match the server's current KDF parameters exactly",
 		}
 	}

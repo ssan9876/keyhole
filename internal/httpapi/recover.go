@@ -222,6 +222,17 @@ func (s *Server) handleRecoverComplete(w http.ResponseWriter, r *http.Request) {
 			"params must match the server's current KDF parameters exactly")
 		return
 	}
+	// And the recovery blob's parameters, for the same reason applied to this
+	// endpoint's own prelogin: handleRecoverPrelogin answers an unknown address
+	// with auth.DefaultKDFParamsJSON, so an account whose recovery_kdf_params
+	// differs is an address a caller can confirm exists by comparing that field.
+	// A completed recovery writes a fresh recovery blob, which makes it one of
+	// the three places a divergent value could enter.
+	if req.RecoveryKDFParams != auth.DefaultKDFParamsJSON {
+		WriteError(w, http.StatusBadRequest, CodeBadRequest,
+			"recoveryKdfParams must match the server's current KDF parameters exactly")
+		return
+	}
 
 	// Establish that the token is live before paying for two Argon2id. This is
 	// an optimisation, not the security boundary: CompleteRecovery spends the

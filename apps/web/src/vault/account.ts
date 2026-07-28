@@ -130,10 +130,16 @@ export async function regenerateRecoveryCode(
   await deps.api.post("/api/account/recovery", {
     currentAuthHash: current,
     recoverySalt: toBase64(blob.recoverySalt),
-    // NOT pinned, deliberately: no endpoint returns this, so it leaks nothing,
-    // and recording the params the blob was actually made under is what keeps
-    // a correct code from failing later.
-    recoveryKdfParams: JSON.stringify(blob.params),
+    // Pinned, and sent as the constant verbatim. This used to say the field
+    // leaks nothing because no endpoint returns it; POST
+    // /api/auth/recover/prelogin now does, and answers an unknown address with
+    // this exact string, so anything else here would mark the account as real.
+    // The server rejects a divergent value with 400.
+    //
+    // The blob is genuinely made under these parameters — createRecoveryBlob
+    // was handed DEFAULT_KDF_PARAMS above — so what a redeeming client derives
+    // under them is the key that opens it.
+    recoveryKdfParams: DEFAULT_KDF_PARAMS_JSON,
     recoveryProtectedUserKey: blob.recoveryProtectedUserKey,
     // Proof of possession for the redeem endpoints, hashed again server-side
     // before storage. The endpoint rejects a rotation without it rather than

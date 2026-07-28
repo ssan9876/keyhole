@@ -169,6 +169,43 @@ func TestEnrollRejectsAnEmptyRecoveryAuthHashWithoutHashing(t *testing.T) {
 	}
 }
 
+// TestEnrollRejectsNonDefaultRecoveryKDFParams keeps every account's
+// recovery_kdf_params equal to the string POST /api/auth/recover/prelogin
+// answers an unknown address with.
+//
+// Enrollment is where the first divergent value would be written, and one such
+// account turns that endpoint into an account-enumeration oracle: ask it for an
+// address, compare the field to auth.DefaultKDFParamsJSON, and a mismatch says
+// the address is real.
+func TestEnrollRejectsNonDefaultRecoveryKDFParams(t *testing.T) {
+	srv := newTestServer(t)
+	user, token := seedInvite(t, srv, "person@example.com")
+
+	body := enrollBody()
+	// Semantically identical to the default, byte-different. The decoy emits one
+	// exact string, so anything that serializes differently is distinguishable
+	// from it even when it means precisely the same thing.
+	body["recoveryKdfParams"] = `{"algorithm":"argon2id","iterations":3,"memoryKiB":65536,"parallelism":4}`
+
+	rec := postJSON(t, srv, "/api/enroll/"+token, body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+
+	// The account must not exist afterwards. A 400 that still activated the row
+	// would leave the divergent value in the column, which is the whole harm.
+	stored, err := srv.store.UserByID(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status == "active" {
+		t.Error("the rejected enrollment activated the account anyway")
+	}
+	if stored.RecoveryKDFParams.Valid {
+		t.Errorf("recovery_kdf_params = %q, want NULL", stored.RecoveryKDFParams.String)
+	}
+}
+
 func TestEnrollResponseLeaksNoKeyMaterial(t *testing.T) {
 	srv := newTestServer(t)
 	_, token := seedInvite(t, srv, "person@example.com")

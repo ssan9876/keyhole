@@ -201,6 +201,44 @@ func TestRotateRecoveryRejectsAnIncompletePayload(t *testing.T) {
 	}
 }
 
+// TestRotateRecoveryRejectsNonDefaultRecoveryKDFParams pins the column every
+// recovery blob records its parameters in.
+//
+// POST /api/auth/recover/prelogin returns recovery_kdf_params to an
+// unauthenticated caller and answers an unknown address with
+// auth.DefaultKDFParamsJSON. One account holding anything else there is one
+// address an attacker can confirm exists, so this path — shared by the settings
+// rotation and by a completed recovery — pins it byte for byte.
+func TestRotateRecoveryRejectsNonDefaultRecoveryKDFParams(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	userID := enrolledUserID(t, st, "person@example.com")
+
+	err := st.RotateRecovery(ctx, userID, RecoveryRotation{
+		RecoverySalt: "new-recovery-salt",
+		// Semantically identical to the default, byte-different. Byte equality
+		// is the standard because the decoy emits one exact string.
+		RecoveryKDFParams:        `{"algorithm":"argon2id","iterations":3,"memoryKiB":65536,"parallelism":4}`,
+		RecoveryProtectedUserKey: "divergent-blob",
+		RecoveryAuthHash:         "argon2id$new$authhash",
+	})
+	var validation *ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("err = %v, want a *ValidationError", err)
+	}
+	if validation.Field != "recoveryKdfParams" {
+		t.Errorf("Field = %q, want %q", validation.Field, "recoveryKdfParams")
+	}
+
+	after, err := st.UserByID(ctx, userID)
+	if err != nil {
+		t.Fatalf("UserByID: %v", err)
+	}
+	if after.RecoveryProtectedUserKey.String == "divergent-blob" {
+		t.Error("the rejected rotation wrote its blob anyway")
+	}
+}
+
 func TestSessionsForUserListsLiveSessionsOnly(t *testing.T) {
 	st := openTemp(t)
 	ctx := context.Background()

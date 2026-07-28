@@ -121,7 +121,9 @@ func writePasswordCredential(ctx context.Context, db execer, userID string, in P
 // with. The parameters are recorded rather than assumed (spec section 4.2):
 // deriving a recovery key with parameters other than the ones the blob was
 // wrapped under yields a different key, and that failure would surface only at
-// the moment recovery was the user's last resort.
+// the moment recovery was the user's last resort. They are also pinned to the
+// server's current default — see validate below for why recording and pinning
+// are not in conflict.
 //
 // RecoveryAuthHash is the server's only way to check that a caller redeeming a
 // code actually holds it, and it arrives already hashed for storage, exactly as
@@ -146,6 +148,25 @@ func (in RecoveryRotation) validate() error {
 	} {
 		if value == "" {
 			return &ValidationError{Field: field}
+		}
+	}
+	// Pinned exactly as kdf_params is, and for the same reason — which now
+	// applies here too. POST /api/auth/recover/prelogin returns this column to
+	// an unauthenticated caller and answers an unknown address with
+	// DefaultKDFParamsJSON, so the first account to hold anything else is the
+	// first address an attacker can confirm exists by comparison.
+	//
+	// This is the shared write path for both rotations: the settings
+	// "new recovery code" button and a completed recovery. Pinning here rather
+	// than only in the handlers means every caller of this package is held to
+	// it, not just the HTTP ones.
+	//
+	// Byte equality, not semantic: the decoy emits this exact string, so a
+	// reordering that means the same thing is still distinguishable from it.
+	if in.RecoveryKDFParams != auth.DefaultKDFParamsJSON {
+		return &ValidationError{
+			Field:   "recoveryKdfParams",
+			Message: "must match the server's current KDF parameters exactly",
 		}
 	}
 	return nil

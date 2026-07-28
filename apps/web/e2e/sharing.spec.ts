@@ -248,7 +248,14 @@ test("the server rejects a params object with reordered keys", async ({ request,
       encryptedPrivateKey: "encrypted",
       recoverySalt: "recovery-salt",
       recoveryProtectedUserKey: "recovery-protected",
-      recoveryKdfParams: "{}",
+      // The pinned string, verbatim. recoveryKdfParams is now pinned exactly as
+      // params is, so "{}" here would make the request fail for two reasons at
+      // once — and whichever check the server reaches first would decide the
+      // message this test asserts on, which is not a property worth depending
+      // on. Sending a valid value isolates the reordered `params` above as the
+      // one thing being rejected.
+      recoveryKdfParams:
+        '{"algorithm":"argon2id","memoryKiB":65536,"iterations":3,"parallelism":4}',
       // Not decoration. handleEnroll (internal/httpapi/enroll.go) rejects an
       // empty recoveryAuthHash before it looks the invite up, let alone
       // reaches the params comparison in internal/store/enroll.go's

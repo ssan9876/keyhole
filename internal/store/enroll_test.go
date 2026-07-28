@@ -334,3 +334,69 @@ func TestEnrollmentAcceptsTheDefaultKDFParams(t *testing.T) {
 		t.Fatalf("CompleteEnrollment: %v", err)
 	}
 }
+
+// TestEnrollmentRejectsNonDefaultRecoveryKDFParams is the kdf_params test's
+// twin, and it exists because POST /api/auth/recover/prelogin now returns
+// recovery_kdf_params to an unauthenticated caller and answers an unknown
+// address with auth.DefaultKDFParamsJSON. An account holding anything else in
+// that column is distinguishable from a decoy, which is exactly the oracle the
+// endpoint was built to close.
+func TestEnrollmentRejectsNonDefaultRecoveryKDFParams(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+
+	user, err := st.CreatePendingUser(ctx, "person@example.com", "Test Person", "user")
+	if err != nil {
+		t.Fatalf("CreatePendingUser: %v", err)
+	}
+	_, token, err := st.CreateInvite(ctx, user.ID, time.Hour)
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+
+	in := sampleEnrollment()
+	// Semantically identical, byte-different — the same standard kdf_params is
+	// held to, because the decoy emits one exact string and any other
+	// serialization is distinguishable from it even when it means the same.
+	in.RecoveryKDFParams = `{"algorithm":"argon2id","iterations":3,"memoryKiB":65536,"parallelism":4}`
+
+	_, err = st.CompleteEnrollment(ctx, token, in)
+	var validation *ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("err = %v, want a *ValidationError", err)
+	}
+	if validation.Field != "recoveryKdfParams" {
+		t.Errorf("Field = %q, want %q", validation.Field, "recoveryKdfParams")
+	}
+
+	// And nothing landed. A rejected enrollment that activated the account
+	// anyway would leave the divergent value in the column regardless.
+	after, err := st.UserByID(ctx, user.ID)
+	if err != nil {
+		t.Fatalf("UserByID: %v", err)
+	}
+	if after.RecoveryKDFParams.Valid {
+		t.Errorf("recovery_kdf_params = %q, want NULL — the rejected payload was written",
+			after.RecoveryKDFParams.String)
+	}
+}
+
+func TestEnrollmentAcceptsTheDefaultRecoveryKDFParams(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+
+	user, err := st.CreatePendingUser(ctx, "person@example.com", "Test Person", "user")
+	if err != nil {
+		t.Fatalf("CreatePendingUser: %v", err)
+	}
+	_, token, err := st.CreateInvite(ctx, user.ID, time.Hour)
+	if err != nil {
+		t.Fatalf("CreateInvite: %v", err)
+	}
+
+	in := sampleEnrollment()
+	in.RecoveryKDFParams = auth.DefaultKDFParamsJSON
+	if _, err := st.CompleteEnrollment(ctx, token, in); err != nil {
+		t.Fatalf("CompleteEnrollment: %v", err)
+	}
+}

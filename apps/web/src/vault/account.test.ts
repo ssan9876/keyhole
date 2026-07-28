@@ -174,7 +174,7 @@ describe("regenerateRecoveryCode", () => {
     expect(recovered).toEqual(session.getKeys().userKey);
   }, 30_000);
 
-  it("sends recoveryKdfParams as the params the blob was actually made under", async () => {
+  it("sends recoveryKdfParams as the pinned constant, byte for byte", async () => {
     const salt = generateKdfSalt();
     const { api, calls } = recordingApi(salt);
     const session = openSession();
@@ -182,7 +182,15 @@ describe("regenerateRecoveryCode", () => {
     await regenerateRecoveryCode({ api, session }, RECOVERY_INPUT);
 
     const rotate = calls.find((c) => c.path === "/api/account/recovery");
-    expect(JSON.parse(rotate?.body["recoveryKdfParams"] as string)).toEqual(DEFAULT_KDF_PARAMS);
+    // Byte equality, not a parsed comparison: the server now pins this field
+    // exactly as it pins params, because POST /api/auth/recover/prelogin
+    // answers an unknown address with this same string and any divergence
+    // would make the account distinguishable from a decoy.
+    expect(rotate?.body["recoveryKdfParams"]).toBe(DEFAULT_KDF_PARAMS_JSON);
+    // That the blob is genuinely made under these parameters — rather than
+    // merely labelled with them — is what the first test in this block proves:
+    // it derives the recovery key from this very field and opens the uploaded
+    // blob with it.
   }, 30_000);
 
   it("uploads the auth hash a redeeming client recomputes from the code and salt", async () => {

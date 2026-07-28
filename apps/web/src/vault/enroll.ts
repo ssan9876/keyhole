@@ -85,10 +85,18 @@ export async function enroll(
     // a NULL here is reserved for accounts that predate the split, and those
     // are unredeemable by design.
     recoveryAuthHash,
-    // NOT pinned: no endpoint returns it, so it leaks nothing, and recording
-    // the params the blob was actually made under is what keeps a correct
-    // recovery code from failing later — at the moment it is the last resort.
-    recoveryKdfParams: JSON.stringify(recovery.params),
+    // Pinned too, and sent as the same constant verbatim. This used to say the
+    // field leaks nothing because no endpoint returns it; POST
+    // /api/auth/recover/prelogin now does, and answers an unknown address with
+    // this exact string — so an account recording anything else would be
+    // distinguishable from a decoy, and the server rejects it with 400.
+    //
+    // The blob really is made under these parameters (createRecoveryBlob was
+    // handed DEFAULT_KDF_PARAMS above), so spec §4.2's "record what it was
+    // wrapped under" still holds; what is gone is the freedom to record
+    // something else. A JSON.stringify here produced the right bytes only
+    // because the object literal happens to be declared in this key order.
+    recoveryKdfParams: DEFAULT_KDF_PARAMS_JSON,
   });
 
   // POST /api/enroll/:token has returned 200: the invite is consumed and the
