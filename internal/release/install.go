@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/ssan9876/keyhole/internal/backup"
@@ -213,7 +214,7 @@ func Update(ctx context.Context, deps Deps, opts Options) (Outcome, error) {
 		return outcome, fmt.Errorf("stop service failed and the service may be down (%w); %s", err, restart)
 	}
 
-	installErr := installAndStart(ctx, deps, binary)
+	parked, installErr := installAndStart(ctx, deps, binary)
 	if installErr == nil {
 		if healthErr := deps.Health.Wait(ctx, opts.healthTimeout()); healthErr != nil {
 			installErr = fmt.Errorf("service did not become healthy within %s: %w", opts.healthTimeout(), healthErr)
@@ -226,14 +227,15 @@ func Update(ctx context.Context, deps Deps, opts Options) (Outcome, error) {
 	}
 
 	deps.logf("update to %s failed (%v); rolling back to %s", release.Version, installErr, opts.CurrentVersion)
-	if rbErr := rollback(ctx, deps, snapshotPath, opts.healthTimeout()); rbErr != nil {
+	if rb := rollback(ctx, deps, snapshotPath, parked, opts.healthTimeout()); rb.err != nil {
 		// The worst case: the new binary is bad AND the rollback itself
 		// could not complete. An operator in that state needs to know to
-		// restore from a snapshot by hand rather than be told "it
-		// failed" with no further detail -- so both causes are named.
+		// restore by hand rather than be told "it failed" with no further
+		// detail -- so both causes are named, and handRecovery names the
+		// steps that are actually outstanding rather than all of them.
 		return outcome, fmt.Errorf(
-			"update to %s failed (%w), AND rolling back also failed (%w); restore %s onto %s and the database snapshot at %s by hand",
-			release.Version, installErr, rbErr, deps.PreviousPath, deps.BinaryPath, snapshotPath,
+			"update to %s failed (%w), AND rolling back also failed (%w)%s",
+			release.Version, installErr, rb.err, handRecovery(deps, snapshotPath, rb),
 		)
 	}
 
@@ -246,22 +248,28 @@ func Update(ctx context.Context, deps Deps, opts Options) (Outcome, error) {
 // start, in the order the design spec lays out: the currently running
 // binary is parked at PreviousPath before the new one is written, so a
 // failure at any point after this still has an original to roll back to.
-func installAndStart(ctx context.Context, deps Deps, binary []byte) error {
+//
+// parked reports whether that park rename actually happened. It is the one
+// thing the filesystem cannot tell a rollback afterwards -- "we moved the
+// old binary and it is now gone" and "we never moved it" both look like an
+// absent PreviousPath -- and only the first is a state worth trying to undo
+// or worth telling an operator about.
+func installAndStart(ctx context.Context, deps Deps, binary []byte) (parked bool, err error) {
 	if err := os.Rename(deps.BinaryPath, deps.PreviousPath); err != nil {
-		return fmt.Errorf("move running binary to %s: %w", deps.PreviousPath, err)
+		return false, fmt.Errorf("move running binary to %s: %w", deps.PreviousPath, err)
 	}
 	if err := writeBinaryAtomically(deps.BinaryPath, binary); err != nil {
-		return fmt.Errorf("write new binary: %w", err)
+		return true, fmt.Errorf("write new binary: %w", err)
 	}
 	if deps.Migrate != nil {
 		if err := deps.Migrate(ctx); err != nil {
-			return fmt.Errorf("run migrations: %w", err)
+			return true, fmt.Errorf("run migrations: %w", err)
 		}
 	}
 	if err := deps.Service.Start(ctx); err != nil {
-		return fmt.Errorf("start service: %w", err)
+		return true, fmt.Errorf("start service: %w", err)
 	}
-	return nil
+	return true, nil
 }
 
 // writeBinaryAtomically writes data to a temp file in the same directory as
@@ -330,6 +338,19 @@ func backupSnapshot(ctx context.Context, deps Deps) (string, error) {
 	return path, nil
 }
 
+// rollbackResult is what rollback did, not merely whether it worked. err is
+// every failure joined; the three flags record recovery an operator still
+// has to perform by hand, which is a strictly smaller set -- a step that
+// succeeded, or that was never needed in the first place, leaves nothing to
+// do.
+type rollbackResult struct {
+	err error
+
+	binaryNotRestored bool
+	dbNotRestored     bool
+	serviceNotServing bool
+}
+
 // rollback undoes everything step 5 onward may have done: it stops the
 // service (idempotent if it already isn't running), moves keyhole.prev back
 // over whatever is at BinaryPath, restores the pre-update database
@@ -338,14 +359,30 @@ func backupSnapshot(ctx context.Context, deps Deps) (string, error) {
 // every problem at once rather than stopping at the first -- the worst case
 // here is an operator who needs to know exactly what still needs fixing by
 // hand.
-func rollback(ctx context.Context, deps Deps, snapshotPath string, healthTimeout time.Duration) error {
+//
+// parked comes from installAndStart and says whether there is a parked
+// binary to move back at all.
+func rollback(ctx context.Context, deps Deps, snapshotPath string, parked bool, healthTimeout time.Duration) rollbackResult {
+	var res rollbackResult
 	var errs []error
 
 	if err := deps.Service.Stop(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("stop service for rollback: %w", err))
 	}
-	if err := restoreBinary(deps); err != nil {
-		errs = append(errs, fmt.Errorf("restore previous binary: %w", err))
+	// Only a park that actually happened leaves a binary to move back.
+	// Restoring unconditionally is how the update-failed-AND-rollback-failed
+	// message ends up crying wolf, and on a likely first run at that: an
+	// operator without write permission on the directory holding the binary
+	// fails the park rename, so nothing is written and no migration runs --
+	// and yet restoreBinary reports "the previous binary is not available,"
+	// so they are told to hand-restore a binary and a database that were
+	// never touched, while Start below has already brought the untouched
+	// service back up.
+	if parked {
+		if err := restoreBinary(deps); err != nil {
+			errs = append(errs, fmt.Errorf("restore previous binary: %w", err))
+			res.binaryNotRestored = true
+		}
 	}
 	// Restoring the binary alone is the half-rollback nobody notices is
 	// missing: the old code would be back, reading a database the new
@@ -354,6 +391,7 @@ func rollback(ctx context.Context, deps Deps, snapshotPath string, healthTimeout
 	// restored binary can read.
 	if err := backup.Restore(snapshotPath, deps.DBPath); err != nil {
 		errs = append(errs, fmt.Errorf("restore database snapshot %s onto %s: %w", snapshotPath, deps.DBPath, err))
+		res.dbNotRestored = true
 	}
 	if err := deps.Service.Start(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("start service after rollback: %w", err))
@@ -373,9 +411,38 @@ func rollback(ctx context.Context, deps Deps, snapshotPath string, healthTimeout
 	// only answer to the question the operator is actually asking.
 	if err := deps.Health.Wait(ctx, healthTimeout); err != nil {
 		errs = append(errs, fmt.Errorf("service did not answer healthz within %s after rollback: %w", healthTimeout, err))
+		res.serviceNotServing = true
 	}
 
-	return errors.Join(errs...)
+	res.err = errors.Join(errs...)
+	return res
+}
+
+// handRecovery renders the "you have to do this yourself" sentence from what
+// actually went wrong, and renders nothing at all when nothing is
+// outstanding.
+//
+// The fixed template it replaces named every recovery step every time. It
+// told an operator to move keyhole.prev back when the binary had already
+// been restored and only the service start had failed, and to restore a
+// database snapshot that had been restored fine. An instruction that is
+// wrong most of the time is how the one message that has to be trustworthy
+// stops being read.
+func handRecovery(deps Deps, snapshotPath string, res rollbackResult) string {
+	var steps []string
+	if res.binaryNotRestored {
+		steps = append(steps, fmt.Sprintf("move %s back onto %s", deps.PreviousPath, deps.BinaryPath))
+	}
+	if res.dbNotRestored {
+		steps = append(steps, fmt.Sprintf("restore the database snapshot at %s onto %s", snapshotPath, deps.DBPath))
+	}
+	if res.serviceNotServing {
+		steps = append(steps, "start the service and confirm it answers /healthz")
+	}
+	if len(steps) == 0 {
+		return ""
+	}
+	return "; by hand: " + strings.Join(steps, ", then ")
 }
 
 // restoreBinary moves PreviousPath back over BinaryPath. It is named and

@@ -463,6 +463,58 @@ func TestUpdateTriesToRestartTheServiceWhenStoppingItFails(t *testing.T) {
 	})
 }
 
+// TestUpdateDoesNotClaimAHandRecoveryIsNeededWhenNothingWasMoved is the
+// likely first run: `keyhole update` without write permission on the
+// directory holding the binary. The park rename fails, so nothing is
+// written and no migration runs -- and yet a rollback that calls
+// restoreBinary unconditionally reports "the previous binary is not
+// available," which reaches the operator as "the update failed AND the
+// rollback failed; hand-restore your binary and your database snapshot."
+// None of that is true: the binary was never replaced, the database was
+// never migrated, and rollback's own Start has already brought the
+// untouched service back. The one message that must be trustworthy cannot
+// be the one that cries wolf.
+func TestUpdateDoesNotClaimAHandRecoveryIsNeededWhenNothingWasMoved(t *testing.T) {
+	h := newTestHarness(t)
+	_, src, pubKey := signedRelease(t, "v2.0.0", []byte("new keyhole binary contents"))
+
+	svc := &fakeService{}
+	health := &fakeHealth{}
+	deps := h.deps(src, svc, health)
+	// Park the binary somewhere the rename cannot land: the parent
+	// directory does not exist. What matters to Update is the shape of the
+	// failure -- the rename returned an error and the running binary is
+	// still exactly where it was -- which is the same shape a real EACCES
+	// on /usr/local/bin produces, and reproducible on every platform the
+	// tests run on.
+	deps.PreviousPath = filepath.Join(h.dir, "no-such-directory", "keyhole.prev")
+
+	outcome, err := Update(context.Background(), deps, Options{
+		CurrentVersion: "v1.0.0",
+		PublicKey:      pubKey,
+		AssetName:      testAsset,
+		HealthTimeout:  50 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("Update() error = %v, want nil: nothing was moved, so there is no failed rollback and nothing for an operator to restore by hand", err)
+	}
+	if !outcome.RolledBack {
+		t.Errorf("Outcome.RolledBack = false, want true: the service was stopped, so getting it back is a rollback: %+v", outcome)
+	}
+	if strings.Contains(outcome.Reason, "by hand") {
+		t.Errorf("Outcome.Reason = %q, want no hand-recovery instruction: nothing was moved", outcome.Reason)
+	}
+	if svc.startCalls != 1 {
+		t.Errorf("service Start calls = %d, want 1: the service was stopped and must be brought back up", svc.startCalls)
+	}
+	if got := readFile(t, h.binaryPath); !bytes.Equal(got, h.oldBinary) {
+		t.Errorf("binary at %s = %q, want the original %q, untouched", h.binaryPath, got, h.oldBinary)
+	}
+	if status := userStatus(t, h.dbPath, h.userEmail); status != "pending" {
+		t.Errorf("user status = %q, want pending: the migration never ran, so the database was never changed", status)
+	}
+}
+
 func TestUpdateDoesNotStopTheServiceWhenVerificationFails(t *testing.T) {
 	h := newTestHarness(t)
 	newBinary := []byte("new keyhole binary contents")
