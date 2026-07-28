@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createApiClient } from "../vault/api.js";
 import { createSession, rememberedEmail } from "../vault/session.js";
 import { createVaultStore } from "../vault/store.js";
 import { enroll } from "../vault/enroll.js";
 import { unlock } from "../vault/unlock.js";
+import { readAutoLock, startAutoLock } from "../vault/autolock.js";
 import { EnrolScreen } from "./screens/EnrolScreen.js";
 import { UnlockScreen } from "./screens/UnlockScreen.js";
 import { VaultScreen } from "./screens/VaultScreen.js";
@@ -66,6 +67,24 @@ export function App() {
   const { isUnlocked } = useSession(session);
   const inviteToken = useMemo(() => inviteTokenFromPath(window.location.pathname), []);
   const [enrolled, setEnrolled] = useState(false);
+  const [autoLock, setAutoLock] = useState(readAutoLock);
+
+  // Started only while unlocked -- there is nothing to lock otherwise -- and
+  // torn down and restarted whenever `autoLock` changes, so a setting picked
+  // in SettingsScreen takes effect immediately rather than at the next
+  // reload. `autoLock` must stay in this dependency array for exactly that
+  // reason: drop it and the timer keeps running under whatever setting was
+  // in effect when the session unlocked.
+  useEffect(() => {
+    if (!isUnlocked) return undefined;
+    return startAutoLock({
+      setting: autoLock,
+      onLock: () => {
+        store.clear();
+        session.lock();
+      },
+    });
+  }, [autoLock, isUnlocked, session, store]);
 
   const handleUnlock = useCallback(
     async (input: { email: string; masterPassword: string }) => {
@@ -127,5 +146,13 @@ export function App() {
     );
   }
 
-  return <VaultScreen api={api} session={session} store={store} />;
+  return (
+    <VaultScreen
+      api={api}
+      session={session}
+      store={store}
+      autoLock={autoLock}
+      onAutoLockChange={setAutoLock}
+    />
+  );
 }

@@ -14,13 +14,16 @@ import {
   type ItemRecord,
 } from "../../vault/items.js";
 import type { CollectionSummary } from "../../vault/collections.js";
+import { DEFAULT_AUTO_LOCK, type AutoLockSetting } from "../../vault/autolock.js";
 import { Button } from "../components/Button.js";
 import { Field } from "../components/Field.js";
 import { TabNav } from "../components/TabNav.js";
 import { useVaultState } from "../useVault.js";
 import { useCollectionsPanel } from "../useCollectionsPanel.js";
+import { useSettingsPanel } from "../useSettingsPanel.js";
 import { ItemEditor } from "./ItemEditor.js";
 import { CollectionsScreen } from "./CollectionsScreen.js";
+import { SettingsScreen } from "./SettingsScreen.js";
 
 export type Tab = "vault" | "collections" | "settings" | "admin";
 
@@ -180,10 +183,17 @@ export function VaultScreen({
   api,
   session,
   store,
+  autoLock = DEFAULT_AUTO_LOCK,
+  onAutoLockChange = () => undefined,
 }: {
   api: ApiClient;
   session: Session;
   store: VaultStore;
+  /** Optional so every existing caller (and test) that never mentions
+   *  auto-lock is unaffected -- mirrors VaultList's `collections = []`
+   *  default above. App.tsx is the only real caller that supplies these. */
+  autoLock?: AutoLockSetting;
+  onAutoLockChange?(setting: AutoLockSetting): void;
 }) {
   const state = useVaultState(store);
   const [editing, setEditing] = useState<ItemRecord | "new" | null>(null);
@@ -207,6 +217,15 @@ export function VaultScreen({
     session,
     store,
     active: activeTab === "collections",
+  });
+
+  const settingsPanel = useSettingsPanel({
+    api,
+    session,
+    store,
+    active: activeTab === "settings",
+    autoLock,
+    onAutoLockChange,
   });
 
   // Re-sync on focus rather than a timer: it catches the realistic case — you
@@ -372,9 +391,7 @@ export function VaultScreen({
 
       {activeTab === "collections" && <CollectionsScreen {...collectionsPanel} />}
 
-      {activeTab === "settings" && (
-        <p style={{ color: "var(--ink-muted)" }}>Settings are not built yet.</p>
-      )}
+      {activeTab === "settings" && <SettingsScreen {...settingsPanel} />}
 
       {activeTab === "admin" && isAdmin && (
         <p style={{ color: "var(--ink-muted)" }}>The admin console is not built yet.</p>

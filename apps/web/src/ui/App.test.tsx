@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App, inviteTokenFromPath } from "./App.js";
 import type { Session } from "../vault/session.js";
@@ -20,6 +20,20 @@ vi.mock("../vault/enroll.js", () => ({
       privateKey: new Uint8Array(32),
     });
     return { recoveryCode: "ABCD-EFGH-IJKL-MNOP-QRST", loggedIn: true };
+  }),
+}));
+
+// Same reasoning as the enroll.js mock above: the auto-lock wiring test
+// below only needs App to reach an unlocked state, not to drive a real
+// prelogin/login round trip through Argon2id.
+vi.mock("../vault/unlock.js", () => ({
+  unlock: vi.fn(async (deps: { session: Session }) => {
+    deps.session.open({
+      tokens: { accessToken: "test-access-token", refreshToken: "test-refresh-token" },
+      user: { id: "user-1", email: "a@b.c", name: "Test User", role: "member" },
+      userKey: new Uint8Array(32),
+      privateKey: new Uint8Array(32),
+    });
   }),
 }));
 
@@ -124,5 +138,55 @@ describe("App", () => {
       vi.unstubAllGlobals();
       window.history.replaceState(null, "", originalPathname);
     }
+  });
+});
+
+describe("App auto-lock wiring", () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("applies a changed auto-lock setting immediately, not just after the next reload", async () => {
+    // Answers store.load's GET /api/sync (App's post-unlock sync) and
+    // useSettingsPanel's GET /api/account/sessions -- unlock() itself is
+    // mocked above, so nothing else ever reaches fetch.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === "string" ? input : input.toString();
+        const body = url.includes("/api/account/sessions") ? { sessions: [] } : { revision: 0, items: [] };
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }),
+    );
+
+    render(<App />);
+
+    await userEvent.type(screen.getByLabelText(/email/i), "a@b.c");
+    await userEvent.type(screen.getByLabelText("Master password"), "correct horse");
+    await userEvent.click(screen.getByRole("button", { name: /^unlock$/i }));
+
+    await userEvent.click(await screen.findByRole("button", { name: "Settings" }));
+
+    // Fake timers only from here: the select change below is what restarts
+    // App's auto-lock effect, and it is that *new* timer this test needs to
+    // fast-forward.
+    vi.useFakeTimers();
+
+    fireEvent.change(screen.getByLabelText("Auto-lock"), { target: { value: "1" } });
+
+    // If `autoLock` ever drops out of App.tsx's effect dependency array
+    // (Mutation C), this timer is still the one the effect scheduled on
+    // mount under the default 15-minute setting, and one extra minute of
+    // idle time changes nothing -- the assertion below is what catches that.
+    act(() => {
+      vi.advanceTimersByTime(61_000);
+    });
+
+    expect(screen.getByRole("heading", { name: /unlock your vault/i })).toBeInTheDocument();
   });
 });
