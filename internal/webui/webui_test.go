@@ -87,14 +87,6 @@ func TestHashedAssetsAreCacheableAndTheIndexIsNot(t *testing.T) {
 	}
 }
 
-func TestBuiltReportsWhetherARealIndexIsEmbedded(t *testing.T) {
-	// Guards the failure mode where a release ships the placeholder because
-	// `pnpm build` never ran. Built() is what release.yml asserts against.
-	if !Built() {
-		t.Skip("dist holds only the placeholder; run `pnpm --filter @keyhole/web build`")
-	}
-}
-
 // When the app has not been built, dist holds only placeholder.html and there
 // is no real index.html. Handler must still answer "/" with 200 and the
 // placeholder's explanation, not a bare 404 that leaves an operator guessing.

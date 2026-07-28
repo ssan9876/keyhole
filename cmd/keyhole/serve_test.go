@@ -9,11 +9,13 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"io"
 	"math/big"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -188,12 +190,126 @@ func TestServeTerminatesTLSItself(t *testing.T) {
 	// the plain request to fail and requires no further assertion.
 }
 
-func TestServeWarnsOnPlainHTTPOnNonLoopbackAddr(t *testing.T) {
-	// Regression guard for isLoopbackAddr, exercised directly: a routable
-	// address without TLS is a warning, not a refusal, because a reverse
-	// proxy or tunnel in front of a loopback bind is also a valid way to
-	// reach a non-loopback network -- see the doc comment on isLoopbackAddr's
-	// call site in serve().
+// captureStdout redirects os.Stdout for the duration of fn and returns
+// everything written to it.
+//
+// serve() builds its own slog handler over os.Stdout at the moment it is
+// called and takes no logger, so there is no seam to inject one through:
+// swapping the file out from under it is the only way to read what it
+// logged. fn must have finished with the server before it returns, or the
+// close below races the server's own logging goroutine.
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe: %v", err)
+	}
+	previous := os.Stdout
+	os.Stdout = w
+	// Deferred rather than done inline after fn, so a t.Fatal inside fn
+	// does not leave every later test in this package writing into a pipe
+	// nobody reads.
+	defer func() { os.Stdout = previous }()
+
+	fn()
+
+	// The write end has to be closed before the read, or ReadAll waits for
+	// an EOF only this side can produce.
+	if err := w.Close(); err != nil {
+		t.Fatalf("close the write end of the capture pipe: %v", err)
+	}
+	defer r.Close()
+	out, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("read the capture pipe: %v", err)
+	}
+	return string(out)
+}
+
+// serveUntilItIsListening runs serve(cfg) as far as its listener, then
+// shuts it down and waits for it to return. Everything serve logs on the way
+// up has been written by the time this returns.
+//
+// Deliberately not startTestServer: that helper overwrites cfg.Addr with
+// 127.0.0.1:0, and the address under test here is the whole point.
+func serveUntilItIsListening(t *testing.T, cfg config.Config) {
+	t.Helper()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ready := make(chan string, 1)
+	done := make(chan error, 1)
+
+	go func() { done <- serve(cfg, ctx, ready) }()
+
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("serve exited before it started listening: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("serve did not report a listening address within 5s")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("serve did not shut down cleanly: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("serve did not stop within 5s of shutdown")
+	}
+}
+
+// plainHTTPWarning is the substring the two tests below agree on. Both
+// assertions have to name the same line, or one of them stops meaning
+// anything the moment the wording changes.
+const plainHTTPWarning = "serving without TLS on a non-loopback address"
+
+// This warning is the only thing between an operator who binds a routable
+// address in the clear and a vault that loads, accepts a password, and
+// cannot decrypt a single item: window.crypto.subtle does not exist outside
+// a secure context.
+//
+// So it is asserted through serve() rather than through isLoopbackAddr.
+// The test that used to carry this name never called serve and never looked
+// at a log line, which meant deleting the warning outright left it green.
+func TestServeWarnsWhenServingPlainHTTPOnANonLoopbackAddress(t *testing.T) {
+	cfg := config.Default()
+	cfg.DataDir = filepath.Join(t.TempDir(), "data")
+	// The configuration the warning exists for. serve() emits it after the
+	// listener binds, so the bind is real -- on a kernel-chosen port, for
+	// the few milliseconds it takes to come up and go down again.
+	cfg.Addr = "0.0.0.0:0"
+
+	out := captureStdout(t, func() { serveUntilItIsListening(t, cfg) })
+
+	if !strings.Contains(out, plainHTTPWarning) {
+		t.Errorf("serve on %s without TLS logged no warning; it logged:\n%s", cfg.Addr, out)
+	}
+}
+
+// The other half. A warning that fires on every start is one an operator
+// learns to scroll past, and an assertion that only looks for the line
+// would pass against exactly that.
+func TestServeDoesNotWarnOnALoopbackAddress(t *testing.T) {
+	cfg := config.Default()
+	cfg.DataDir = filepath.Join(t.TempDir(), "data")
+	cfg.Addr = "127.0.0.1:0"
+
+	out := captureStdout(t, func() { serveUntilItIsListening(t, cfg) })
+
+	if strings.Contains(out, plainHTTPWarning) {
+		t.Errorf("serve warned about plain HTTP on %s, which nothing off this machine can reach; it logged:\n%s", cfg.Addr, out)
+	}
+}
+
+func TestIsLoopbackAddr(t *testing.T) {
+	// A routable address without TLS is a warning, not a refusal, because a
+	// reverse proxy or tunnel in front of a loopback bind is also a valid
+	// way to reach a non-loopback network -- see the doc comment on
+	// isLoopbackAddr's call site in serve().
 	if isLoopbackAddr("0.0.0.0:8477") {
 		t.Error(`isLoopbackAddr("0.0.0.0:8477") = true, want false`)
 	}
