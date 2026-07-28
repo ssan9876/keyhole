@@ -3,3 +3,4 @@ Personal,1,login,Example Mail,GENERATED FIXTURE - no real credential appears in 
 ,0,login,Example Forum,,,0,https://forum.example.org,ada,"fixture,pw,with,commas",
 Work,0,note,Router notes,"first line
 second line",,0,,,,
+Work/Servers,0,login,Example Wiki,,"Security question: first pet",1,"https://wiki.example.org,https://wiki.example.org/login,androidapp://org.example.wiki",ada,fixture-pw-9Kd3xR,otpauth://totp/Example:ada@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Example
