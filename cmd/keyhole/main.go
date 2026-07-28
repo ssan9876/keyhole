@@ -9,11 +9,17 @@ import (
 const usage = `keyhole — self-hosted end-to-end-encrypted password manager
 
 Usage:
-  keyhole serve     [--config PATH]   Run the HTTP server
-  keyhole migrate   [--config PATH]   Apply pending database migrations
-  keyhole admin     <subcommand>      Administrative commands
+  keyhole serve     [--config PATH]                       Run the HTTP server
+  keyhole migrate   [--config PATH]                        Apply pending database migrations
+  keyhole admin     <subcommand>                           Administrative commands
+  keyhole backup    [--config PATH] [--out DIR] [--keep N] Write a snapshot and prune old ones
+  keyhole restore   <file> [--config PATH]                 Replace the database with a snapshot
 
 Run "keyhole admin" for administrative subcommands.
+
+Every backup is entirely ciphertext -- item bodies, names, and URLs are
+encrypted under keys the server has never held -- so replicating a backup
+somewhere less trusted than the server itself is a reasonable thing to do.
 `
 
 func main() {
@@ -30,6 +36,10 @@ func main() {
 		err = runMigrate(os.Args[2:])
 	case "admin":
 		err = runAdmin(os.Args[2:])
+	case "backup":
+		err = runBackup(os.Args[2:])
+	case "restore":
+		err = runRestore(os.Args[2:])
 	case "-h", "--help", "help":
 		fmt.Print(usage)
 		return
