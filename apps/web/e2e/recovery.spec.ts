@@ -193,6 +193,36 @@ test.describe.serial("recovery", () => {
       // itself was asserted in step 5.
       expect(newCode).toMatch(RECOVERY_CODE);
     });
+
+    await test.step("10. and it left nothing behind in storage", async () => {
+      // Design spec §6.3: decrypted keys and plaintext live in memory only,
+      // never localStorage, sessionStorage, or IndexedDB. vault.spec.ts asserts
+      // this at the end of the unlock journey; a gate that does not run on the
+      // newest flow is not covering it, and recovery handles more secret
+      // material than any other screen -- a recovered userKey, a recovered
+      // private key, a one-time recovery token, two recovery codes.
+      //
+      // By this point every one of them has existed in the tab and been
+      // finished with, so anything that would ever be persisted has had its
+      // chance to land.
+      const storageState = await page.evaluate(async () => {
+        const databases = (await indexedDB.databases?.()) ?? [];
+        return {
+          localStorageKeys: Object.keys(localStorage).sort(),
+          sessionStorageKeys: Object.keys(sessionStorage),
+          indexedDbNames: databases.map((db) => db.name),
+        };
+      });
+      // The exact set, not an absence check: a recovery token written under
+      // some new key would pass "does not contain the code" and fail here.
+      // keyhole.autolock is absent because this journey never opens Settings
+      // and the app writes that key only when the user changes the setting
+      // (src/vault/autolock.ts) -- so the allowed set here is smaller than
+      // vault.spec.ts's by one, not different in kind.
+      expect(storageState.localStorageKeys).toEqual(["keyhole.email"]);
+      expect(storageState.sessionStorageKeys).toEqual([]);
+      expect(storageState.indexedDbNames).toEqual([]);
+    });
   });
 
   test("answers an address with no account exactly as it answers a real one", async ({
