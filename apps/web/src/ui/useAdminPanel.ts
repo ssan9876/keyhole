@@ -109,7 +109,17 @@ export function useAdminPanel({
   const handleSetStatus = useCallback(
     async (input: { userId: string; status: "active" | "disabled" }): Promise<void> => {
       const updated = await setUserStatus({ api }, input);
-      setUsers((prev) => prev.map((user) => (user.id === updated.id ? updated : user)));
+      // internal/httpapi/admin.go:164 builds this response from a bare
+      // store.UserSummary{User: user}, leaving HasPendingInvite at its zero
+      // value -- this PATCH response is not authoritative for that field,
+      // only for status and role. Merging the whole object over the row by
+      // id would erase "Reissue invite" for a pending account the moment its
+      // status is toggled, recoverable only by a full reload.
+      setUsers((prev) =>
+        prev.map((user) =>
+          user.id === updated.id ? { ...user, status: updated.status, role: updated.role } : user,
+        ),
+      );
     },
     [api],
   );

@@ -200,6 +200,41 @@ describe("useAdminPanel", () => {
     expect(outcome?.inviteUrl).toBe("https://vault.example/enroll/tok-reset");
   });
 
+  it("preserves hasPendingInvite when a status change comes back without it", async () => {
+    // internal/httpapi/admin.go:164 builds the PATCH response from a bare
+    // store.UserSummary{User: user}, leaving HasPendingInvite at its zero
+    // value regardless of the account's real state. A whole-object merge of
+    // that response over the row by id would erase "Reissue invite" for a
+    // pending user the moment an admin toggles their status.
+    const api: ApiClient = fakeApi({
+      get: async (path) => {
+        if (path === "/api/admin/users") {
+          return { users: [baseUser({ status: "active", hasPendingInvite: true })] };
+        }
+        if (path === "/api/admin/collections") return { collections: [], pendingGrants: [] };
+        if (path === "/api/admin/audit?limit=50") return { entries: [] };
+        throw new Error(`unexpected GET ${path}`);
+      },
+      patch: async (path, body) => {
+        expect(path).toBe("/api/admin/users/u1");
+        expect(body).toEqual({ status: "disabled" });
+        // The server's real shape: hasPendingInvite always false here, even
+        // though the account genuinely still has a pending invite.
+        return baseUser({ status: "disabled", hasPendingInvite: false });
+      },
+    });
+
+    const { result } = renderHook(() => useAdminPanel({ api, active: true }));
+    await waitFor(() => expect(result.current.users).toHaveLength(1));
+
+    await act(async () => {
+      await result.current.onSetStatus({ userId: "u1", status: "disabled" });
+    });
+
+    expect(result.current.users[0]?.status).toBe("disabled");
+    expect(result.current.users[0]?.hasPendingInvite).toBe(true);
+  });
+
   it("passes `before` through to loadAudit and appends the older page after the newer one", async () => {
     const api: ApiClient = fakeApi({
       get: async (path) => {
