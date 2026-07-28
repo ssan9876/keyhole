@@ -51,6 +51,9 @@ function fakeApi(options: FakeOptions = {}): { api: ApiClient; calls: string[] }
     async put<T>(): Promise<T> {
       throw new Error("unexpected PUT");
     },
+    async patch<T>(): Promise<T> {
+      throw new Error("unexpected PATCH");
+    },
     async del<T>(): Promise<T> {
       throw new Error("unexpected DELETE");
     },

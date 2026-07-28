@@ -15,6 +15,7 @@ interface FakeApiOptions {
   get?: (path: string) => Promise<unknown>;
   post?: (path: string, body?: unknown) => Promise<unknown>;
   put?: (path: string, body?: unknown) => Promise<unknown>;
+  patch?: (path: string, body?: unknown) => Promise<unknown>;
   del?: (path: string) => Promise<unknown>;
 }
 
@@ -37,6 +38,10 @@ export function fakeApi(options: FakeApiOptions = {}): ApiClient {
     async put<T>(path: string, body?: unknown): Promise<T> {
       if (options.put) return (await options.put(path, body)) as T;
       throw new Error(`unexpected PUT ${path}`);
+    },
+    async patch<T>(path: string, body?: unknown): Promise<T> {
+      if (options.patch) return (await options.patch(path, body)) as T;
+      throw new Error(`unexpected PATCH ${path}`);
     },
     async del<T>(path: string): Promise<T> {
       if (options.del) return (await options.del(path)) as T;

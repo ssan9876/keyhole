@@ -64,6 +64,9 @@ function syncApi(pages: Record<string, unknown>): ApiClient {
     async put<T>(): Promise<T> {
       throw new Error("unexpected");
     },
+    async patch<T>(): Promise<T> {
+      throw new Error("unexpected");
+    },
     async del<T>(): Promise<T> {
       throw new Error("unexpected");
     },
@@ -88,6 +91,9 @@ function sequencedSyncApi(pages: Record<string, unknown[]>): ApiClient {
       throw new Error("unexpected");
     },
     async put<T>(): Promise<T> {
+      throw new Error("unexpected");
+    },
+    async patch<T>(): Promise<T> {
       throw new Error("unexpected");
     },
     async del<T>(): Promise<T> {

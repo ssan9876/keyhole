@@ -135,6 +135,18 @@ describe("createApiClient", () => {
     expect(calls).toBe(1);
   });
 
+  it("sends PATCH with a JSON body for partial updates", async () => {
+    const fetchImpl = vi.fn(async (_url, init) => {
+      expect(init?.method).toBe("PATCH");
+      expect(init?.body).toBe(JSON.stringify({ status: "disabled" }));
+      return jsonResponse(200, { id: "u1", status: "disabled" });
+    }) as unknown as typeof fetch;
+
+    await expect(
+      clientWith(fetchImpl).patch("/api/admin/users/u1", { status: "disabled" }),
+    ).resolves.toEqual({ id: "u1", status: "disabled" });
+  });
+
   it("treats a 204 as an empty success rather than a parse failure", async () => {
     const fetchImpl = (async () =>
       new Response(null, { status: 204 })) as unknown as typeof fetch;

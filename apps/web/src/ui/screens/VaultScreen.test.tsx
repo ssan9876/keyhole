@@ -105,6 +105,9 @@ async function wireFor(
     async put<T>(): Promise<T> {
       throw new Error("unexpected PUT");
     },
+    async patch<T>(): Promise<T> {
+      throw new Error("unexpected PATCH");
+    },
     async del<T>(): Promise<T> {
       throw new Error("unexpected DEL");
     },
@@ -181,6 +184,9 @@ describe("VaultScreen", () => {
           ciphertext: sent.ciphertext,
           wrappedItemKey: sent.wrappedItemKey,
         } as T;
+      },
+      async patch<T>(): Promise<T> {
+        throw new Error("unexpected PATCH");
       },
       async del<T>(): Promise<T> {
         throw new Error("unexpected DEL");
