@@ -193,7 +193,24 @@ func Update(ctx context.Context, deps Deps, opts Options) (Outcome, error) {
 	// Step 5 onward: everything past this point is inside the "must roll
 	// back on failure" zone, because the service is about to go down.
 	if err := deps.Service.Stop(ctx); err != nil {
-		return outcome, fmt.Errorf("stop service: %w", err)
+		// This is the one early return that can leave the vault offline.
+		// `systemctl stop` can exit non-zero while the unit has in fact
+		// stopped -- a stop job that timed out and ended in SIGKILL, or a
+		// unit that ended in `failed` state -- so returning without trying
+		// to bring it back leaves the vault down until a human notices.
+		// Step 8 says roll back on any failure from step 5 onward, and this
+		// is step 5.
+		//
+		// Deliberately Start rather than rollback(): nothing has been moved
+		// yet, so PreviousPath does not exist, and rollback's restoreBinary
+		// would report "the previous binary is not available" -- telling an
+		// operator the rollback failed and they must hand-restore a binary
+		// nothing ever touched.
+		restart := "restarting it succeeded"
+		if startErr := deps.Service.Start(ctx); startErr != nil {
+			restart = fmt.Sprintf("restarting it also failed (%v)", startErr)
+		}
+		return outcome, fmt.Errorf("stop service failed and the service may be down (%w); %s", err, restart)
 	}
 
 	installErr := installAndStart(ctx, deps, binary)

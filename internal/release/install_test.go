@@ -397,6 +397,72 @@ func TestRollbackThatStartsTheServiceButNeverGetsItHealthyIsNotReportedAsClean(t
 	}
 }
 
+// TestUpdateTriesToRestartTheServiceWhenStoppingItFails covers the one early
+// return that can leave the vault offline. `systemctl stop` can exit
+// non-zero while the unit has in fact stopped -- a stop job that timed out
+// and ended in SIGKILL, or a unit that ended in `failed` state -- so bailing
+// out on a stop error without trying to start the service again leaves the
+// vault down until a human notices. Whichever way the restart goes, the
+// message has to say so: "the service may be down" and "it is back up" are
+// different instructions to the person reading it.
+func TestUpdateTriesToRestartTheServiceWhenStoppingItFails(t *testing.T) {
+	stopErr := errors.New("job for keyhole.service failed: timed out, killed")
+
+	run := func(t *testing.T, startErr error) (*fakeService, testHarness, error) {
+		t.Helper()
+		h := newTestHarness(t)
+		_, src, pubKey := signedRelease(t, "v2.0.0", []byte("new keyhole binary contents"))
+
+		svc := &fakeService{stopErr: stopErr, startErr: startErr}
+		deps := h.deps(src, svc, &fakeHealth{})
+
+		_, err := Update(context.Background(), deps, Options{
+			CurrentVersion: "v1.0.0",
+			PublicKey:      pubKey,
+			AssetName:      testAsset,
+			HealthTimeout:  50 * time.Millisecond,
+		})
+		if err == nil {
+			t.Fatal("Update() error = nil, want an error: the service could not be stopped")
+		}
+		// The stop failed before anything was swapped, so there must be
+		// nothing on disk to undo -- which is also why this path must not
+		// call rollback.
+		if got := readFile(t, h.binaryPath); !bytes.Equal(got, h.oldBinary) {
+			t.Errorf("binary at %s = %q, want it untouched at %q", h.binaryPath, got, h.oldBinary)
+		}
+		if _, statErr := os.Stat(h.prevPath); !os.IsNotExist(statErr) {
+			t.Errorf("prev path %s exists, want it never created", h.prevPath)
+		}
+		return svc, h, err
+	}
+
+	t.Run("the restart works", func(t *testing.T) {
+		svc, _, err := run(t, nil)
+		if svc.startCalls != 1 {
+			t.Fatalf("service Start calls = %d, want 1: a stop that failed may have left the vault down, so Update must try to bring it back", svc.startCalls)
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "timed out, killed") {
+			t.Errorf("error %q does not name why stopping the service failed", msg)
+		}
+		if !strings.Contains(msg, "restarting it succeeded") {
+			t.Errorf("error %q does not tell the operator the service is back up", msg)
+		}
+	})
+
+	t.Run("the restart also fails", func(t *testing.T) {
+		svc, _, err := run(t, errors.New("unit keyhole.service is masked"))
+		if svc.startCalls != 1 {
+			t.Fatalf("service Start calls = %d, want 1", svc.startCalls)
+		}
+		msg := err.Error()
+		if !strings.Contains(msg, "also failed") || !strings.Contains(msg, "masked") {
+			t.Errorf("error %q does not say the restart attempt failed, or why -- which is the operator's cue that the vault is still down", msg)
+		}
+	})
+}
+
 func TestUpdateDoesNotStopTheServiceWhenVerificationFails(t *testing.T) {
 	h := newTestHarness(t)
 	newBinary := []byte("new keyhole binary contents")
