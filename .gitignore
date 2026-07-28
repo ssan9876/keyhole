@@ -35,3 +35,15 @@ config.yml
 .idea/
 .DS_Store
 Thumbs.db
+
+# The built web app is embedded at build time. The placeholder is committed so
+# `go build ./...` works on a fresh clone, where dist/ would otherwise be empty
+# and the //go:embed pattern would match nothing and fail to compile.
+#
+# The generic "dist/" rule above excludes this directory itself (it has no
+# leading slash, so it matches a directory named dist at any depth) — and
+# once a directory is excluded, git will not look inside it for a later
+# negation, no matter the order. It has to be un-excluded first.
+!/internal/webui/dist/
+/internal/webui/dist/*
+!/internal/webui/dist/placeholder.html

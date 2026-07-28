@@ -33,6 +33,19 @@ type Server struct {
 	// fixture every handler test uses and will keep using.
 	stop     chan struct{}
 	stopOnce sync.Once
+	// web serves the built web app for every unmatched non-API path. Nil by
+	// default, so every existing handler test keeps its JSON 404 for an
+	// unmatched route; only WithWebUI sets it.
+	web http.Handler
+}
+
+// Option configures a Server at construction time.
+type Option func(*Server)
+
+// WithWebUI serves h for any unmatched GET outside /api/. Without this
+// option web is nil and unmatched paths keep returning the JSON 404 envelope.
+func WithWebUI(h http.Handler) Option {
+	return func(s *Server) { s.web = h }
 }
 
 // New builds the server and registers every route.
@@ -40,7 +53,7 @@ type Server struct {
 // Routing is stdlib ServeMux. Go 1.22's method-and-wildcard patterns
 // ("POST /api/items/{id}") cover every route in spec section 4.3, so a router
 // dependency would buy nothing.
-func New(cfg config.Config, st *store.Store, secret []byte, logger *slog.Logger) *Server {
+func New(cfg config.Config, st *store.Store, secret []byte, logger *slog.Logger, opts ...Option) *Server {
 	s := &Server{
 		cfg:    cfg,
 		store:  st,
@@ -56,6 +69,9 @@ func New(cfg config.Config, st *store.Store, secret []byte, logger *slog.Logger)
 		// walking an address list hits it immediately.
 		preloginLimiter: auth.NewLimiter(20, time.Second, time.Minute),
 		stop:            make(chan struct{}),
+	}
+	for _, opt := range opts {
+		opt(s)
 	}
 	// WriteError and WriteJSON are free functions with no server to reach, so
 	// this is how their one log line ends up in the configured destination and
@@ -157,11 +173,20 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/admin/audit", s.requireAdmin(s.handleAdminAudit))
 	s.mux.HandleFunc("GET /api/admin/collections", s.requireAdmin(s.handleAdminListCollections))
 
-	// Anything unmatched is a 404 in the standard envelope rather than Go's
-	// plain-text default, so a client only ever parses one error shape.
-	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	// /api/ before /: ServeMux picks the longer pattern, so an unknown API
+	// path keeps the JSON envelope every client parses, while everything else
+	// falls through to the web app.
+	s.mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, CodeNotFound, "no such endpoint")
 	})
+
+	if s.web != nil {
+		s.mux.Handle("/", s.web)
+	} else {
+		s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+			WriteError(w, http.StatusNotFound, CodeNotFound, "no such endpoint")
+		})
+	}
 
 	// Deliberately absent: any registration or signup route. Accounts are
 	// created by an admin (spec section 5). Adding one here is a design change,

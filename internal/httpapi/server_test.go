@@ -45,6 +45,28 @@ func newTestServerWithLogger(t *testing.T, logger *slog.Logger) *Server {
 	return srv
 }
 
+// newTestServerWithOptions is newTestServer for the tests that need to pass
+// construction-time options, such as WithWebUI.
+func newTestServerWithOptions(t *testing.T, opts ...Option) *Server {
+	t.Helper()
+
+	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("store.Open: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	if err := st.Migrate(context.Background()); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.BaseURL = "http://test.local"
+
+	srv := New(cfg, st, make([]byte, 32), slog.New(slog.NewTextHandler(io.Discard, nil)), opts...)
+	t.Cleanup(func() { _ = srv.Close() })
+	return srv
+}
+
 func TestCloseStopsTheLimiterSweeperAndIsSafeToRepeat(t *testing.T) {
 	srv := newTestServer(t)
 
@@ -137,6 +159,54 @@ func TestThereIsNoRegistrationRoute(t *testing.T) {
 		if rec.Code != http.StatusNotFound {
 			t.Errorf("POST %s returned %d; no registration route may exist", path, rec.Code)
 		}
+	}
+}
+
+func TestUnknownAPIPathStillReturnsTheJSONEnvelope(t *testing.T) {
+	web := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte("<html>should not be reached by /api/</html>"))
+	})
+	srv := newTestServerWithOptions(t, WithWebUI(web))
+
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/nope", nil))
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("a 404 on an API path must still be the JSON error envelope even with a web handler configured, got %q", rec.Body.String())
+	}
+	if body.Error.Code != "not_found" {
+		t.Errorf("code = %q, want %q", body.Error.Code, "not_found")
+	}
+}
+
+func TestUnknownNonAPIPathReachesTheWebHandlerWhenOneIsConfigured(t *testing.T) {
+	const stubBody = "<html>stub index</html>"
+	web := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(stubBody))
+	})
+	srv := newTestServerWithOptions(t, WithWebUI(web))
+
+	// /enroll/<token> is the route with no file behind it: the client owns it,
+	// and only the configured web handler — not the JSON 404 — can answer it.
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/enroll/tok_abc123", nil))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+	if rec.Body.String() != stubBody {
+		t.Errorf("body = %q, did not reach the configured web handler", rec.Body.String())
 	}
 }
 

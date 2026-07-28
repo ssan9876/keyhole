@@ -16,6 +16,7 @@ import (
 	"github.com/ssan9876/keyhole/internal/httpapi"
 	"github.com/ssan9876/keyhole/internal/secret"
 	"github.com/ssan9876/keyhole/internal/store"
+	"github.com/ssan9876/keyhole/internal/webui"
 )
 
 func parseLevel(name string) slog.Level {
@@ -64,7 +65,15 @@ func runServe(args []string) error {
 		return err
 	}
 
-	api := httpapi.New(cfg, st, serverSecret, logger)
+	webHandler, err := webui.Handler()
+	if err != nil {
+		return err
+	}
+	if !webui.Built() {
+		logger.Warn("web app not built; serving the placeholder page for every route")
+	}
+
+	api := httpapi.New(cfg, st, serverSecret, logger, httpapi.WithWebUI(webHandler))
 	defer api.Close()
 
 	srv := &http.Server{

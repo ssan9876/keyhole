@@ -6,6 +6,12 @@ import react from "@vitejs/plugin-react";
 // dev setup cannot pass while a same-origin assumption is broken.
 export default defineConfig({
   plugins: [react()],
+  build: {
+    // Straight into the Go embed directory: a copy step is one more thing to
+    // forget, and forgetting it ships a binary serving the placeholder.
+    outDir: "../../internal/webui/dist",
+    emptyOutDir: true,
+  },
   server: {
     port: 5173,
     proxy: {
