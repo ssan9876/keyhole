@@ -123,6 +123,47 @@ if [ -n "$minisign_line" ] && [ -n "$sha256_line" ]; then
   fi
 fi
 
+# A failed verification must stop the container, not merely exit.
+#
+# This is a source-level assertion, and deliberately so: it is a proxy for a
+# branch no dry run can reach. All three verification-failure sites sit behind
+# `if ! in_ct ...`, in_ct goes through run(), and run() returns 0 without
+# running anything when DRY_RUN=yes — so the failure branch never executes and
+# abort_stopped's output appears in neither golden. Replacing all three calls
+# with a plain `die` leaves a running, half-provisioned container after a
+# signature verification failure — exactly what the comment above abort_stopped
+# forbids — and every other assertion in this file still passes.
+#
+# Each site is matched by its full call line, so swapping one for `die` while
+# keeping the message is caught too.
+while IFS='|' read -r what site; do
+  if grep -qF -- "$site" scripts/install.sh; then
+    echo "ok: a failed ${what} stops the container"
+  else
+    echo "FAIL: the ${what} failure site no longer calls abort_stopped (looked for: $site)"; fail=1
+  fi
+done <<'SITES'
+download|abort_stopped "downloading ${VERSION} failed"
+signature verification|abort_stopped "the minisign signature over SHA256SUMS did not verify against the key in this script"
+checksum check|abort_stopped "the downloaded binary does not match its signed checksum"
+SITES
+
+# ...and abort_stopped has to actually stop it. A version of that function that
+# only printed would satisfy the three assertions above and stop nothing.
+#
+# Comments are stripped first. The first version of this check looked for the
+# string "pct stop" anywhere in the function body and passed against a body
+# whose `run pct stop` had been replaced with `run true` — because the words
+# "pct stop" survive in the comment and in the failure message. A check a
+# comment can satisfy is not a check.
+abort_body="$(awk '/^abort_stopped\(\) \{/{f=1} f{print} f && /^\}/{exit}' scripts/install.sh \
+  | grep -v '^[[:space:]]*#')"
+if printf '%s\n' "$abort_body" | grep -qE 'run pct stop "\$\{?CTID\}?"'; then
+  echo "ok: abort_stopped runs pct stop on the container"
+else
+  echo "FAIL: abort_stopped no longer runs pct stop (its body has no 'run pct stop \"\$CTID\"')"; fail=1
+fi
+
 # The pinned version and key must be real values, not placeholders.
 grep -q 'OWNER="ssan9876"' scripts/install.sh || { echo "FAIL: OWNER"; fail=1; }
 grep -qE '^VERSION="v[0-9]+\.[0-9]+\.[0-9]+"' scripts/install.sh || { echo "FAIL: VERSION not a pinned tag"; fail=1; }
