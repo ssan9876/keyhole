@@ -51,6 +51,59 @@ case "$leak_plan" in
 esac
 rm -f "$token_file"
 
+# ...but that assertion only inspects the plan, and the plan is produced by a
+# hand-written printf in push_tunnel_token rather than by the code that moves
+# the secret. The two branches are separate code, so the check above is blind to
+# the one that matters: rewrite the real branch as
+#
+#   pct exec "$CTID" -- sh -c "echo $TUNNEL_TOKEN > '${TUNNEL_TOKEN_PATH}'"
+#
+# and the token is in the container's argv and visible in ps on the host, while
+# the dry-run branch still prints "not shown" and every assertion above passes.
+#
+# So pin the source instead: the host's copy of the token may be expanded in
+# exactly two places, and nowhere else. Escaped \$TUNNEL_TOKEN does not count —
+# that is the container's own variable inside a quoted command string, read from
+# the file rather than carried from here, which is the whole design.
+expected_token_expansions="$(cat <<'EXPECTED'
+if [ "$DRY_RUN" != "yes" ] && [ -z "$TUNNEL_TOKEN" ]; then
+printf '%s' "$TUNNEL_TOKEN" | pct exec "$CTID" -- sh -c "umask 077; cat > '${TUNNEL_TOKEN_PATH}'"
+EXPECTED
+)"
+actual_token_expansions="$(grep -hE '(^|[^\\])\$\{?TUNNEL_TOKEN\}?([^_A-Za-z0-9]|$)' \
+  scripts/install.sh | sed 's/^[[:space:]]*//')"
+if [ "$expected_token_expansions" = "$actual_token_expansions" ]; then
+  echo "ok: the tunnel token is expanded only in the emptiness guard and the printf producer"
+else
+  echo "FAIL: \$TUNNEL_TOKEN is expanded somewhere it was not before"
+  printf '%s\n' "$expected_token_expansions" | sed 's/^/  want: /'
+  printf '%s\n' "$actual_token_expansions" | sed 's/^/  got:  /'
+  fail=1
+fi
+
+# The one that would actually hurt, named separately so the failure says why:
+# the token must never be interpolated into a command line, where it lands in
+# the process table and in the shell history of whoever typed it. The producer
+# above passes because its expansion is on the left of the pipe, not inside the
+# pct exec argument list.
+if grep -qE 'pct exec.*[^\\]\$\{?TUNNEL_TOKEN\}?([^_A-Za-z0-9]|$)' scripts/install.sh; then
+  echo "FAIL: the tunnel token is interpolated into a pct exec command line (visible in ps)"; fail=1
+else
+  echo "ok: the token never reaches a pct exec argument"
+fi
+
+# And the two doors it comes in by: a file, or a prompt that does not echo.
+if grep -qE '^[[:space:]]*TUNNEL_TOKEN="\$\(tr -d .* < "\$TUNNEL_TOKEN_FILE"\)"' scripts/install.sh; then
+  echo "ok: the token file is read into the variable"
+else
+  echo "FAIL: the tunnel token file is no longer read the way this test expects"; fail=1
+fi
+if grep -qE '^[[:space:]]*IFS= read -rs TUNNEL_TOKEN' scripts/install.sh; then
+  echo "ok: the prompted token is read with -s, so it is never echoed"
+else
+  echo "FAIL: the tunnel token prompt no longer reads with -s (it would echo the token)"; fail=1
+fi
+
 # An unknown flag must stop, not proceed with a silently ignored option.
 #
 # Every other flag here is present and valid, so the only thing that can make
