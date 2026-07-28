@@ -2,6 +2,7 @@ import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import type { Page } from "@playwright/test";
 
 const REPO_ROOT = resolve(import.meta.dirname, "../../..");
 // Go is installed but not on this machine's PATH for tool shells.
@@ -106,4 +107,41 @@ export async function startServer(port = 8477): Promise<RunningServer> {
       child.kill();
     },
   };
+}
+
+/**
+ * Drives Admin > Users > Add user -- the same path an operator uses -- and
+ * reads back the one-time invite link the server hands over exactly once
+ * (POST /api/admin/users, internal/httpapi/admin.go's handleAdminCreateUser).
+ *
+ * It cannot be recovered afterwards, by an admin or by anyone who steals it
+ * (see AdminScreen.tsx's InviteReveal): the caller must capture the return
+ * value before doing anything else with `adminPage`.
+ *
+ * `adminPage` must already be an unlocked admin session somewhere in the app
+ * -- this navigates to the Admin tab itself, so the caller does not have to.
+ */
+export async function createUser(
+  adminPage: Page,
+  input: { email: string; name: string },
+): Promise<string> {
+  await adminPage.getByRole("button", { name: "Admin", exact: true }).click();
+  await adminPage.getByRole("button", { name: "Add user" }).click();
+  // Exact match, not a substring/regex: getByLabel(/name/i) also matches
+  // "Username" on the item editor, and while that form isn't mounted here,
+  // exact keeps this helper correct if it is ever reused from a screen where
+  // both are present.
+  await adminPage.getByLabel("Name", { exact: true }).fill(input.name);
+  await adminPage.getByLabel("Email", { exact: true }).fill(input.email);
+  await adminPage.getByRole("button", { name: "Create user" }).click();
+
+  const reveal = adminPage.getByRole("group", { name: /one-time invite link/i });
+  await reveal.waitFor();
+  const inviteUrl = await reveal
+    .getByLabel(new RegExp(`invite link for ${input.email}`, "i"))
+    .inputValue();
+  // Dismiss so the reveal panel does not sit on top of whatever the caller
+  // does with `adminPage` next.
+  await reveal.getByRole("button", { name: "Done" }).click();
+  return inviteUrl;
 }
