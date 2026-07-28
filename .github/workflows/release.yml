@@ -21,6 +21,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Before anything is installed or built: this needs nothing but the
+      # checkout, and it is the one mistake that passes every other check in
+      # this workflow and still ships the wrong thing.
+      #
+      # scripts/install.sh pins the tag it downloads, and the copy of that
+      # script served *at this tag* is what an operator curls. Tag v1.1.0 with
+      # VERSION still reading v1.0.0 and they install v1.0.0 — with a valid
+      # signature, a matching checksum, and no symptom at all. install_test.sh
+      # asserts only that the line has the shape of a pinned release tag;
+      # nothing there can know which tag is being released.
+      - name: The installer must pin the tag being released
+        run: |
+          grep -qF "VERSION=\"${GITHUB_REF_NAME}\"" scripts/install.sh || {
+            echo "::error::scripts/install.sh still pins $(grep '^VERSION=' scripts/install.sh), but this run is releasing ${GITHUB_REF_NAME}. Point VERSION (and the curl URLs in the script's header comment and in the README) at ${GITHUB_REF_NAME}, then move the tag."
+            exit 1
+          }
+
       - uses: actions/setup-go@v5
         with:
           go-version: "1.25"
@@ -36,9 +53,10 @@ jobs:
           node-version: "22"
           cache: pnpm
 
-      # First, deliberately. A release that builds everything and then dies at
-      # the signing step is a bad first experience, and the binaries cannot be
-      # built before this anyway: the public key is compiled into them.
+      # Before anything is built, deliberately. A release that builds
+      # everything and then dies at the signing step is a bad first
+      # experience, and the binaries cannot be built before this anyway: the
+      # public key is compiled into them.
       - name: Prepare the signing key
         env:
           MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
