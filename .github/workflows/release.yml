@@ -1,0 +1,178 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# gh release create writes to the repository.
+permissions:
+  contents: write
+
+# The default Linux shell is `bash -e {0}`, which is not pipefail. Every
+# minisign invocation below is the right-hand side of a pipe, and this is what
+# keeps a failing one from being masked.
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+
+      # version is required: the root package.json has no "packageManager"
+      # field. See the same note in ci.yml.
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      # First, deliberately. A release that builds everything and then dies at
+      # the signing step is a bad first experience, and the binaries cannot be
+      # built before this anyway: the public key is compiled into them.
+      - name: Prepare the signing key
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          if [ -z "${MINISIGN_SECRET_KEY:-}" ] || [ -z "${MINISIGN_PASSWORD:-}" ]; then
+            echo "::error::Set the MINISIGN_SECRET_KEY and MINISIGN_PASSWORD repository secrets before pushing a v* tag. See the release section of the README."
+            exit 1
+          fi
+          sudo apt-get update
+          sudo apt-get install -y minisign
+
+          key="$RUNNER_TEMP/minisign.key"
+          pub="$RUNNER_TEMP/minisign.pub"
+
+          # umask in a subshell so the key file is 0600 from the instant it
+          # exists rather than 0644 until someone remembers to chmod it.
+          #
+          # printf '%s\n', not '%s': a secret pasted into the GitHub UI without
+          # a trailing newline would otherwise leave the base64 key line
+          # unterminated. A spare blank line at EOF is ignored; a missing
+          # terminator is not.
+          (umask 077; printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key")
+
+          # -R recreates the public key from the secret key. Deriving it here
+          # rather than reading it from a third repository setting is what
+          # makes it impossible for the key compiled into the binary to drift
+          # from the key that signs the checksums — a drift whose only symptom
+          # is `keyhole update` refusing every genuine release.
+          #
+          # The passphrase arrives on stdin here and at every other minisign
+          # call, never as an argument: a command line is readable by every
+          # process on the machine and is what command tracing prints.
+          printf '%s\n' "$MINISIGN_PASSWORD" | minisign -R -s "$key" -p "$pub"
+          shred -u "$key"
+
+          # The .pub file is two lines: an untrusted comment, then the base64
+          # key. aead.dev/minisign's PublicKey.UnmarshalText accepts either
+          # form, but a -ldflags value cannot contain a newline, so only the
+          # base64 line is embedded.
+          echo "MINISIGN_PUBLIC_KEY=$(tail -n 1 "$pub")" >> "$GITHUB_ENV"
+
+          {
+            echo "### Signing key"
+            echo
+            echo "This release is signed with, and its binaries embed, the public key:"
+            echo
+            echo '```'
+            cat "$pub"
+            echo '```'
+            echo
+            echo "It must match the key published in \`scripts/install.sh\` and the README."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Build the web app first
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm --filter @keyhole/web build
+
+      - name: Refuse to release a binary with no web app
+        # vite.config.ts writes the build straight into internal/webui/dist,
+        # which is what //go:embed picks up. Task 1's webui.Built() reports the
+        # same condition at runtime; this is that check moved to a point where
+        # it can still stop the release. A binary that shipped the committed
+        # placeholder installs perfectly and then serves nothing.
+        run: test -f internal/webui/dist/index.html
+
+      - name: Build static binaries
+        env:
+          CGO_ENABLED: "0"
+        # CGO_ENABLED=0 cross-compiles to arm64 here with no C cross-toolchain,
+        # no sysroot and no emulation, because the database driver is
+        # modernc.org/sqlite — a pure-Go translation of SQLite rather than a
+        # cgo binding around the C library. There is no C to compile. That is
+        # the reason it was chosen; a switch to mattn/go-sqlite3 would turn
+        # this loop into a cross-toolchain problem.
+        #
+        # -trimpath strips the builder's absolute paths out of the binary,
+        # -s -w drop the symbol table and DWARF, and the two -X flags are the
+        # only way main.Version and main.UpdatePublicKey are ever non-default:
+        # `keyhole update` refuses to run without both.
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            GOOS=linux GOARCH="$arch" go build \
+              -trimpath \
+              -ldflags "-s -w -X main.Version=${TAG} -X main.UpdatePublicKey=${MINISIGN_PUBLIC_KEY}" \
+              -o "dist/keyhole-linux-${arch}" ./cmd/keyhole
+          done
+
+      - name: Checksums
+        # cd into dist first so the names in SHA256SUMS are bare basenames.
+        # internal/release's checksumFor matches on basename either way, but
+        # `sha256sum -c SHA256SUMS` on an operator's machine does not: it opens
+        # each path as written, and "dist/keyhole-linux-amd64" is not where
+        # they downloaded it.
+        run: cd dist && sha256sum keyhole-linux-* > SHA256SUMS
+
+      - name: Sign the checksums
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        # One signature covers every architecture because it covers the
+        # checksum list rather than any one binary — which is exactly why
+        # internal/release.Verify checks both halves. -S writes the detached
+        # signature to dist/SHA256SUMS.minisig.
+        run: |
+          key="$RUNNER_TEMP/minisign.key"
+          (umask 077; printf '%s\n' "$MINISIGN_SECRET_KEY" > "$key")
+          printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -s "$key" -m dist/SHA256SUMS
+          shred -u "$key"
+
+      - name: Verify the artifacts before publishing them
+        # The same two checks internal/release.Verify performs, in the same
+        # order, against the bytes that are about to be uploaded. A release
+        # that is malformed — an empty signature, a checksum list naming a file
+        # that was rebuilt afterwards — fails here instead of failing months
+        # later on an operator's server, mid-`keyhole update`, with the service
+        # already stopped.
+        run: |
+          minisign -Vm dist/SHA256SUMS -P "$MINISIGN_PUBLIC_KEY"
+          cd dist && sha256sum -c SHA256SUMS
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # The asset names here are an interface, not a convention: cmd/keyhole's
+        # githubSource keys release.Assets by the published filename, and
+        # internal/release looks up "SHA256SUMS", "SHA256SUMS.minisig", and
+        # "keyhole-<GOOS>-<GOARCH>". Renaming any of them breaks every existing
+        # installation's `keyhole update`.
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            dist/keyhole-linux-amd64 dist/keyhole-linux-arm64 \
+            dist/SHA256SUMS dist/SHA256SUMS.minisig \
+            --generate-notes
