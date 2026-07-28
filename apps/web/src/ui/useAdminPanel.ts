@@ -117,12 +117,15 @@ export function useAdminPanel({
   const handleReset = useCallback(
     async (input: { userId: string; confirmEmail: string }): Promise<Invite & { message: string }> => {
       const result = await resetUser({ api }, input);
-      // The response carries only the fresh invite and a message, not the
-      // updated account (internal/httpapi/admin.go:205-210 -- resetUser
-      // returns no user at all) -- a full refetch is the only way this hook
-      // can see the account's new pending state reflected in `users`.
-      const refreshed = await listUsers({ api });
-      setUsers(refreshed);
+      // The reset has already happened by the time `result` exists: the
+      // account's key material and every personal item are destroyed, and
+      // `result` is the only place the fresh invite will ever appear
+      // (internal/httpapi/admin.go:205-210 -- resetUser returns no user at
+      // all, so a refetch is the only way `users` picks up the account's new
+      // pending state). If that refetch blips, the reset itself must not be
+      // reported as failed and the one-time invite must not be lost with it
+      // -- so nothing after `result` is captured may reject this promise.
+      await listUsers({ api }).then(setUsers).catch(() => undefined);
       return result;
     },
     [api],

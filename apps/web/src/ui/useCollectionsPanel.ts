@@ -92,7 +92,12 @@ export function useCollectionsPanel({
     async (name: string): Promise<void> => {
       const profile = await loadAccount({ api, session });
       await createCollection({ api, session }, { name, ownPublicKey: profile.publicKey });
-      await store.resync({ api, session });
+      // The collection already exists on the server at this point. If this
+      // resync blips, CollectionsScreen must not report the creation as
+      // failed -- that would invite a retry that creates a duplicate
+      // collection. The new collection simply will not appear until the next
+      // successful sync (e.g. the next tab focus).
+      await store.resync({ api, session }).catch(() => undefined);
     },
     [api, session, store],
   );
@@ -103,12 +108,17 @@ export function useCollectionsPanel({
       setPendingGrants((prev) =>
         prev.filter((g) => !(g.collectionId === grant.collectionId && g.userId === grant.userId)),
       );
-      await store.resync({ api, session });
+      // The grant is already fulfilled on the server by this point -- these
+      // two calls are display refreshes, not the action itself, so neither
+      // may turn this success into a reported failure.
+      await store.resync({ api, session }).catch(() => undefined);
       // Mirrors handleAddMember: a manager who fulfils a grant for the
       // collection they currently have open would otherwise see a stale
       // Members panel until they collapse and reopen it.
       if (selectedCollectionId === grant.collectionId) {
-        setMembers(await listMembers({ api, session }, grant.collectionId));
+        await listMembers({ api, session }, grant.collectionId)
+          .then(setMembers)
+          .catch(() => undefined);
       }
     },
     [api, session, store, selectedCollectionId],
@@ -121,8 +131,13 @@ export function useCollectionsPanel({
       role: "manager" | "member";
     }): Promise<"granted" | "pending"> => {
       const outcome = await addMember({ api, session }, input);
+      // The membership already changed on the server by this point -- a
+      // failed refresh here must not tell the caller the add itself failed,
+      // which would read as "this person does not have access" when they do.
       if (outcome === "granted" && selectedCollectionId === input.collectionId) {
-        setMembers(await listMembers({ api, session }, input.collectionId));
+        await listMembers({ api, session }, input.collectionId)
+          .then(setMembers)
+          .catch(() => undefined);
       }
       return outcome;
     },

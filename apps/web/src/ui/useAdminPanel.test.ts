@@ -164,6 +164,42 @@ describe("useAdminPanel", () => {
     expect(result.current.users[0]?.status).toBe("pending");
   });
 
+  it("still returns the fresh invite when the follow-up user-list refetch fails", async () => {
+    // The reset itself already destroyed the account's key material and
+    // personal items by the time this refetch runs -- if the refetch
+    // (transiently) fails, the invite must not be lost with it: it exists
+    // exactly once, in this response, and cannot be reissued from a failed
+    // promise. A reload to recover would also lock the vault.
+    const api: ApiClient = fakeApi({
+      get: async (path) => {
+        if (path === "/api/admin/users") throw new Error("network blip");
+        if (path === "/api/admin/collections") return { collections: [], pendingGrants: [] };
+        if (path === "/api/admin/audit?limit=50") return { entries: [] };
+        throw new Error(`unexpected GET ${path}`);
+      },
+      post: async (path, body) => {
+        if (path === "/api/admin/users/u1/reset") {
+          expect(body).toEqual({ confirmEmail: "bee@example.com" });
+          return {
+            inviteUrl: "https://vault.example/enroll/tok-reset",
+            expiresIn: "72h0m0s",
+            message: "Key material and personal items destroyed.",
+          };
+        }
+        throw new Error(`unexpected POST ${path}`);
+      },
+    });
+
+    const { result } = renderHook(() => useAdminPanel({ api, active: true }));
+
+    let outcome: { inviteUrl: string } | undefined;
+    await act(async () => {
+      outcome = await result.current.onReset({ userId: "u1", confirmEmail: "bee@example.com" });
+    });
+
+    expect(outcome?.inviteUrl).toBe("https://vault.example/enroll/tok-reset");
+  });
+
   it("passes `before` through to loadAudit and appends the older page after the newer one", async () => {
     const api: ApiClient = fakeApi({
       get: async (path) => {
