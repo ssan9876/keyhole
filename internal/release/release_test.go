@@ -120,14 +120,26 @@ func TestChecksumForMatchesOnBasenameAndIgnoresUnrecognizedLines(t *testing.T) {
 	sum := sha256.Sum256(binary)
 	want := hex.EncodeToString(sum[:])
 
-	// Every junk line below names the *same* file the real line does, and
-	// each is long enough to survive the length check. That is deliberate:
-	// if any one of them were accepted, checksumFor would return its
-	// garbage instead of the real digest further down, so each line proves
-	// one specific guard is load-bearing rather than merely present.
-	notHex := strings.Repeat("z", 64)           // 64 chars, right shape, not hex
-	wrongSep := want + "\t keyhole-linux-amd64" // valid digest, "\t " instead of the two-space separator
+	// notHex and wrongSep are the two lines that carry this test's weight.
+	// Each names the *same* file the real line does and is long enough to
+	// survive the length check, so neither is skipped for being short or
+	// for naming something else: each is rejected by exactly the guard it
+	// targets, and if that guard were removed the line would be returned in
+	// place of the real digest further down. That shadowing is what makes
+	// them load-bearing rather than decorative.
+	//
+	// wrongSep therefore has to carry a digest *different* from the real
+	// one. Built from want, an accepted line would hand back the right
+	// answer by coincidence and the assertion below could not tell the
+	// separator guard was gone.
+	notHex := strings.Repeat("z", 64)                              // 64 chars, right shape, not hex
+	wrongSep := strings.Repeat("b", 64) + "\t keyhole-linux-amd64" // valid hex, "\t " instead of the two-space separator
 
+	// The first two lines are ordinary junk a real SHA256SUMS can contain:
+	// too short to be a checksum line at all. They pin nothing on their own
+	// -- the length check skips both before hex or separator is ever
+	// considered -- and are here so the parser is exercised against a file
+	// that is merely messy as well as one that is adversarial.
 	checksums := "not a checksum line at all\n" +
 		"deadbeef  too-short-to-be-a-real-hex-digest\n" +
 		notHex + "  keyhole-linux-amd64\n" +
