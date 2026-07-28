@@ -43,17 +43,89 @@ Mutation: remove the doubled-quote handling; the embedded-quote test must fail.
 
 Tests: every fixture detects as itself. **Plus the negative: no fixture detects as a different format.** That second one is what catches an over-broad signature, and it is the one a per-format test suite never runs.
 
-## Tasks 3–7: The parsers, grouped
+## The parser tasks (3–7), and what they all share
 
-- **T3** Browser CSVs (Chrome/Edge/Brave/Safari/Firefox) — one parser, five detections.
-- **T4** Bitwarden json + csv, including folder names and `type` (login vs note).
-- **T5** LastPass, KeePass/KeePassXC, NordPass — CSV variants with different column names and LastPass's `grouping` field.
-- **T6** 1Password 1pux (a zip containing JSON — needs a zip reader; if that pulls in a dependency, report it before adding one) and 1Password csv.
-- **T7** Dashlane (csv + json), Proton Pass, Keeper.
+Every parser in Tasks 3–7 obeys the same contract, so it is stated once here rather than five times:
 
-Each task: real sample export as a fixture, golden test, per-row errors, and a mutation that breaks one field mapping and watches exactly one assertion fail.
+- **Returns the intermediate shape from Task 1**, never `ItemPlaintext` directly. An export carries things Keyhole has no field for — a folder *name* rather than an id, a vendor-specific type — and dropping them at the parser is where information goes missing silently.
+- **Never throws for a bad row.** A malformed row returns as a per-row error alongside the rows that parsed. Spec §7: rows are all-or-nothing individually, and a malformed row cannot produce a half-encrypted record.
+- **Never guesses at a password.** If a row's password column is absent, empty, or unparseable, that is an error row, not an item with an empty password. Importing a blank password over a real one is the failure mode with no undo.
+- **Preserves the password byte for byte.** No trimming, no unescaping beyond what the format's own quoting requires, no Unicode normalization. A trailing space in a password is part of the password.
+- **Has a golden test against its fixture**, asserting the full parsed output — not a spot check of two fields.
+- **Has a per-row-error test**: a fixture row that is malformed in that format's characteristic way, asserting the good rows still come through.
+- **Has a mutation** that breaks exactly one field mapping (swap two columns, or drop one) and fails exactly one assertion. If it fails none, the golden test is comparing too little; if it fails everything, it is comparing a blob and will not localize a real regression.
 
-Every parser returns the same intermediate shape and never throws for a bad row — it returns the row's error alongside the rows that parsed.
+**On fixtures.** Task 2 created a fixture per format, and four of them are reconstructions rather than real exports — `1password-export.csv`, `safari-passwords.csv`, `dashlane-credentials.csv`, `keeper-export.json`. Where you are working from one of those, say so in your report and prefer a parser that tolerates column-order variation over one that assumes the reconstruction is exact. No fixture may contain a real credential.
+
+---
+
+## Task 3: Browser CSVs — Chrome, Edge, Brave, Safari, Firefox
+
+**Files:** Create `apps/web/src/vault/import/parsers/browser.ts` and its test.
+
+One parser, five detections. Chrome, Edge and Brave emit `name,url,username,password,note`; Firefox emits `"url","username","password","httpRealm","formActionOrigin","guid","timeCreated",…`; Safari emits `Title,URL,Username,Password,Notes,OTPAuth`.
+
+- Map each to the common shape. Firefox has no name column — derive a display name from the URL's host, and say in a comment that it is derived rather than exported.
+- Firefox rows for the same host with different usernames are distinct items, not duplicates. Deduplication is Task 8's job; do not do it here.
+- Safari's `OTPAuth` column carries a TOTP secret. Keyhole has no TOTP field in v1 (spec §1 non-goals). **Do not silently drop it** — carry it into the intermediate shape's notes or an explicit `unsupported` channel so the user can be told, and say which you chose and why.
+
+**Tests:** golden per browser; a URL with a port and a path; a row whose password contains a comma and a quote; a Firefox row with an empty `username`; a Safari row with an `OTPAuth` value.
+
+---
+
+## Task 4: Bitwarden — json and csv
+
+**Files:** `parsers/bitwarden.ts` and its test.
+
+The JSON export is the richest format supported and the one most likely to be used by someone migrating deliberately.
+
+- Handle both `folders` (id → name) and per-item `folderId`; the intermediate shape carries the folder **name**.
+- Handle `type: 1` (login) and `type: 2` (secure note). Ignore card and identity types for now — but as an **error row naming the type**, not a silent skip, so the count the user sees adds up.
+- `login.uris[]` is an array of objects with a `uri` field, not strings.
+- The CSV export is a different, flatter shape with a `folder` column and `type` as a word.
+- An encrypted Bitwarden export (`encrypted: true`) cannot be read without the user's Bitwarden password. Detect it and return a clear error saying to re-export unencrypted — not a parse failure.
+
+**Tests:** golden for both; a note item; a login with three URIs; an item in a nested folder (`Parent/Child`); the encrypted-export error.
+
+---
+
+## Task 5: LastPass, KeePass, KeePassXC, NordPass
+
+**Files:** `parsers/lastpass.ts`, `parsers/keepass.ts`, `parsers/nordpass.ts` and tests.
+
+CSV variants that differ mainly in column names.
+
+- LastPass: `url,username,password,totp,extra,name,grouping,fav`. `grouping` is the folder and uses `\` as a separator. A row with `url` of `http://sn` is a **secure note**, not a login — that is LastPass's marker and missing it turns every note into a broken login.
+- KeePass 1.x CSV: `"Account","Login Name","Password","Web Site","Comments"`. KeePassXC: `"Group","Title","Username","Password","URL","Notes"`. Different enough to keep separate.
+- NordPass: `name,url,username,password,note,cardholdername,…` — many trailing columns for types Keyhole does not support; treat non-login rows as error rows naming the type.
+
+**Tests:** golden each; the LastPass `http://sn` note case; a KeePassXC group path; a NordPass card row becoming a named error.
+
+---
+
+## Task 6: 1Password — 1pux and csv
+
+**Files:** `parsers/onepassword.ts` and its test.
+
+**A `.1pux` is a ZIP containing `export.data` (JSON).** Reading it needs a ZIP reader.
+
+**Stop and report before adding a dependency.** Options in order of preference: the browser's own `DecompressionStream` (present in modern browsers, but ZIP is a container format, not a raw deflate stream, so this needs a small central-directory parser); a tiny vendored inflate; or a dependency. This is a password manager — every dependency is supply chain, and the plan's constraint is that no runtime dependency is added without reporting first. Say what you chose and what it costs.
+
+If the ZIP work looks like it will dominate the task, **split it**: implement the 1Password CSV path, report the ZIP question, and let the controller decide.
+
+The 1Password CSV fixture is one of Task 2's reconstructions. Prefer column-name lookup over positional access.
+
+---
+
+## Task 7: Dashlane, Proton Pass, Keeper
+
+**Files:** `parsers/dashlane.ts`, `parsers/protonpass.ts`, `parsers/keeper.ts` and tests.
+
+- Dashlane ships both CSV and JSON, and its ZIP export contains several CSVs (`credentials.csv`, `securenotes.csv`). Handle the credentials CSV and the JSON; report what you find about the ZIP rather than guessing.
+- Proton Pass JSON nests items under vaults; the vault name is the folder.
+- **Keeper's CSV has no header row** — Task 2 established it is not content-detectable at all. It is positional: `folder,title,login,password,url,notes,…`. That means a Keeper import can only be reached by the user explicitly choosing the format, so the generic-CSV mapper in Task 8 must let them.
+
+Three of these four fixtures are reconstructions. Say clearly in your report which behaviours you are confident in and which need verification against a real export.
 
 ## Task 8: Duplicate detection and the mapper
 
