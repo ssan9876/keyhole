@@ -93,6 +93,15 @@ jobs:
             echo "It must match the key published in \`scripts/install.sh\` and the README."
           } >> "$GITHUB_STEP_SUMMARY"
 
+      # ci.yml runs on the tag push too, but it runs *beside* this workflow,
+      # not in front of it: nothing here waits on it, so a tag on a commit
+      # whose tests fail would otherwise publish signed binaries anyway. Two
+      # minutes here is what makes the tests a gate rather than a bystander.
+      - name: The tests are a gate for a release, not a parallel opinion
+        run: |
+          go vet ./...
+          go test ./...
+
       - name: Build the web app first
         run: |
           pnpm install --frozen-lockfile
@@ -159,9 +168,29 @@ jobs:
         # that was rebuilt afterwards — fails here instead of failing months
         # later on an operator's server, mid-`keyhole update`, with the service
         # already stopped.
+        #
+        # This proves C minisign accepts C minisign's own output, which is only
+        # half the question. The step below is the other half.
         run: |
           minisign -Vm dist/SHA256SUMS -P "$MINISIGN_PUBLIC_KEY"
           cd dist && sha256sum -c SHA256SUMS
+
+      - name: Verify them again with the verifier that will actually read them
+        env:
+          KEYHOLE_RELEASE_DIR: dist
+        # The code above is C minisign. The code that decides whether an
+        # installed server accepts this release is internal/release.Verify,
+        # backed by aead.dev/minisign — a different implementation, in a
+        # different language, pinned by go.mod and upgradable on its own
+        # schedule. Format drift between the two is invisible to every other
+        # step in this workflow and shows up months later as `keyhole update`
+        # rejecting every genuine release, on every installed server, with the
+        # service already stopped.
+        #
+        # So the shipped verifier runs here too, over the real published bytes,
+        # with the public key in the same single-line form -ldflags compiled
+        # into the binaries. Both checks stay: they verify different things.
+        run: go run ./internal/release/verifyrelease keyhole-linux-amd64 keyhole-linux-arm64
 
       - name: Publish
         env:
