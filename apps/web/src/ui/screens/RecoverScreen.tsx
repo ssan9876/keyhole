@@ -5,6 +5,21 @@ import { Button } from "../components/Button.js";
 import { Field } from "../components/Field.js";
 import { describeFailure } from "../errors.js";
 
+/**
+ * What the controller hands back when a recovery finishes: the vault layer's
+ * outcome, plus whether the sign-in that normally follows it worked.
+ *
+ * `signedIn` exists because that sign-in is deliberately allowed to fail
+ * silently — the new recovery code is shown once and is unrecoverable
+ * afterwards, so it must reach the user even from a device that cannot reach
+ * the server. Silently is not the same as unexplained: without this flag the
+ * screen cannot tell the user why they are about to be asked for a password
+ * they just set.
+ */
+export interface RecoveryHandoff extends RecoveryOutcome {
+  signedIn: boolean;
+}
+
 export interface RecoverScreenProps {
   /** Prefilled, not substituted for the field: recovery is the one screen most
    *  likely to be reached from a device whose localStorage remembers nothing. */
@@ -16,7 +31,7 @@ export interface RecoverScreenProps {
   /** Rotates both credentials and resolves with the *new* recovery code, which
    *  is shown once and then gone, plus whether the server was heard to accept
    *  it. Rejects only when the rotation provably did not happen. */
-  onSetNewPassword(newMasterPassword: string): Promise<RecoveryOutcome>;
+  onSetNewPassword(newMasterPassword: string): Promise<RecoveryHandoff>;
   onFinish(): void;
   onCancel(): void;
 }
@@ -72,6 +87,7 @@ export function RecoverScreen({
   const [confirm, setConfirm] = useState("");
   const [newCode, setNewCode] = useState<string | null>(null);
   const [confirmed, setConfirmed] = useState(true);
+  const [signedIn, setSignedIn] = useState(true);
   const [acknowledged, setAcknowledged] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -110,6 +126,7 @@ export function RecoverScreen({
       const outcome = await onSetNewPassword(newPassword);
       setNewCode(outcome.recoveryCode);
       setConfirmed(outcome.confirmed);
+      setSignedIn(outcome.signedIn);
       setNewPassword("");
       setConfirm("");
     } catch (failure) {
@@ -134,6 +151,21 @@ export function RecoverScreen({
             Save the code below either way, then try unlocking with your new
             master password. If that is refused, your old master password and
             old recovery code still work.
+          </p>
+        )}
+        {/* Only when the rotation is confirmed: the unconfirmed notice above
+            already tells the user to go and try the new password, and claiming
+            success beside it would contradict it. The sign-in that normally
+            follows a recovery is allowed to fail silently so that the code
+            reaches the user regardless (useRecoverScreen), and this is what
+            keeps "silently" from meaning "unexplained" — otherwise the next
+            thing they see is a password prompt for the password they just set,
+            which reads as the recovery not having worked. */}
+        {confirmed && !signedIn && (
+          <p role="status" style={{ color: "var(--ink-muted)" }}>
+            Your recovery worked and your new master password is in place. This
+            browser could not sign in afterwards, so it will ask you to unlock
+            with the new password once you continue.
           </p>
         )}
         <p style={{ color: "var(--ink-muted)" }}>
@@ -164,6 +196,7 @@ export function RecoverScreen({
             // be fixed.
             setNewCode(null);
             setConfirmed(true);
+            setSignedIn(true);
             setAcknowledged(false);
             onFinish();
           }}

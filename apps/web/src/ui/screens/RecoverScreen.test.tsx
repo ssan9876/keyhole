@@ -25,7 +25,9 @@ function renderScreen(overrides: Partial<RecoverScreenProps> = {}): RecoverScree
   const props: RecoverScreenProps = {
     rememberedEmail: null,
     onRedeemCode: vi.fn().mockResolvedValue(undefined),
-    onSetNewPassword: vi.fn().mockResolvedValue({ recoveryCode: NEW_CODE, confirmed: true }),
+    onSetNewPassword: vi
+      .fn()
+      .mockResolvedValue({ recoveryCode: NEW_CODE, confirmed: true, signedIn: true }),
     onFinish: vi.fn(),
     onCancel: vi.fn(),
     ...overrides,
@@ -166,7 +168,9 @@ describe("RecoverScreen", () => {
 
   it("says the change may already have been applied when the server never answered", async () => {
     renderScreen({
-      onSetNewPassword: vi.fn().mockResolvedValue({ recoveryCode: NEW_CODE, confirmed: false }),
+      onSetNewPassword: vi
+        .fn()
+        .mockResolvedValue({ recoveryCode: NEW_CODE, confirmed: false, signedIn: false }),
     });
 
     await submitCode();
@@ -202,6 +206,42 @@ describe("RecoverScreen", () => {
     await waitFor(() => expect(screen.getByText(NEW_CODE)).toBeInTheDocument());
     expect(screen.getByText(/your old code no longer works/i)).toBeInTheDocument();
     expect(screen.queryByText(/may already have been applied/i)).not.toBeInTheDocument();
+  });
+
+  it("explains why a sign-in is being asked for right after a successful recovery", async () => {
+    renderScreen({
+      onSetNewPassword: vi
+        .fn()
+        .mockResolvedValue({ recoveryCode: NEW_CODE, confirmed: true, signedIn: false }),
+    });
+
+    await submitCode();
+    await waitFor(() => expect(screen.getByLabelText("New master password")).toBeInTheDocument());
+    await submitNewPassword("correct horse battery staple");
+
+    await waitFor(() => expect(screen.getByText(NEW_CODE)).toBeInTheDocument());
+    // The controller swallows a failed post-recovery sign-in on purpose, so
+    // that the code -- shown once, unrecoverable afterwards by anyone -- still
+    // reaches the user. Unexplained, the unlock form that follows reads as the
+    // recovery having failed, which is the one conclusion that is wrong.
+    const notice = screen.getByText(/could not sign in/i);
+    expect(notice).toHaveAttribute("role", "status");
+    expect(notice).toHaveTextContent(/recovery worked/i);
+    expect(notice).toHaveTextContent(/new password/i);
+  });
+
+  it("says nothing about signing in again when the sign-in worked", async () => {
+    renderScreen();
+
+    await submitCode();
+    await waitFor(() => expect(screen.getByLabelText("New master password")).toBeInTheDocument());
+    await submitNewPassword("correct horse battery staple");
+
+    // Without this, the notice could render unconditionally and the test above
+    // would still pass -- telling every recovered user they must sign in again
+    // as they are being dropped straight into their unlocked vault.
+    await waitFor(() => expect(screen.getByText(NEW_CODE)).toBeInTheDocument());
+    expect(screen.queryByText(/could not sign in/i)).not.toBeInTheDocument();
   });
 
   it("clears the new recovery code from its own state on acknowledgement", async () => {

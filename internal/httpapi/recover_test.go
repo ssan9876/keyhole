@@ -564,6 +564,44 @@ func TestRecoverIsRateLimitedOnTheSourceAddressAcrossAccounts(t *testing.T) {
 	}
 }
 
+// TestRecoverRedemptionClearsThePreloginBudgetAsASignInDoes keeps the two
+// success paths symmetrical.
+//
+// handleLogin resets "prelogin:<ip>" on a successful sign-in, with a reason
+// written down beside it: that budget is per source address and is spent on
+// every call, so a household behind one NAT address is throttled after twenty
+// and told nothing about why. A redeemed recovery code is at least as strong a
+// proof that the traffic is real. Twenty free calls makes this a hard corner to
+// reach, which is exactly why the asymmetry would have sat there unnoticed.
+func TestRecoverRedemptionClearsThePreloginBudgetAsASignInDoes(t *testing.T) {
+	srv := newTestServer(t)
+	enrollTestUser(t, srv, "person@example.com")
+
+	// Spend the address's budget. This endpoint records on every call rather
+	// than only on failure, so no failures are needed to exhaust it.
+	for i := 0; i < 25; i++ {
+		postJSON(t, srv, recoverPreloginPath,
+			map[string]string{"email": fmt.Sprintf("probe%d@example.com", i)})
+	}
+	// Non-vacuity, and it is not optional: if the budget were not actually
+	// exhausted here, the assertion after the redemption would pass with the
+	// reset line deleted.
+	spent := postJSON(t, srv, recoverPreloginPath, map[string]string{"email": "person@example.com"})
+	if spent.Code != http.StatusTooManyRequests {
+		t.Fatalf("prelogin status = %d before the redemption, want %d — the budget was never "+
+			"spent, so nothing below is being tested", spent.Code, http.StatusTooManyRequests)
+	}
+
+	redeemRecoveryCode(t, srv, "person@example.com")
+
+	rec := postJSON(t, srv, recoverPreloginPath, map[string]string{"email": "person@example.com"})
+	if rec.Code != http.StatusOK {
+		t.Errorf("prelogin status = %d after a correct recovery code was redeemed, want %d; "+
+			"handleLogin clears this budget on a successful sign-in and this path has the "+
+			"same claim to", rec.Code, http.StatusOK)
+	}
+}
+
 // TestRecoverCompleteRotatesBothCredentialsAndRevokesEverySession is the whole
 // point of the flow: the user is back in, under a password they chose, holding
 // a code that opens the new blob, and every device that was signed in before is

@@ -120,8 +120,12 @@ describe("useRecoverScreen", () => {
     await act(async () => {
       await result.current.onRedeemCode({ email: "recovered@example.com", recoveryCode: "CODE" });
     });
-    await act(async () => result.current.onSetNewPassword("a new master password"));
+    const issued = await act(async () => result.current.onSetNewPassword("a new master password"));
 
+    // The other half of the pair below: reported true only when the sign-in
+    // actually opened the session, so the screen's "you will have to sign in
+    // again" line stays off the happy path.
+    expect(issued.signedIn).toBe(true);
     // POST /api/auth/recover/complete answers 204 and revokes every session,
     // including any this device might have had -- there are no tokens in that
     // response to open a vault with. Without this login the user would be sent
@@ -155,6 +159,11 @@ describe("useRecoverScreen", () => {
 
     expect(issued.recoveryCode).toBe(NEW_CODE);
     expect(session.isUnlocked).toBe(false);
+    // Swallowing the failure is right; hiding it is not. The screen shows the
+    // code and then hands the user to an unlock form asking for the password
+    // they set seconds ago, and without this flag it has nothing to say about
+    // why.
+    expect(issued.signedIn).toBe(false);
   });
 
   it("keeps the recovery usable when the server refuses to complete it, so it can be retried", async () => {

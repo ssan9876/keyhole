@@ -32,8 +32,15 @@ jobs:
       # asserts only that the line has the shape of a pinned release tag;
       # nothing there can know which tag is being released.
       - name: The installer must pin the tag being released
+        # -x, not a bare substring search: unanchored, this was satisfied by any
+        # line *containing* the assignment, so a commented-out `# VERSION="v1.1.0"`
+        # or an example in the script's header comment would pass the guard while
+        # the real VERSION= line still said v1.0.0 — the exact failure this step
+        # exists to catch. Kept as -F rather than an anchored -E so the tag is
+        # still matched literally: a tag is full of dots, and under a regex each
+        # one would match any character.
         run: |
-          grep -qF "VERSION=\"${GITHUB_REF_NAME}\"" scripts/install.sh || {
+          grep -qxF "VERSION=\"${GITHUB_REF_NAME}\"" scripts/install.sh || {
             echo "::error::scripts/install.sh still pins $(grep '^VERSION=' scripts/install.sh), but this run is releasing ${GITHUB_REF_NAME}. Point VERSION (and the curl URLs in the script's header comment and in the README) at ${GITHUB_REF_NAME}, then move the tag."
             exit 1
           }

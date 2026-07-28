@@ -2,14 +2,9 @@ import { useCallback, useEffect, useRef } from "react";
 import type { ApiClient } from "../vault/api.js";
 import type { Session } from "../vault/session.js";
 import type { VaultStore } from "../vault/store.js";
-import {
-  completeRecovery,
-  recoverAccount,
-  type RecoveryOutcome,
-  type RecoverySession,
-} from "../vault/recover.js";
+import { completeRecovery, recoverAccount, type RecoverySession } from "../vault/recover.js";
 import { unlock } from "../vault/unlock.js";
-import type { RecoverScreenProps } from "./screens/RecoverScreen.js";
+import type { RecoverScreenProps, RecoveryHandoff } from "./screens/RecoverScreen.js";
 
 /**
  * The recovery controller: the two vault-layer calls, the keys between them,
@@ -66,7 +61,7 @@ export function useRecoverScreen({
   );
 
   const onSetNewPassword = useCallback(
-    async (newMasterPassword: string): Promise<RecoveryOutcome> => {
+    async (newMasterPassword: string): Promise<RecoveryHandoff> => {
       const pending = recovery.current;
       if (pending === null) {
         // Unreachable from RecoverScreen, which renders the password step only
@@ -91,6 +86,7 @@ export function useRecoverScreen({
       // not on offer from here, so nothing is served by keeping the keys live.
       discard();
 
+      let signedIn = false;
       try {
         // /api/auth/recover/complete answers 204 and revokes every session, so
         // there is nothing in that response to open a vault with. This is a
@@ -99,6 +95,7 @@ export function useRecoverScreen({
         // a form asking for it.
         await unlock({ api, session }, { email, masterPassword: newMasterPassword, deviceLabel });
         await store.load({ api, session });
+        signedIn = true;
       } catch {
         // Swallowed on purpose, exactly as App.tsx's handleEnrol swallows a
         // failed post-enrolment sync: the new recovery code is shown once and
@@ -109,9 +106,13 @@ export function useRecoverScreen({
         // Attempted even when outcome.confirmed is false, because it is the
         // cheapest available answer to "did the rotation land?": if it did, this
         // succeeds and the user is simply in their vault.
+        //
+        // Reported rather than merely swallowed, so the screen can say why the
+        // next thing the user sees is a password prompt for the password they
+        // set thirty seconds ago.
       }
 
-      return outcome;
+      return { ...outcome, signedIn };
     },
     [api, deviceLabel, discard, session, store],
   );

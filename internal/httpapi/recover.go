@@ -159,6 +159,15 @@ func (s *Server) handleRecover(w http.ResponseWriter, r *http.Request) {
 	// A correct code is proof the traffic is real, so it clears both counters.
 	s.limiter.Reset(ipKey)
 	s.limiter.Reset(accountKey)
+	// And the prelogin budget, exactly as handleLogin does on a successful
+	// sign-in and for the same reason: that budget is per source address and is
+	// spent on every call, so a household behind one NAT address is throttled
+	// after twenty and told nothing about why. Redeeming a recovery code is at
+	// least as strong a proof that the traffic is real as signing in — twenty
+	// free calls makes it a hard corner to reach from here, but there is no
+	// reason for the two paths to differ, and an asymmetry with no reason behind
+	// it reads as one with a reason nobody wrote down.
+	s.preloginLimiter.Reset("prelogin:" + ClientIP(r))
 
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"recoveryProtectedUserKey": user.RecoveryProtectedUserKey.String,
