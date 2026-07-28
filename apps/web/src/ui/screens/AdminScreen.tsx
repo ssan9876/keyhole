@@ -1,11 +1,11 @@
 import { useId, useState } from "react";
 import type { FormEvent } from "react";
-import { ApiError, NetworkError } from "../../vault/api.js";
 import type { AdminUser, AuditEntry, CollectionOverview, Invite } from "../../vault/admin.js";
 import type { PendingGrant } from "../../vault/collections.js";
 import { Button } from "../components/Button.js";
 import { Confirm } from "../components/Confirm.js";
 import { Field } from "../components/Field.js";
+import { describeFailure } from "../errors.js";
 
 export interface AdminScreenProps {
   users: AdminUser[];
@@ -26,21 +26,6 @@ export interface AdminScreenProps {
   onReset(input: { userId: string; confirmEmail: string }): Promise<Invite & { message: string }>;
   onDelete(userId: string): Promise<void>;
   onLoadAudit(input: { before?: string }): Promise<void>;
-}
-
-/**
- * Mirrors SettingsScreen's describeFailure verbatim: ApiError.message is
- * already the server's own human-readable explanation
- * (internal/httpapi/errors.go) -- codes are for branching, never for display
- * -- so both branches show it verbatim. NetworkError gets copy of its own
- * because nothing reached the server to explain itself. This is the function
- * that makes "a 409 on delete shows the server's own message" true: it never
- * substitutes a generic string for a message an ApiError actually carried.
- */
-function describeFailure(failure: unknown, fallback: string): string {
-  if (failure instanceof NetworkError) return failure.message;
-  if (failure instanceof ApiError) return failure.message;
-  return fallback;
 }
 
 type RevealedInvite = { email: string; invite: Invite; message?: string };

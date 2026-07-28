@@ -4,6 +4,7 @@ import type { DirectoryEntry } from "../../vault/directory.js";
 import { Button } from "../components/Button.js";
 import { Confirm } from "../components/Confirm.js";
 import { Field } from "../components/Field.js";
+import { describeFailure } from "../errors.js";
 
 export interface CollectionsScreenProps {
   /** session.user.role. Gates the Create collection button, which mirrors a
@@ -72,7 +73,7 @@ function PendingGrantRow({
               try {
                 await onFulfil(grant, recipient);
               } catch (failure) {
-                setError(failure instanceof Error ? failure.message : "Could not grant access");
+                setError(describeFailure(failure, "Could not grant access"));
               } finally {
                 setBusy(false);
               }
@@ -199,9 +200,7 @@ function MembersPanel({
               try {
                 await onRemoveMember({ collectionId: collection.id, userId: target.userId });
               } catch (failure) {
-                setRemoveError(
-                  failure instanceof Error ? failure.message : "Could not remove that member",
-                );
+                setRemoveError(describeFailure(failure, "Could not remove that member"));
               }
             })();
           }}
@@ -295,7 +294,7 @@ function MembersPanel({
                       setRecipientId("");
                     }
                   } catch (failure) {
-                    setAddError(failure instanceof Error ? failure.message : "Could not add that member");
+                    setAddError(describeFailure(failure, "Could not add that member"));
                   } finally {
                     setAddBusy(false);
                   }
@@ -421,9 +420,7 @@ export function CollectionsScreen({
               setNewName("");
               setCreating(false);
             } catch (failure) {
-              setCreateError(
-                failure instanceof Error ? failure.message : "Could not create that collection",
-              );
+              setCreateError(describeFailure(failure, "Could not create that collection"));
             } finally {
               setCreateBusy(false);
             }

@@ -1,11 +1,11 @@
 import { useId, useState } from "react";
 import type { FormEvent } from "react";
-import { ApiError, NetworkError } from "../../vault/api.js";
 import type { DeviceSession } from "../../vault/account.js";
 import type { AutoLockSetting } from "../../vault/autolock.js";
 import { Button } from "../components/Button.js";
 import { Confirm } from "../components/Confirm.js";
 import { Field } from "../components/Field.js";
+import { describeFailure } from "../errors.js";
 
 export interface SettingsScreenProps {
   autoLock: AutoLockSetting;
@@ -18,21 +18,6 @@ export interface SettingsScreenProps {
    *  there looking usable. */
   onLock(): void;
   onRegenerateRecoveryCode(currentPassword: string): Promise<string>;
-}
-
-/**
- * Turns a thrown failure into copy a user can act on, per design spec §9: a
- * network blip must never read as a wrong password, and a wrong password must
- * not read as a server fault. `ApiError.message` is already the server's own
- * human-readable explanation (internal/httpapi/errors.go) -- codes are for
- * branching, never for display -- so both branches below show it verbatim;
- * only `NetworkError` gets copy of its own, because nothing reached the
- * server to explain itself.
- */
-function describeFailure(failure: unknown, fallback: string): string {
-  if (failure instanceof NetworkError) return failure.message;
-  if (failure instanceof ApiError) return failure.message;
-  return fallback;
 }
 
 const AUTO_LOCK_OPTIONS: { value: AutoLockSetting; label: string }[] = [

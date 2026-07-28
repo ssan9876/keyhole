@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { NetworkError } from "../../vault/api.js";
 import type { CollectionSummary, PendingGrant } from "../../vault/collections.js";
 import type { DirectoryEntry } from "../../vault/directory.js";
 import { CollectionsScreen, type CollectionsScreenProps } from "./CollectionsScreen.js";
@@ -186,7 +187,14 @@ describe("CollectionsScreen", () => {
     // adversarial member and got a network failure or a stale-session
     // rejection would see the dialog close with no indication the removal
     // never happened.
-    const onRemoveMember = vi.fn().mockRejectedValue(new Error("network unreachable"));
+    //
+    // A real NetworkError, not a bare Error: describeFailure (shared with
+    // SettingsScreen and AdminScreen as of the finding this test also
+    // guards) only recognises NetworkError and ApiError, precisely so that
+    // an arbitrary thrown value can never masquerade as the server's own
+    // explanation. NetworkError's own message ("Could not reach the
+    // server") is what a user actually sees for this failure.
+    const onRemoveMember = vi.fn().mockRejectedValue(new NetworkError(new Error("fetch failed")));
     render(
       <CollectionsScreen
         {...props({
@@ -203,7 +211,7 @@ describe("CollectionsScreen", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Remove" }));
     await userEvent.click(screen.getByRole("button", { name: "Remove member" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/network unreachable/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(/could not reach the server/i);
   });
 
   it("tells an admin that adding a member they cannot seal to is only a request", async () => {
