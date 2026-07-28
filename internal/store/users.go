@@ -29,8 +29,14 @@ type User struct {
 	RecoveryProtectedUserKey sql.NullString
 	RecoverySalt             sql.NullString
 	RecoveryKDFParams        sql.NullString
-	PublicKey                sql.NullString
-	EncryptedPrivateKey      sql.NullString
+	// RecoveryAuthHash is NULL for a blob written before migration 0004: it was
+	// wrapped under the undifferentiated recovery key, so there is no
+	// proof-of-possession value to check a redeeming caller against. Valid but
+	// empty is not a state any writer may produce — the required-field checks
+	// exist to keep NULL meaning exactly "predates the split".
+	RecoveryAuthHash    sql.NullString
+	PublicKey           sql.NullString
+	EncryptedPrivateKey sql.NullString
 
 	Revision  int64
 	CreatedAt time.Time
@@ -40,6 +46,7 @@ type User struct {
 const userColumns = `id, email, name, role, status,
 	kdf_salt, kdf_params, auth_hash, protected_user_key,
 	recovery_protected_user_key, recovery_salt, recovery_kdf_params,
+	recovery_auth_hash,
 	public_key, encrypted_private_key,
 	revision, created_at, updated_at`
 
@@ -50,6 +57,7 @@ func scanUser(row interface{ Scan(...any) error }) (User, error) {
 		&u.ID, &u.Email, &u.Name, &u.Role, &u.Status,
 		&u.KDFSalt, &u.KDFParams, &u.AuthHash, &u.ProtectedUserKey,
 		&u.RecoveryProtectedUserKey, &u.RecoverySalt, &u.RecoveryKDFParams,
+		&u.RecoveryAuthHash,
 		&u.PublicKey, &u.EncryptedPrivateKey,
 		&u.Revision, &createdAt, &updatedAt,
 	)

@@ -26,6 +26,10 @@ func enrollBody() map[string]string {
 		"recoverySalt":             "cmVjb3ZlcnlzYWx0MTY=",
 		"recoveryProtectedUserKey": `{"v":1,"alg":"A256GCM","n":"bm9uY2U=","ct":"cmVjb3Zlcnk="}`,
 		"recoveryKdfParams":        `{"algorithm":"argon2id","memoryKiB":65536,"iterations":3,"parallelism":4}`,
+		// The auth half of the split recovery key: derived from the recovery
+		// code, never able to open the blob, and the only thing the server can
+		// check a redeeming caller against.
+		"recoveryAuthHash": "cmVjb3ZlcnktYXV0aC1oYXNoLTMyLWJ5dGVz",
 	}
 }
 
@@ -93,6 +97,70 @@ func TestEnrollActivatesAndHashesTheAuthHash(t *testing.T) {
 	}
 	if !auth.VerifyAuthHash(sent, stored.AuthHash.String) {
 		t.Error("the stored auth hash does not verify against the value sent")
+	}
+}
+
+// TestEnrollStoresTheRecoveryAuthHashHashed reads the column back and compares
+// it to what the client sent, rather than trusting that the handler called
+// HashAuthHash on the way past.
+//
+// The recovery auth hash is a credential with the same power as the login one:
+// present it and the server hands back the blob the recovery code opens. Stored
+// as received, a database dump would let its holder redeem every account on the
+// server without knowing a single recovery code.
+func TestEnrollStoresTheRecoveryAuthHashHashed(t *testing.T) {
+	srv := newTestServer(t)
+	user, token := seedInvite(t, srv, "person@example.com")
+
+	if rec := postJSON(t, srv, "/api/enroll/"+token, enrollBody()); rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body %s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	stored, err := srv.store.UserByID(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := enrollBody()["recoveryAuthHash"]
+	if !stored.RecoveryAuthHash.Valid {
+		t.Fatal("recovery_auth_hash is NULL after enrollment; the code can never be redeemed")
+	}
+	if stored.RecoveryAuthHash.String == sent {
+		t.Error("the recovery auth hash was stored verbatim instead of being hashed")
+	}
+	// Not-equal alone would also pass if the handler stored anything at all —
+	// the hash of a different field, a constant, an empty string. This is what
+	// pins it to the value the client actually sent.
+	if !auth.VerifyAuthHash(sent, stored.RecoveryAuthHash.String) {
+		t.Error("the stored recovery auth hash does not verify against the value sent")
+	}
+	// And it is not merely the login credential written twice: the two columns
+	// gate different things, and a redeeming caller must not be able to present
+	// one for the other.
+	if auth.VerifyAuthHash(enrollBody()["authHash"], stored.RecoveryAuthHash.String) {
+		t.Error("the login auth hash verifies against recovery_auth_hash; the two credentials are interchangeable")
+	}
+}
+
+func TestEnrollRejectsAnEmptyRecoveryAuthHashWithoutHashing(t *testing.T) {
+	srv := newTestServer(t)
+	_, token := seedInvite(t, srv, "person@example.com")
+
+	body := enrollBody()
+	body["recoveryAuthHash"] = ""
+
+	before := auth.Argon2Calls()
+	rec := postJSON(t, srv, "/api/enroll/"+token, body)
+	spent := auth.Argon2Calls() - before
+
+	// The store's required-field check cannot catch this one on its own:
+	// HashAuthHash("") returns a perfectly well-formed hash, so by the time the
+	// value reaches the store it is no longer empty. Only a check before the
+	// hash keeps an unredeemable account out of the database.
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d; body %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if spent != 0 {
+		t.Errorf("an empty recoveryAuthHash cost %d Argon2id computations, want 0", spent)
 	}
 }
 
@@ -177,7 +245,7 @@ func TestEnrollRejectsAnEmptyAuthHashWithoutHashing(t *testing.T) {
 	}
 }
 
-func TestEnrollHashesOnceForALiveToken(t *testing.T) {
+func TestEnrollHashesEachCredentialExactlyOnceForALiveToken(t *testing.T) {
 	srv := newTestServer(t)
 	_, token := seedInvite(t, srv, "person@example.com")
 
@@ -188,11 +256,17 @@ func TestEnrollHashesOnceForALiveToken(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	// The counterpart to the two tests above: they would also pass if the
-	// handler had simply stopped hashing altogether, which would store the
-	// client's login credential in the clear.
-	if spent != 1 {
-		t.Errorf("a successful enrollment ran %d Argon2id computations, want exactly 1", spent)
+	// The counterpart to the tests above: they would also pass if the handler
+	// had simply stopped hashing altogether, which would store the client's
+	// credentials in the clear.
+	//
+	// Two, not one: the login auth hash and the recovery auth hash are separate
+	// credentials and each is hashed once. A count of one means one of them went
+	// into the database as it arrived; more than two means enrollment pays for
+	// an Argon2id computation nobody asked for, on an unauthenticated route.
+	if spent != 2 {
+		t.Errorf("a successful enrollment ran %d Argon2id computations, want exactly 2 "+
+			"(one for authHash, one for recoveryAuthHash)", spent)
 	}
 }
 

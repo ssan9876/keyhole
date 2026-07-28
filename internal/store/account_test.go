@@ -89,6 +89,7 @@ func TestRotateRecoveryReplacesOnlyTheRecoveryBlob(t *testing.T) {
 		RecoverySalt:             "new-recovery-salt",
 		RecoveryKDFParams:        `{"algorithm":"argon2id","memoryKiB":65536,"iterations":3,"parallelism":4}`,
 		RecoveryProtectedUserKey: "new-recovery-blob",
+		RecoveryAuthHash:         "argon2id$new$authhash",
 	}); err != nil {
 		t.Fatalf("RotateRecovery: %v", err)
 	}
@@ -107,6 +108,80 @@ func TestRotateRecoveryReplacesOnlyTheRecoveryBlob(t *testing.T) {
 	}
 	if after.ProtectedUserKey.String != before.ProtectedUserKey.String {
 		t.Error("regenerating a recovery code changed the password-wrapped key")
+	}
+}
+
+// TestRotateRecoveryStoresTheAuthHashAlongsideTheBlob is the point of the
+// column: a blob and the proof-of-possession value that gates handing it back
+// have to arrive and land together, or the row records a code the server still
+// cannot check.
+func TestRotateRecoveryStoresTheAuthHashAlongsideTheBlob(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	userID := enrolledUserID(t, st, "person@example.com")
+
+	if err := st.RotateRecovery(ctx, userID, RecoveryRotation{
+		RecoverySalt:             "rotated-salt",
+		RecoveryKDFParams:        `{"algorithm":"argon2id","memoryKiB":65536,"iterations":3,"parallelism":4}`,
+		RecoveryProtectedUserKey: "rotated-blob",
+		RecoveryAuthHash:         "argon2id$rotated$authhash",
+	}); err != nil {
+		t.Fatalf("RotateRecovery: %v", err)
+	}
+
+	after, err := st.UserByID(ctx, userID)
+	if err != nil {
+		t.Fatalf("UserByID: %v", err)
+	}
+	if !after.RecoveryAuthHash.Valid {
+		t.Fatal("recovery_auth_hash is NULL after a rotation; the new code can never be redeemed")
+	}
+	if after.RecoveryAuthHash.String != "argon2id$rotated$authhash" {
+		t.Errorf("RecoveryAuthHash = %q, want the value the caller passed",
+			after.RecoveryAuthHash.String)
+	}
+	// The pair has to move together. A rotation that wrote the new blob but kept
+	// the previous auth hash would accept the old code and then hand back a blob
+	// it cannot open.
+	if after.RecoveryProtectedUserKey.String != "rotated-blob" {
+		t.Errorf("RecoveryProtectedUserKey = %q, want the rotated blob",
+			after.RecoveryProtectedUserKey.String)
+	}
+}
+
+// TestRotateRecoveryRejectsAPayloadCarryingNoAuthHash is the guard that keeps
+// an unredeemable blob out of the database. Every other recovery field is
+// present here, so nothing but the missing auth hash can be what rejects it.
+//
+// Without this, a client could store a blob nothing is ever able to redeem —
+// the exact state the recovery-redemption plan exists to eliminate — and the
+// user would not find out until the code was their last resort.
+func TestRotateRecoveryRejectsAPayloadCarryingNoAuthHash(t *testing.T) {
+	st := openTemp(t)
+	ctx := context.Background()
+	userID := enrolledUserID(t, st, "person@example.com")
+
+	err := st.RotateRecovery(ctx, userID, RecoveryRotation{
+		RecoverySalt:             "salt",
+		RecoveryKDFParams:        `{"algorithm":"argon2id","memoryKiB":65536,"iterations":3,"parallelism":4}`,
+		RecoveryProtectedUserKey: "blob",
+	})
+	var validation *ValidationError
+	if !errors.As(err, &validation) {
+		t.Fatalf("err = %v, want a *ValidationError", err)
+	}
+	if validation.Field != "recoveryAuthHash" {
+		t.Errorf("Field = %q, want %q", validation.Field, "recoveryAuthHash")
+	}
+
+	// And nothing landed: a rejected rotation must leave the previous, working
+	// recovery record exactly as it was.
+	after, err := st.UserByID(ctx, userID)
+	if err != nil {
+		t.Fatalf("UserByID: %v", err)
+	}
+	if after.RecoveryProtectedUserKey.String == "blob" {
+		t.Error("the rejected payload's blob was written anyway")
 	}
 }
 

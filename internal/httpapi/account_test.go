@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"testing"
@@ -188,6 +189,7 @@ func TestRotatingTheRecoveryCodeLeavesLoginWorking(t *testing.T) {
 			"recoverySalt":             "bmV3LXJlY292ZXJ5LXNhbHQ=",
 			"recoveryKdfParams":        auth.DefaultKDFParamsJSON,
 			"recoveryProtectedUserKey": "new-recovery-blob",
+			"recoveryAuthHash":         "bmV3LXJlY292ZXJ5LWF1dGgtaGFzaA==",
 		})
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body.String())
@@ -200,6 +202,87 @@ func TestRotatingTheRecoveryCodeLeavesLoginWorking(t *testing.T) {
 	})
 	if again.Code != http.StatusOK {
 		t.Errorf("login broke after a recovery rotation: %d", again.Code)
+	}
+}
+
+// TestRotatingTheRecoveryCodeStoresTheAuthHashHashed is the rotation-path twin
+// of the enrollment test: the column is read back and compared to what the
+// client sent, rather than trusting the handler's call site.
+func TestRotatingTheRecoveryCodeStoresTheAuthHashHashed(t *testing.T) {
+	srv := newTestServer(t)
+	user, authHash := enrollTestUser(t, srv, "person@example.com")
+
+	login := postJSON(t, srv, "/api/auth/login", map[string]string{
+		"email": "person@example.com", "authHash": authHash, "deviceLabel": "test",
+	})
+	var loginBody struct {
+		AccessToken string `json:"accessToken"`
+	}
+	decodeInto(t, login, &loginBody)
+
+	const sent = "cm90YXRlZC1yZWNvdmVyeS1hdXRoLWhhc2g="
+	rec := doJSON(t, srv, http.MethodPost, "/api/account/recovery", loginBody.AccessToken,
+		map[string]string{
+			"currentAuthHash":          authHash,
+			"recoverySalt":             "cm90YXRlZC1zYWx0",
+			"recoveryKdfParams":        auth.DefaultKDFParamsJSON,
+			"recoveryProtectedUserKey": "rotated-recovery-blob",
+			"recoveryAuthHash":         sent,
+		})
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+
+	stored, err := srv.store.UserByID(context.Background(), user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.RecoveryAuthHash.String == sent {
+		t.Error("the recovery auth hash was stored verbatim instead of being hashed")
+	}
+	if !auth.VerifyAuthHash(sent, stored.RecoveryAuthHash.String) {
+		t.Error("the stored recovery auth hash does not verify against the value sent")
+	}
+	// The blob and the value that gates it have to move together, or the old
+	// code still passes the check and then fails to open what it is handed.
+	if stored.RecoveryProtectedUserKey.String != "rotated-recovery-blob" {
+		t.Errorf("RecoveryProtectedUserKey = %q, want the rotated blob",
+			stored.RecoveryProtectedUserKey.String)
+	}
+}
+
+func TestRotatingTheRecoveryCodeRejectsAnEmptyAuthHash(t *testing.T) {
+	srv := newTestServer(t)
+	_, authHash := enrollTestUser(t, srv, "person@example.com")
+
+	login := postJSON(t, srv, "/api/auth/login", map[string]string{
+		"email": "person@example.com", "authHash": authHash, "deviceLabel": "test",
+	})
+	var loginBody struct {
+		AccessToken string `json:"accessToken"`
+	}
+	decodeInto(t, login, &loginBody)
+
+	// HashAuthHash("") returns a well-formed hash, so an empty value that
+	// reaches the hash arrives at the store looking complete and is written. The
+	// account would then hold a recovery record no code on earth can redeem.
+	rec := doJSON(t, srv, http.MethodPost, "/api/account/recovery", loginBody.AccessToken,
+		map[string]string{
+			"currentAuthHash":          authHash,
+			"recoverySalt":             "c29tZS1zYWx0",
+			"recoveryKdfParams":        auth.DefaultKDFParamsJSON,
+			"recoveryProtectedUserKey": "unredeemable-blob",
+		})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d: %s", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+
+	stored, err := srv.store.UserByEmail(context.Background(), "person@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.RecoveryProtectedUserKey.String == "unredeemable-blob" {
+		t.Error("the rejected rotation wrote its blob anyway")
 	}
 }
 

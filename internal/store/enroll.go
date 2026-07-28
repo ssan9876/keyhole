@@ -21,6 +21,9 @@ type EnrollmentInput struct {
 	RecoverySalt             string
 	RecoveryProtectedUserKey string
 	RecoveryKDFParams        string
+	// Hashed for storage before it reaches this package, like AuthHash. It is
+	// what lets the server check a redeeming caller holds the recovery code.
+	RecoveryAuthHash string
 }
 
 func (in EnrollmentInput) validate() error {
@@ -34,6 +37,11 @@ func (in EnrollmentInput) validate() error {
 		"recoverySalt":             in.RecoverySalt,
 		"recoveryProtectedUserKey": in.RecoveryProtectedUserKey,
 		"recoveryKdfParams":        in.RecoveryKDFParams,
+		// Required from the first day the column exists. NULL there is reserved
+		// for accounts enrolled before the recovery key was split, and the
+		// redeem endpoints read a NULL as "no such account"; an enrollment that
+		// omitted this would join that set on purpose.
+		"recoveryAuthHash": in.RecoveryAuthHash,
 	}
 	for name, value := range required {
 		if value == "" {
@@ -132,12 +140,14 @@ func (s *Store) CompleteEnrollment(ctx context.Context, token string, in Enrollm
 			kdf_salt = ?, kdf_params = ?, auth_hash = ?,
 			protected_user_key = ?, public_key = ?, encrypted_private_key = ?,
 			recovery_salt = ?, recovery_protected_user_key = ?, recovery_kdf_params = ?,
+			recovery_auth_hash = ?,
 			revision = revision + 1,
 			updated_at = ?
 		 WHERE id = ? AND status = 'pending'`,
 		in.KDFSalt, in.KDFParams, in.AuthHash,
 		in.ProtectedUserKey, in.PublicKey, in.EncryptedPrivateKey,
 		in.RecoverySalt, in.RecoveryProtectedUserKey, in.RecoveryKDFParams,
+		in.RecoveryAuthHash,
 		now, invite.UserID)
 	if err != nil {
 		return User{}, fmt.Errorf("activate user: %w", err)

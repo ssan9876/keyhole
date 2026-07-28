@@ -21,6 +21,7 @@ type enrollRequest struct {
 	RecoverySalt             string `json:"recoverySalt"`
 	RecoveryProtectedUserKey string `json:"recoveryProtectedUserKey"`
 	RecoveryKDFParams        string `json:"recoveryKdfParams"`
+	RecoveryAuthHash         string `json:"recoveryAuthHash"`
 }
 
 func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
@@ -45,12 +46,20 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Hashing an empty string succeeds and costs exactly as much as hashing a
+	// real one, so these have to be checked before the hash, not after. For the
+	// recovery hash the check is load-bearing rather than economical: hashing ""
+	// yields a well-formed value, so the store's required-field check would see
+	// a complete payload and write a recovery record no code can ever redeem.
+	//
+	// Worded by hand to match (*store.ValidationError).Error(), which is what
+	// every other missing field in this payload renders as.
 	if req.AuthHash == "" {
-		// Hashing an empty string succeeds and costs exactly as much as hashing
-		// a real one, so this has to be checked before the hash, not after.
-		// Worded by hand to match (*store.ValidationError).Error(), which is what
-		// every other missing field in this payload renders as.
 		WriteError(w, http.StatusBadRequest, CodeBadRequest, "field \"authHash\" is required")
+		return
+	}
+	if req.RecoveryAuthHash == "" {
+		WriteError(w, http.StatusBadRequest, CodeBadRequest, "field \"recoveryAuthHash\" is required")
 		return
 	}
 
@@ -79,6 +88,16 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The same treatment for the recovery auth hash, and for the same reason:
+	// it is the credential the redeem endpoints check, so a dump that handed it
+	// over would let its holder redeem every account without knowing a code.
+	hashedRecovery, err := auth.HashAuthHash(req.RecoveryAuthHash)
+	if err != nil {
+		s.logger.Error("hash recovery auth hash", "id", RequestIDFrom(r.Context()), "error", err)
+		WriteError(w, http.StatusInternalServerError, CodeInternal, "could not complete setup")
+		return
+	}
+
 	user, err := s.store.CompleteEnrollment(r.Context(), token, store.EnrollmentInput{
 		KDFSalt:                  req.KDFSalt,
 		KDFParams:                req.Params,
@@ -89,6 +108,7 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		RecoverySalt:             req.RecoverySalt,
 		RecoveryProtectedUserKey: req.RecoveryProtectedUserKey,
 		RecoveryKDFParams:        req.RecoveryKDFParams,
+		RecoveryAuthHash:         hashedRecovery,
 	})
 	var validationErr *store.ValidationError
 	switch {

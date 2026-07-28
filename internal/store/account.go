@@ -107,10 +107,15 @@ func (s *Store) RotatePassword(ctx context.Context, userID string, in PasswordRo
 // deriving a recovery key with parameters other than the ones the blob was
 // wrapped under yields a different key, and that failure would surface only at
 // the moment recovery was the user's last resort.
+//
+// RecoveryAuthHash is the server's only way to check that a caller redeeming a
+// code actually holds it, and it arrives already hashed for storage, exactly as
+// AuthHash does.
 type RecoveryRotation struct {
 	RecoverySalt             string
 	RecoveryKDFParams        string
 	RecoveryProtectedUserKey string
+	RecoveryAuthHash         string
 }
 
 func (in RecoveryRotation) validate() error {
@@ -118,6 +123,11 @@ func (in RecoveryRotation) validate() error {
 		"recoverySalt":             in.RecoverySalt,
 		"recoveryKdfParams":        in.RecoveryKDFParams,
 		"recoveryProtectedUserKey": in.RecoveryProtectedUserKey,
+		// Required alongside the other three, not optional. A blob stored
+		// without one is a blob no endpoint can ever hand back — the redeem
+		// path has nothing to check possession against — so accepting it would
+		// show the user a recovery code that silently does nothing.
+		"recoveryAuthHash": in.RecoveryAuthHash,
 	} {
 		if value == "" {
 			return &ValidationError{Field: field}
@@ -137,10 +147,11 @@ func (s *Store) RotateRecovery(ctx context.Context, userID string, in RecoveryRo
 
 	result, err := s.db.ExecContext(ctx,
 		`UPDATE users SET recovery_salt = ?, recovery_kdf_params = ?,
-			recovery_protected_user_key = ?, revision = revision + 1, updated_at = ?
+			recovery_protected_user_key = ?, recovery_auth_hash = ?,
+			revision = revision + 1, updated_at = ?
 		 WHERE id = ? AND status = 'active'`,
 		in.RecoverySalt, in.RecoveryKDFParams, in.RecoveryProtectedUserKey,
-		time.Now().UTC().Format(time.RFC3339), userID)
+		in.RecoveryAuthHash, time.Now().UTC().Format(time.RFC3339), userID)
 	if err != nil {
 		return fmt.Errorf("rotate recovery: %w", err)
 	}

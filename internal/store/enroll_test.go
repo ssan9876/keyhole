@@ -23,6 +23,10 @@ func sampleEnrollment() EnrollmentInput {
 		RecoverySalt:             "cmVjb3ZlcnlzYWx0MTY=",
 		RecoveryProtectedUserKey: `{"v":1,"alg":"A256GCM","n":"bm9uY2U=","ct":"cmVjb3Zlcnk="}`,
 		RecoveryKDFParams:        `{"algorithm":"argon2id","memoryKiB":65536,"iterations":3,"parallelism":4}`,
+		// Already hashed for storage by the time it reaches this package, exactly
+		// like AuthHash: the value the client derives from the recovery code is a
+		// credential, and this layer stores what it is handed verbatim.
+		RecoveryAuthHash: "argon2id$cmVjb3Zlcnk=$ZGlnZXN0",
 	}
 }
 
@@ -55,6 +59,15 @@ func TestCompleteEnrollmentActivatesTheAccount(t *testing.T) {
 	// cannot orphan the recovery blob.
 	if enrolled.RecoveryKDFParams.String != in.RecoveryKDFParams {
 		t.Error("recovery_kdf_params was not stored")
+	}
+	// An account enrolled after migration 0004 must never leave this NULL: NULL
+	// is reserved for blobs that predate the column, and the redeem endpoints
+	// treat one as an address with no account at all.
+	if !enrolled.RecoveryAuthHash.Valid {
+		t.Fatal("recovery_auth_hash is NULL on a fresh enrollment; the code can never be redeemed")
+	}
+	if enrolled.RecoveryAuthHash.String != in.RecoveryAuthHash {
+		t.Errorf("RecoveryAuthHash = %q, want %q", enrolled.RecoveryAuthHash.String, in.RecoveryAuthHash)
 	}
 }
 
@@ -147,6 +160,7 @@ func TestCompleteEnrollmentRejectsIncompleteInput(t *testing.T) {
 	for _, field := range []string{
 		"KDFSalt", "KDFParams", "AuthHash", "ProtectedUserKey", "PublicKey",
 		"EncryptedPrivateKey", "RecoverySalt", "RecoveryProtectedUserKey", "RecoveryKDFParams",
+		"RecoveryAuthHash",
 	} {
 		t.Run(field, func(t *testing.T) {
 			_, token, err := s.CreateInvite(ctx, user.ID, time.Hour)
@@ -173,6 +187,8 @@ func TestCompleteEnrollmentRejectsIncompleteInput(t *testing.T) {
 				in.RecoveryProtectedUserKey = ""
 			case "RecoveryKDFParams":
 				in.RecoveryKDFParams = ""
+			case "RecoveryAuthHash":
+				in.RecoveryAuthHash = ""
 			}
 			if _, err := s.CompleteEnrollment(ctx, token, in); err == nil {
 				t.Errorf("enrollment succeeded with %s empty", field)

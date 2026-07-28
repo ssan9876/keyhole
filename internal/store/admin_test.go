@@ -144,7 +144,8 @@ func TestResetUserDestroysKeyMaterialAndReturnsAFreshInvite(t *testing.T) {
 	// Give the account something to lose.
 	if _, err := st.DB().ExecContext(ctx,
 		`UPDATE users SET status = 'active', auth_hash = 'h', protected_user_key = 'puk',
-		 recovery_protected_user_key = 'rpuk', public_key = 'pk', encrypted_private_key = 'epk'
+		 recovery_protected_user_key = 'rpuk', recovery_auth_hash = 'rah',
+		 public_key = 'pk', encrypted_private_key = 'epk'
 		 WHERE id = ?`, target); err != nil {
 		t.Fatalf("seed key material: %v", err)
 	}
@@ -180,8 +181,12 @@ func TestResetUserDestroysKeyMaterialAndReturnsAFreshInvite(t *testing.T) {
 		"auth_hash":                   user.AuthHash.String,
 		"protected_user_key":          user.ProtectedUserKey.String,
 		"recovery_protected_user_key": user.RecoveryProtectedUserKey.String,
-		"public_key":                  user.PublicKey.String,
-		"encrypted_private_key":       user.EncryptedPrivateKey.String,
+		// A credential in its own right, and the one the redeem endpoints check.
+		// Left behind, a reset account keeps proving possession of a code whose
+		// blob has just been destroyed.
+		"recovery_auth_hash":    user.RecoveryAuthHash.String,
+		"public_key":            user.PublicKey.String,
+		"encrypted_private_key": user.EncryptedPrivateKey.String,
 	} {
 		if value != "" {
 			t.Errorf("%s survived the reset: %q", name, value)

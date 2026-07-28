@@ -43,6 +43,7 @@ func (s *Store) ListUsers(ctx context.Context) ([]UserSummary, error) {
 			&summary.ID, &summary.Email, &summary.Name, &summary.Role, &summary.Status,
 			&summary.KDFSalt, &summary.KDFParams, &summary.AuthHash, &summary.ProtectedUserKey,
 			&summary.RecoveryProtectedUserKey, &summary.RecoverySalt, &summary.RecoveryKDFParams,
+			&summary.RecoveryAuthHash,
 			&summary.PublicKey, &summary.EncryptedPrivateKey,
 			&summary.Revision, &createdAt, &updatedAt,
 			&summary.HasPendingInvite,
@@ -159,6 +160,7 @@ func (s *Store) ResetUser(ctx context.Context, userID, actorID string) (string, 
 			kdf_salt = NULL, kdf_params = NULL, auth_hash = NULL,
 			protected_user_key = NULL, recovery_protected_user_key = NULL,
 			recovery_salt = NULL, recovery_kdf_params = NULL,
+			recovery_auth_hash = NULL,
 			public_key = NULL, encrypted_private_key = NULL,
 			revision = revision + 1, updated_at = ?
 		 WHERE id = ?`, stamp, userID)

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -237,7 +238,20 @@ func TestMigration0002PreservesExistingRows(t *testing.T) {
 		t.Fatal("migration 0002 not found")
 	}
 
-	userID := enrolledUser(t, s, "owner@example.com").ID
+	// Seeded with raw SQL, not enrolledUser: at version 1 the schema is behind
+	// the Go layer, whose column list has since grown recovery_auth_hash, so
+	// every store method that scans a user fails here. The items below need an
+	// owner row that satisfies the foreign key and nothing more.
+	userID, err := NewID()
+	if err != nil {
+		t.Fatalf("NewID: %v", err)
+	}
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO users (id, email, name, role, status, revision, created_at, updated_at)
+		 VALUES (?, 'owner@example.com', 'Owner', 'user', 'active', 0,
+			'2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`, userID); err != nil {
+		t.Fatalf("seed owner: %v", err)
+	}
 
 	folderID, err := NewID()
 	if err != nil {
@@ -302,5 +316,94 @@ func TestMigration0002PreservesExistingRows(t *testing.T) {
 	}
 	if seq != 9 {
 		t.Errorf("revision_sequence = %d, want 9 (max of items 7 and folders 9)", seq)
+	}
+}
+
+// openAtVersion gives a database migrated only as far as `through`, which is
+// the state an existing installation is in the moment before it takes the next
+// update. Nothing in the Go layer may be used to write rows at that point: the
+// column list scanUser reads has already moved ahead of the schema.
+func openAtVersion(t *testing.T, through int) *Store {
+	t.Helper()
+	ctx := context.Background()
+
+	s, err := Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	if _, err := s.db.ExecContext(ctx,
+		`CREATE TABLE IF NOT EXISTS schema_migrations (
+			version    INTEGER PRIMARY KEY,
+			name       TEXT NOT NULL,
+			applied_at TEXT NOT NULL
+		)`); err != nil {
+		t.Fatalf("create schema_migrations: %v", err)
+	}
+	migrations, err := loadMigrations()
+	if err != nil {
+		t.Fatalf("loadMigrations: %v", err)
+	}
+	for _, m := range migrations {
+		if m.version > through {
+			continue
+		}
+		if err := s.applyMigration(ctx, m); err != nil {
+			t.Fatalf("apply migration %s: %v", m.name, err)
+		}
+	}
+	return s
+}
+
+// TestMigration0004LeavesAnExistingRecoveryBlobWithANullAuthHash pins the one
+// fact the column's nullability carries. A blob written before this migration
+// was wrapped under the undifferentiated recovery key and no auth hash was ever
+// derived from it, so there is nothing to check a redeeming caller against. NULL
+// is how the redeem endpoints will recognize exactly those rows; a non-NULL
+// default of any kind would make an unredeemable account indistinguishable
+// from a redeemable one at precisely the moment that distinction has to be made
+// without leaking whether the address exists.
+func TestMigration0004LeavesAnExistingRecoveryBlobWithANullAuthHash(t *testing.T) {
+	ctx := context.Background()
+	s := openAtVersion(t, 3)
+
+	if _, err := s.db.ExecContext(ctx,
+		`INSERT INTO users (id, email, name, role, status, kdf_salt, kdf_params, auth_hash,
+			protected_user_key, recovery_salt, recovery_kdf_params, recovery_protected_user_key,
+			public_key, encrypted_private_key, revision, created_at, updated_at)
+		 VALUES ('old', 'old@example.com', 'Old Account', 'user', 'active', 'salt', '{}', 'argon2id$x$y',
+			'puk', 'recovery-salt', '{}', 'RECOVERY-BLOB',
+			'pk', 'epk', 3, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')`,
+	); err != nil {
+		t.Fatalf("seed a pre-0004 enrolled account: %v", err)
+	}
+
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	version, err := s.SchemaVersion(ctx)
+	if err != nil {
+		t.Fatalf("SchemaVersion: %v", err)
+	}
+	if version < 4 {
+		t.Fatalf("schema version = %d, want at least 4", version)
+	}
+
+	var authHash sql.NullString
+	var blob string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT recovery_auth_hash, recovery_protected_user_key FROM users WHERE id = 'old'`,
+	).Scan(&authHash, &blob); err != nil {
+		t.Fatalf("read the migrated row: %v", err)
+	}
+	if authHash.Valid {
+		t.Errorf("recovery_auth_hash = %q on a row that predates the column, want NULL", authHash.String)
+	}
+	// The migration adds a column; it must not disturb the blob that column
+	// describes. A row whose blob was rewritten here has lost its recovery path
+	// outright, which is worse than being unredeemable.
+	if blob != "RECOVERY-BLOB" {
+		t.Errorf("recovery_protected_user_key = %q after the migration, want it untouched", blob)
 	}
 }

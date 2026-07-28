@@ -106,6 +106,7 @@ type rotateRecoveryRequest struct {
 	RecoverySalt             string `json:"recoverySalt"`
 	RecoveryKDFParams        string `json:"recoveryKdfParams"`
 	RecoveryProtectedUserKey string `json:"recoveryProtectedUserKey"`
+	RecoveryAuthHash         string `json:"recoveryAuthHash"`
 }
 
 func (s *Server) handleRotateRecovery(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +116,26 @@ func (s *Server) handleRotateRecovery(w http.ResponseWriter, r *http.Request) {
 	if !DecodeJSON(w, r, &req) {
 		return
 	}
+	if req.RecoveryAuthHash == "" {
+		// Checked here rather than left to the store, because HashAuthHash("")
+		// returns a well-formed hash: an empty value that reaches the hash
+		// arrives at the store looking complete and is written, leaving a
+		// recovery record no code can redeem. Hashing an empty string also
+		// costs exactly as much as hashing a real one.
+		WriteError(w, http.StatusBadRequest, CodeBadRequest, "field \"recoveryAuthHash\" is required")
+		return
+	}
 	if !s.verifyCurrentCredential(w, user, req.CurrentAuthHash) {
+		return
+	}
+
+	// Hashed for storage exactly as the login credential is. It is what the
+	// redeem endpoints check possession of, so a database leak must not hand
+	// over a value that can be replayed straight back at them.
+	storedRecovery, err := auth.HashAuthHash(req.RecoveryAuthHash)
+	if err != nil {
+		s.logger.Error("hash recovery auth hash", "id", RequestIDFrom(r.Context()), "error", err)
+		WriteError(w, http.StatusInternalServerError, CodeInternal, "could not change the recovery code")
 		return
 	}
 
@@ -127,6 +147,7 @@ func (s *Server) handleRotateRecovery(w http.ResponseWriter, r *http.Request) {
 		RecoverySalt:             req.RecoverySalt,
 		RecoveryKDFParams:        req.RecoveryKDFParams,
 		RecoveryProtectedUserKey: req.RecoveryProtectedUserKey,
+		RecoveryAuthHash:         storedRecovery,
 	}); err != nil {
 		s.writeStoreError(w, r, "rotate recovery", err)
 		return
