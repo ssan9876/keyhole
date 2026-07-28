@@ -65,21 +65,34 @@ func (f *fakeService) Start(ctx context.Context) error {
 	return f.startErr
 }
 
-// fakeHealth is a Health with no HTTP polling: it reports err, optionally
-// running a hook first so a test can inject a side effect (e.g. corrupting
-// the previous binary) at the exact moment the real poll would happen.
+// fakeHealth is a Health with no HTTP polling: the Nth call to Wait reports
+// errs[N-1], and any call past the end of the sequence reports healthy.
+//
+// The sequence, rather than one fixed error, is the point. A single Update
+// polls health twice on the rollback path -- once for the new binary, once
+// for the restored one -- and those two answers are entirely different
+// questions: "did the upgrade work" and "is the vault back." A fake that
+// answered both the same way could not tell a rollback that restored a
+// working service from one that left the vault down.
+//
+// before, if set, runs once at the first poll, so a test can inject a side
+// effect (e.g. removing the previous binary) at the exact moment the real
+// code would be polling.
 type fakeHealth struct {
-	err     error
+	errs    []error
 	before  func()
 	waitedN int
 }
 
 func (f *fakeHealth) Wait(ctx context.Context, timeout time.Duration) error {
 	f.waitedN++
-	if f.before != nil {
+	if f.waitedN == 1 && f.before != nil {
 		f.before()
 	}
-	return f.err
+	if f.waitedN <= len(f.errs) {
+		return f.errs[f.waitedN-1]
+	}
+	return nil
 }
 
 // signedRelease builds a Release plus a fakeSource whose SHA256SUMS is
@@ -241,7 +254,7 @@ func TestUpdateInstallsTheNewBinaryAndStartsTheService(t *testing.T) {
 	_, src, pubKey := signedRelease(t, "v2.0.0", newBinary)
 
 	svc := &fakeService{}
-	health := &fakeHealth{err: nil}
+	health := &fakeHealth{}
 	deps := h.deps(src, svc, health)
 
 	outcome, err := Update(context.Background(), deps, Options{
@@ -285,7 +298,10 @@ func TestUpdateRollsBackBinaryAndDatabaseWhenHealthNeverComesUp(t *testing.T) {
 	_, src, pubKey := signedRelease(t, "v2.0.0", brokenBinary)
 
 	svc := &fakeService{}
-	health := &fakeHealth{err: errors.New("dial tcp: connection refused")}
+	// The new binary never answers; the restored one does. Two different
+	// answers to two different questions -- "did the upgrade work" and "is
+	// the vault back" -- and only the second makes this a clean rollback.
+	health := &fakeHealth{errs: []error{errors.New("dial tcp: connection refused"), nil}}
 	deps := h.deps(src, svc, health)
 
 	outcome, err := Update(context.Background(), deps, Options{
@@ -328,6 +344,57 @@ func TestUpdateRollsBackBinaryAndDatabaseWhenHealthNeverComesUp(t *testing.T) {
 	if svc.startCalls != 2 {
 		t.Errorf("service Start calls = %d, want 2 (once to try the new binary, once after rollback)", svc.startCalls)
 	}
+
+	// Two health polls, not one. The second is what turns "systemctl start
+	// returned 0" into "the vault is answering again": with a Type=simple
+	// unit, start returns as soon as exec succeeds and says nothing about
+	// whether the process bound its port, so a rollback that stops at Start
+	// can report success over a dead vault. Reporting a rollback that did
+	// not actually restore service is the failure this whole path exists to
+	// prevent.
+	if health.waitedN != 2 {
+		t.Errorf("Health.Wait calls = %d, want 2 (once for the new binary, once to confirm the restored one is serving)", health.waitedN)
+	}
+}
+
+// TestRollbackThatStartsTheServiceButNeverGetsItHealthyIsNotReportedAsClean
+// is the other half of that assertion: when the *restored* binary starts but
+// never answers, the operator must not be told the vault is back. The old
+// binary can fail for reasons that have nothing to do with the update -- a
+// full disk under the restored database, say -- and "rolled back to v1.0.0"
+// reads as "my vault is back," which is when an operator stops looking.
+func TestRollbackThatStartsTheServiceButNeverGetsItHealthyIsNotReportedAsClean(t *testing.T) {
+	h := newTestHarness(t)
+	brokenBinary := []byte("new keyhole binary contents that never answers healthz")
+	_, src, pubKey := signedRelease(t, "v2.0.0", brokenBinary)
+
+	// Both Start calls "succeed" -- that is the whole point. Nothing in the
+	// Service interface reports a problem here; only health does.
+	svc := &fakeService{}
+	health := &fakeHealth{errs: []error{
+		errors.New("new binary: connection refused"),
+		errors.New("restored binary: no such file or directory"),
+	}}
+	deps := h.deps(src, svc, health)
+
+	outcome, err := Update(context.Background(), deps, Options{
+		CurrentVersion: "v1.0.0",
+		PublicKey:      pubKey,
+		AssetName:      testAsset,
+		HealthTimeout:  50 * time.Millisecond,
+	})
+	if err == nil {
+		t.Fatal("Update() error = nil, want an error: the restored service never answered healthz, so the vault is still down")
+	}
+	if outcome.RolledBack {
+		t.Errorf("Outcome.RolledBack = true, want false: a rollback that leaves the vault down is not a completed rollback: %+v", outcome)
+	}
+	if svc.startCalls != 2 {
+		t.Errorf("service Start calls = %d, want 2", svc.startCalls)
+	}
+	if !strings.Contains(err.Error(), "restored binary") {
+		t.Errorf("error %q does not name why the restored service is still not serving", err.Error())
+	}
 }
 
 func TestUpdateDoesNotStopTheServiceWhenVerificationFails(t *testing.T) {
@@ -343,7 +410,7 @@ func TestUpdateDoesNotStopTheServiceWhenVerificationFails(t *testing.T) {
 	src.assets[binURL] = []byte("corrupted in transit")
 
 	svc := &fakeService{}
-	health := &fakeHealth{err: nil}
+	health := &fakeHealth{}
 	deps := h.deps(src, svc, health)
 
 	_, err := Update(context.Background(), deps, Options{
@@ -374,7 +441,7 @@ func TestUpdateWithCheckOnlyDownloadsNothingAndChangesNothing(t *testing.T) {
 	_, src, pubKey := signedRelease(t, "v2.0.0", newBinary)
 
 	svc := &fakeService{}
-	health := &fakeHealth{err: nil}
+	health := &fakeHealth{}
 	deps := h.deps(src, svc, health)
 
 	outcome, err := Update(context.Background(), deps, Options{
@@ -409,7 +476,7 @@ func TestUpdateReportsAlreadyCurrentWithoutTouchingTheService(t *testing.T) {
 	_, src, pubKey := signedRelease(t, "v1.0.0", []byte("does not matter, never downloaded"))
 
 	svc := &fakeService{}
-	health := &fakeHealth{err: nil}
+	health := &fakeHealth{}
 	deps := h.deps(src, svc, health)
 
 	outcome, err := Update(context.Background(), deps, Options{
@@ -444,7 +511,11 @@ func TestRollbackItselfFailingIsReportedRatherThanSwallowed(t *testing.T) {
 
 	svc := &fakeService{}
 	health := &fakeHealth{
-		err: errors.New("connection refused on :8477/healthz"),
+		// The new binary never answers; the restored service does. That
+		// isolates this test's failure to the one thing it is about -- the
+		// previous binary being gone when rollback goes to move it back --
+		// rather than letting a second health failure pad the message.
+		errs: []error{errors.New("connection refused on :8477/healthz"), nil},
 		// Simulate the previous binary becoming unavailable for rollback
 		// -- e.g. the disk that held it went away -- at the moment the
 		// real code would be polling health, just before Update decides

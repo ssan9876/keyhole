@@ -209,7 +209,7 @@ func Update(ctx context.Context, deps Deps, opts Options) (Outcome, error) {
 	}
 
 	deps.logf("update to %s failed (%v); rolling back to %s", release.Version, installErr, opts.CurrentVersion)
-	if rbErr := rollback(ctx, deps, snapshotPath); rbErr != nil {
+	if rbErr := rollback(ctx, deps, snapshotPath, opts.healthTimeout()); rbErr != nil {
 		// The worst case: the new binary is bad AND the rollback itself
 		// could not complete. An operator in that state needs to know to
 		// restore from a snapshot by hand rather than be told "it
@@ -316,11 +316,12 @@ func backupSnapshot(ctx context.Context, deps Deps) (string, error) {
 // rollback undoes everything step 5 onward may have done: it stops the
 // service (idempotent if it already isn't running), moves keyhole.prev back
 // over whatever is at BinaryPath, restores the pre-update database
-// snapshot, and starts the service again. Every step is attempted even if
-// an earlier one fails, so a caller sees every problem at once rather than
-// stopping at the first -- the worst case here is an operator who needs to
-// know exactly what still needs fixing by hand.
-func rollback(ctx context.Context, deps Deps, snapshotPath string) error {
+// snapshot, starts the service again, and waits for it to answer /healthz.
+// Every step is attempted even if an earlier one fails, so a caller sees
+// every problem at once rather than stopping at the first -- the worst case
+// here is an operator who needs to know exactly what still needs fixing by
+// hand.
+func rollback(ctx context.Context, deps Deps, snapshotPath string, healthTimeout time.Duration) error {
 	var errs []error
 
 	if err := deps.Service.Stop(ctx); err != nil {
@@ -339,6 +340,22 @@ func rollback(ctx context.Context, deps Deps, snapshotPath string) error {
 	}
 	if err := deps.Service.Start(ctx); err != nil {
 		errs = append(errs, fmt.Errorf("start service after rollback: %w", err))
+	}
+	// Start's exit code is not the authority on whether the vault is
+	// serving again. With a systemd Type=simple unit, `systemctl start`
+	// returns 0 as soon as exec succeeds -- it says nothing about whether
+	// the process bound its port, so a restored binary that crashes on
+	// startup still looks like a clean start. Stopping at Start would let
+	// Update report RolledBack, and the CLI print "rolled back to v1.0.0,"
+	// while the vault is down and the operator stops looking. That is
+	// exactly the silent failure reporting a rollback exists to prevent,
+	// and why design spec §10's wording is "asserting the service returns
+	// healthy" rather than "asserting start succeeded." The wait runs even
+	// when Start reported an error, for the mirror-image reason: a non-zero
+	// exit does not prove the service is down either, and health is the
+	// only answer to the question the operator is actually asking.
+	if err := deps.Health.Wait(ctx, healthTimeout); err != nil {
+		errs = append(errs, fmt.Errorf("service did not answer healthz within %s after rollback: %w", healthTimeout, err))
 	}
 
 	return errors.Join(errs...)
