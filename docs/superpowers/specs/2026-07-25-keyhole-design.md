@@ -185,16 +185,18 @@ acknowledgement. The server never sees it.
 Recovery flow: enter email + recovery code → unwrap `userKey` → set a new master
 password → re-wrap → issue a new recovery code and invalidate the old.
 
-**Not yet implemented, as of 2026-07-27.** Section 4.3's API has no endpoint that
-returns `recovery_protected_user_key` to a caller who cannot log in, so the flow
-above cannot run. `POST /api/account/recovery` only *rotates* the blob for an
-already-authenticated user. Closing this needs a migration adding a
-`recovery_auth_hash` column, a `deriveRecoveryAuthHash` addition to
-`packages/crypto` with new pinned vectors, and a decoyed two-step endpoint pair
-mirroring prelogin/login — so that asking for an unknown address is answered
-identically to asking for a real one. Until then the enrolment screen and the
-README must say plainly that a forgotten master password means an admin reset,
-which destroys personal items and collection memberships.
+**Implemented as of 2026-07-28**, by exactly the pieces the gap called for:
+migration 0004's `recovery_auth_hash` column, `deriveRecoveryAuthHash` in
+`packages/crypto` with pinned vectors, and the decoyed endpoint set now listed in
+section 4.3 — so that asking about an unknown address is answered identically to
+asking about a real one. `POST /api/account/recovery` remains what it always was,
+a rotation for an already-authenticated user; it is not part of this flow.
+
+The code is minted client-side and shown once, so nothing may destroy it once the
+server may have committed. `completeRecovery` therefore separates "the server
+refused" (a 4xx: the rotation did not happen, discard the code) from "no answer
+arrived" (the rotation may have committed, so surface the code and say so) —
+the same rule, and the same reason, as enrolment's `EnrolmentOutcome.loggedIn`.
 
 ### 3.7 Admin reset (destructive)
 
@@ -344,6 +346,34 @@ POST   /api/admin/users/:id/invite  reissue a setup link — without it a pendin
                                     unrecoverable except by direct SQL
 GET    /api/admin/collections       membership-graph view, no sealed keys
 ```
+
+**Added during the recovery-redemption plan.** The pair section 3.6 needs and
+section 4.3 originally had no equivalent of: a decoyed two-step endpoint set
+mirroring prelogin/login, so that a caller who cannot log in can still be handed
+the recovery blob on proof of possession of the code.
+
+```
+POST   /api/auth/recover/prelogin   email -> recovery salt + recovery kdf params
+                                    (decoy if unknown, disabled, or holding a
+                                    blob that predates the auth-hash split)
+POST   /api/auth/recover            email + recoveryAuthHash -> the recovery
+                                    blob, the encrypted private key, and a
+                                    single-use ten-minute recovery token; 401
+                                    with one message for every refusal
+POST   /api/auth/recover/complete   recoveryToken + a whole new master-password
+                                    credential and a whole new recovery blob;
+                                    204, one transaction, every session revoked
+```
+
+`recoveryAuthHash` is the auth half of the split recovery key (section 3.6),
+carried as **standard base64 with padding — RFC 4648 §4, not base64url and not
+unpadded**. This is a wire contract, not an implementation detail: the server
+stores a hash of the exact string the client uploads and compares byte for byte
+without ever decoding it, so a client that picked another alphabet turns a
+correct recovery code into a 401 indistinguishable from a wrong one, discovered
+on the single day the code matters. The same applies to every other base64 field
+in this API; it is called out here because this is the one whose only consumer is
+a future non-TypeScript port.
 
 ### 4.4 Sessions
 

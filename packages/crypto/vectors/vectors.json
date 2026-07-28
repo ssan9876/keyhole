@@ -160,7 +160,7 @@
     "recoveryKeyBase64": "8rx2ex2vcppUBHkXNil5TIjbtlKJ5CJ9FFbz6/lIs3o="
   },
   "recoverySplit": {
-    "_comment": "recoveryCode -> recoveryKey -> {wrapKey, authHash} -> recoveryProtectedUserKey. wrapKey unwraps the userKey and is never transmitted; authHash is stored server-side as recovery_auth_hash and opens nothing. The two are HKDF expansions of one recovery key under different info strings, so they are indistinguishable by inspection \u2014 reproduce them, do not assume.",
+    "_comment": "recoveryCode -> recoveryKey -> {wrapKey, authHash} -> recoveryProtectedUserKey. wrapKey unwraps the userKey and is never transmitted; authHash is stored server-side as recovery_auth_hash and opens nothing. The two are HKDF expansions of one recovery key under different info strings, so they are indistinguishable by inspection \u2014 reproduce them, do not assume. authHashBase64 is also the wire encoding and not just this file's rendering of the bytes: standard base64 with padding (RFC 4648 section 4), never base64url and never unpadded, because the server keeps a hash of the exact text the client uploads and compares it byte for byte rather than decoding it \u2014 so a port that chose another alphabet would make correct recovery codes fail with the same 401 a wrong one gets.",
     "code": "ABCDE-FGHJK-MNPQR-STVWX-YZ234",
     "recoverySaltBase64": "ISEhISEhISEhISEhISEhIQ==",
     "params": {
