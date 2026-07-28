@@ -44,11 +44,13 @@ describe("EnrolScreen", () => {
     expect(onFinish).toHaveBeenCalledOnce();
   });
 
-  it("does not claim the recovery code can be redeemed today", async () => {
-    // POST /api/account/recovery only rotates the blob for an already-
-    // authenticated user; no endpoint returns recovery_protected_user_key to
-    // someone who cannot log in. Promising redemption here would tell a user
-    // their vault is recoverable when no code path can honour that.
+  it("no longer says redemption is unbuilt, and says what redeeming actually does", async () => {
+    // This screen used to carry "redeeming this code is not built yet", which
+    // was true while POST /api/account/recovery — a rotation for an already-
+    // authenticated user — was the only recovery-related endpoint. There is now
+    // a redemption path (POST /api/auth/recover/prelogin, /recover,
+    // /recover/complete, driven by RecoverScreen), so that sentence has become
+    // the lie it was written to avoid.
     const onEnrol = vi.fn().mockResolvedValue({ recoveryCode: "ABCD-EFGH-IJKL" });
     render(<EnrolScreen inviteToken="tok" onEnrol={onEnrol} onFinish={vi.fn()} />);
 
@@ -61,8 +63,13 @@ describe("EnrolScreen", () => {
       expect(screen.getByText("ABCD-EFGH-IJKL")).toBeInTheDocument();
     });
 
-    expect(screen.queryByText(/only way back into your vault/i)).not.toBeInTheDocument();
-    expect(screen.getByText(/redeeming this code is not built yet/i)).toBeInTheDocument();
+    expect(screen.queryByText(/not built yet/i)).not.toBeInTheDocument();
+    // The two consequences a user has to know before they rely on it, both
+    // verified against internal/store/recovery.go's CompleteRecovery: every
+    // session is revoked, and the userKey inside the blob is unchanged, so no
+    // item is re-encrypted or lost.
+    expect(screen.getByText(/signs out every other device/i)).toBeInTheDocument();
+    expect(screen.getByText(/exactly as it is/i)).toBeInTheDocument();
   });
 
   it("never shows the recovery code again after it is acknowledged", async () => {

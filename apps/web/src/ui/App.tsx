@@ -6,8 +6,10 @@ import { enroll } from "../vault/enroll.js";
 import { unlock } from "../vault/unlock.js";
 import { readAutoLock, startAutoLock } from "../vault/autolock.js";
 import { EnrolScreen } from "./screens/EnrolScreen.js";
+import { RecoverScreen } from "./screens/RecoverScreen.js";
 import { UnlockScreen } from "./screens/UnlockScreen.js";
 import { VaultScreen } from "./screens/VaultScreen.js";
+import { useRecoverScreen } from "./useRecoverScreen.js";
 import { useSession } from "./useVault.js";
 
 /**
@@ -67,7 +69,18 @@ export function App() {
   const { isUnlocked } = useSession(session);
   const inviteToken = useMemo(() => inviteTokenFromPath(window.location.pathname), []);
   const [enrolled, setEnrolled] = useState(false);
+  const [recovering, setRecovering] = useState(false);
   const [autoLock, setAutoLock] = useState(readAutoLock);
+
+  const stopRecovering = useCallback(() => setRecovering(false), []);
+  const recover = useRecoverScreen({
+    api,
+    session,
+    store,
+    deviceLabel: DEVICE_LABEL,
+    rememberedEmail: rememberedEmail(),
+    onExit: stopRecovering,
+  });
 
   // Started only while unlocked -- there is nothing to lock otherwise -- and
   // torn down and restarted whenever `autoLock` changes, so a setting picked
@@ -157,6 +170,16 @@ export function App() {
     );
   }
 
+  // Deliberately ahead of the isUnlocked branch below. A completed recovery
+  // signs itself in (useRecoverScreen calls unlock() with the password just
+  // set), so isUnlocked flips while RecoverScreen is still showing the new
+  // recovery code — and that code is shown exactly once, by anyone, ever.
+  // Ordering these the other way round would swap in VaultScreen the instant
+  // the login landed and destroy the code on its way past.
+  if (recovering) {
+    return <RecoverScreen {...recover} />;
+  }
+
   if (!isUnlocked) {
     return (
       <>
@@ -165,7 +188,11 @@ export function App() {
             Your session expired. Unlock to continue.
           </p>
         )}
-        <UnlockScreen rememberedEmail={rememberedEmail()} onUnlock={handleUnlock} />
+        <UnlockScreen
+          rememberedEmail={rememberedEmail()}
+          onUnlock={handleUnlock}
+          onForgotPassword={() => setRecovering(true)}
+        />
       </>
     );
   }

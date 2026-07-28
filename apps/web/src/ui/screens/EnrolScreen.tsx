@@ -52,9 +52,11 @@ export function EnrolScreen({ inviteToken, onEnrol, onFinish }: EnrolScreenProps
           anyone with the database.
         </p>
         <p style={{ color: "var(--ink-muted)" }}>
-          Note: redeeming this code is not built yet. Today it protects a copy
-          of your key for a future release; it will not currently get you back
-          into a vault whose master password you have forgotten.
+          If you forget your master password, this code is what gets you back
+          in: redeeming it sets a new password, signs out every other device,
+          and leaves every item in your vault exactly as it is. Without it, an
+          administrator can only reset the account, which deletes your personal
+          items and folders and drops you from every collection you are in.
         </p>
         <p
           style={{

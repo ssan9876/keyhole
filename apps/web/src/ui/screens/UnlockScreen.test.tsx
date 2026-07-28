@@ -5,13 +5,13 @@ import { UnlockScreen } from "./UnlockScreen.js";
 
 describe("UnlockScreen", () => {
   it("asks for an email when none is remembered", () => {
-    render(<UnlockScreen rememberedEmail={null} onUnlock={vi.fn()} />);
+    render(<UnlockScreen rememberedEmail={null} onUnlock={vi.fn()} onForgotPassword={vi.fn()} />);
     expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/master password/i)).toBeInTheDocument();
   });
 
   it("asks only for the password when an email is remembered", () => {
-    render(<UnlockScreen rememberedEmail="a@b.c" onUnlock={vi.fn()} />);
+    render(<UnlockScreen rememberedEmail="a@b.c" onUnlock={vi.fn()} onForgotPassword={vi.fn()} />);
     // The whole benefit of persisting the email is this screen.
     expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
     expect(screen.getByText("a@b.c")).toBeInTheDocument();
@@ -19,7 +19,7 @@ describe("UnlockScreen", () => {
 
   it("shows a wrong-password message that does not blame the network", async () => {
     const onUnlock = vi.fn().mockRejectedValue(new Error("Wrong master password"));
-    render(<UnlockScreen rememberedEmail="a@b.c" onUnlock={onUnlock} />);
+    render(<UnlockScreen rememberedEmail="a@b.c" onUnlock={onUnlock} onForgotPassword={vi.fn()} />);
 
     await userEvent.type(screen.getByLabelText(/master password/i), "nope");
     await userEvent.click(screen.getByRole("button", { name: /unlock/i }));
@@ -40,7 +40,7 @@ describe("UnlockScreen", () => {
     // silently. The vault layer's own NetworkError (src/vault/api.ts) carries
     // exactly this message, distinct from "Wrong master password".
     const onUnlock = vi.fn().mockRejectedValue(new Error("Could not reach the server"));
-    render(<UnlockScreen rememberedEmail="a@b.c" onUnlock={onUnlock} />);
+    render(<UnlockScreen rememberedEmail="a@b.c" onUnlock={onUnlock} onForgotPassword={vi.fn()} />);
 
     await userEvent.type(screen.getByLabelText(/master password/i), "correct horse");
     await userEvent.click(screen.getByRole("button", { name: /unlock/i }));
@@ -51,6 +51,20 @@ describe("UnlockScreen", () => {
     expect(screen.getByRole("alert")).not.toHaveTextContent(/wrong master password/i);
   });
 
+  it("offers a way out for a forgotten master password", async () => {
+    // The recovery code is only a way back in if the person holding it can
+    // find the screen that redeems it, and this is where they are standing
+    // when they discover they need it.
+    const onForgotPassword = vi.fn();
+    render(
+      <UnlockScreen rememberedEmail="a@b.c" onUnlock={vi.fn()} onForgotPassword={onForgotPassword} />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: /forgot your master password/i }));
+
+    expect(onForgotPassword).toHaveBeenCalledOnce();
+  });
+
   it("disables the button while unlocking so one press is one attempt", async () => {
     let release: (() => void) | undefined;
     const onUnlock = vi.fn(
@@ -59,7 +73,7 @@ describe("UnlockScreen", () => {
           release = resolve;
         }),
     );
-    render(<UnlockScreen rememberedEmail="a@b.c" onUnlock={onUnlock} />);
+    render(<UnlockScreen rememberedEmail="a@b.c" onUnlock={onUnlock} onForgotPassword={vi.fn()} />);
 
     await userEvent.type(screen.getByLabelText(/master password/i), "pw");
     await userEvent.click(screen.getByRole("button", { name: /unlock/i }));

@@ -37,6 +37,25 @@ vi.mock("../vault/unlock.js", () => ({
   }),
 }));
 
+const NEW_RECOVERY_CODE = "AAAAA-BBBBB-CCCCC-DDDDD-EEEEE";
+
+// recoverAccount spends one Argon2id pass and completeRecovery two, and
+// recover.test.ts already drives both against real crypto and a real server
+// contract. What the routing test below needs from them is only their shape:
+// a session object to carry, and a new code to display.
+vi.mock("../vault/recover.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../vault/recover.js")>()),
+  recoverAccount: vi.fn(async (_deps: unknown, input: { email: string }) => ({
+    email: input.email,
+    userKey: new Uint8Array(32),
+    privateKey: new Uint8Array(32),
+    recoveryToken: "rt_test",
+    expiresIn: 600,
+    destroy: () => undefined,
+  })),
+  completeRecovery: vi.fn(async () => NEW_RECOVERY_CODE),
+}));
+
 describe("inviteTokenFromPath", () => {
   it("extracts the token from a setup link", () => {
     // This is the shape keyhole admin create prints, so it is the shape a real
@@ -138,6 +157,58 @@ describe("App", () => {
       vi.unstubAllGlobals();
       window.history.replaceState(null, "", originalPathname);
     }
+  });
+});
+
+describe("App recovery routing", () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("keeps the new recovery code on screen although the recovery has already unlocked the vault", async () => {
+    // The trap this test exists for: useRecoverScreen signs in as soon as the
+    // rotation lands, so `isUnlocked` is already true while the code is being
+    // displayed. If App checked `!isUnlocked` before `recovering`, VaultScreen
+    // would replace RecoverScreen at that moment and take the one and only
+    // showing of the new code with it.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ revision: 0, items: [] }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }),
+      ),
+    );
+
+    render(<App />);
+
+    await userEvent.click(screen.getByRole("button", { name: /forgot your master password/i }));
+    await userEvent.type(screen.getByLabelText("Email"), "a@b.c");
+    await userEvent.type(screen.getByLabelText("Recovery code"), "ZZZZZ-YYYYY-XXXXX-WWWWW-VVVVV");
+    await userEvent.click(screen.getByRole("button", { name: "Continue" }));
+
+    await userEvent.type(
+      await screen.findByLabelText("New master password"),
+      "a brand new master password",
+    );
+    await userEvent.type(
+      screen.getByLabelText("Confirm new master password"),
+      "a brand new master password",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Set new master password" }));
+
+    await waitFor(() => expect(screen.getByText(NEW_RECOVERY_CODE)).toBeInTheDocument());
+    expect(screen.queryByRole("button", { name: /add an item/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByLabelText(/saved/i));
+    await userEvent.click(screen.getByRole("button", { name: "Continue to my vault" }));
+
+    // No password was typed between acknowledging the code and this list
+    // appearing, which is the proof that the session was already unlocked
+    // while the code was still on screen -- not unlocked by landing here.
+    expect(await screen.findByRole("button", { name: /add an item/i })).toBeInTheDocument();
+    expect(screen.queryByText(NEW_RECOVERY_CODE)).not.toBeInTheDocument();
   });
 });
 

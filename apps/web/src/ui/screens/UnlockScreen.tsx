@@ -6,9 +6,13 @@ import { Field } from "../components/Field.js";
 interface UnlockScreenProps {
   rememberedEmail: string | null;
   onUnlock(input: { email: string; masterPassword: string }): Promise<void>;
+  /** Leaves for the recovery screen. Reached from here because this is where
+   *  someone discovers they have forgotten the password, and a recovery code
+   *  they cannot find their way to redeem is not a way back in. */
+  onForgotPassword(): void;
 }
 
-export function UnlockScreen({ rememberedEmail, onUnlock }: UnlockScreenProps) {
+export function UnlockScreen({ rememberedEmail, onUnlock, onForgotPassword }: UnlockScreenProps) {
   const [email, setEmail] = useState(rememberedEmail ?? "");
   const [masterPassword, setMasterPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -70,6 +74,14 @@ export function UnlockScreen({ rememberedEmail, onUnlock }: UnlockScreenProps) {
           {busy ? "Unlocking…" : "Unlock"}
         </Button>
       </form>
+      {/* Outside the form: it is a way out of this screen, not a second way to
+          submit it, and a <button> inside a form without type="button" would
+          submit on Enter. */}
+      <p style={{ marginTop: "var(--space-6)" }}>
+        <Button type="button" variant="quiet" onClick={onForgotPassword}>
+          Forgot your master password?
+        </Button>
+      </p>
     </main>
   );
 }
