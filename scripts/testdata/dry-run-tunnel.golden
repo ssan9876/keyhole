@@ -60,6 +60,7 @@ chmod '0755' '/usr/local/bin/update'
 RUN: pct exec 200 -- sh -c set -eu
 id -u 'keyhole' >/dev/null 2>&1 || useradd --system --home-dir '/var/lib/keyhole' --shell /usr/sbin/nologin 'keyhole'
 RUN: pct exec 200 -- install -d -o keyhole -g keyhole -m 0700 /var/lib/keyhole
+RUN: pct exec 200 -- install -d -o keyhole -g keyhole -m 0700 /var/lib/keyhole/backups
 RUN: pct exec 200 -- install -d -o root -g root -m 0755 /etc/keyhole
 RUN: pct exec 200 -- sh -c set -eu
 install -d -m 0755 /usr/share/keyrings

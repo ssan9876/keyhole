@@ -528,6 +528,15 @@ id -u '${SERVICE_USER}' >/dev/null 2>&1 || useradd --system --home-dir '${DATA_D
   # 0700: the database is entirely ciphertext, but the server secret next to it
   # is not, and nothing but the service has any business in this directory.
   in_ct install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 "$DATA_DIR"
+  # Created here rather than left to whoever backs up first. backup.Snapshot
+  # does os.MkdirAll(dir, 0700), so the first run owns the directory — and the
+  # first run is root, every time: this script's own closing message offers
+  # "keyhole backup" as the way to take one now, and `keyhole update` takes a
+  # pre-update snapshot. Afterwards the nightly keyhole-backup.service, which
+  # runs as ${SERVICE_USER}, cannot write into a root:root 0700 directory and
+  # fails every night in the journal where nobody is looking — because the
+  # operator followed the instruction printed below.
+  in_ct install -d -o "$SERVICE_USER" -g "$SERVICE_USER" -m 0700 "${DATA_DIR}/backups"
   in_ct install -d -o root -g root -m 0755 "$CONFIG_DIR"
 }
 
