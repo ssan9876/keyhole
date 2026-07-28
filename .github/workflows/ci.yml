@@ -68,30 +68,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # scripts/install.sh does not exist yet — Task 6 writes it. Until it
-      # lands there is nothing to lint, and hard-failing here would paint every
-      # unrelated pull request red for a file nobody has written.
-      #
-      # WHEN TASK 6 LANDS: delete this step and the two `if:` lines below it.
-      # The two checks then become mandatory, which is the point of having them.
-      - name: Does the install script exist yet?
-        id: probe
-        run: |
-          if [ -f scripts/install.sh ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::scripts/install.sh does not exist yet (Task 6 creates it); shellcheck and bash -n are skipped."
-          fi
-
       # shellcheck is preinstalled on the ubuntu-latest runner image.
-      - if: steps.probe.outputs.exists == 'true'
-        run: shellcheck scripts/install.sh
+      - run: shellcheck scripts/install.sh
 
       # shellcheck lints; bash -n is the parser's own opinion, and the two
       # disagree often enough to be worth asking both.
-      - if: steps.probe.outputs.exists == 'true'
-        run: bash -n scripts/install.sh
+      - run: bash -n scripts/install.sh
+
+      # The installer cannot be run for real anywhere but a Proxmox host, so
+      # --dry-run is the seam: install_test.sh diffs the printed plan against
+      # recorded goldens, asserts the signature is verified before the checksum
+      # is trusted, and asserts the Cloudflare token never reaches the plan.
+      # None of that needs pct, so it runs on a plain runner.
+      - run: bash scripts/install_test.sh
 
   # Deliberately its own job rather than more steps on `web`: this one compiles
   # a Go binary, boots a real server against a real SQLite database, installs a

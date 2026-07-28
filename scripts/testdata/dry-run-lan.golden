@@ -1,0 +1,157 @@
+
+Keyhole v1.0.0 will be installed as follows.
+
+  Container    200 (keyhole), unprivileged Debian 12
+  Resources    2 cores, 1024 MB RAM, 8 GB on local-lvm, bridge vmbr0
+  Reached by   tls
+  Reached at   https://<the container's address>:8477
+  Binary       https://github.com/ssan9876/keyhole/releases/download/v1.0.0/keyhole-linux-${arch}
+               verified against SHA256SUMS and its minisign signature
+  Data         /var/lib/keyhole (SQLite; entirely ciphertext)
+  Config       /etc/keyhole/config.yml
+  Service      systemd unit "keyhole", running as keyhole
+  Admin        me@example.com
+
+Nothing has been changed yet.
+
+!! The release signing key in this copy of the script is still a placeholder,
+!! so it can verify nothing. A real install refuses to start until
+!! MINISIGN_PUBKEY is replaced with the key published in the README.
+RUN: pveam update
+RUN: sh -c pveam available --section system | awk '{print $2}' | grep '^debian-12-standard' | sort -V | tail -n 1
+  the newest debian-12-standard in that list is the template; it is downloaded if absent
+RUN: pveam download local <newest debian-12-standard>
+RUN: pct create 200 local:vztmpl/<newest debian-12-standard> --hostname keyhole --cores 2 --memory 1024 --swap 0 --rootfs local-lvm:8 --net0 name=eth0,bridge=vmbr0,ip=dhcp --unprivileged 1 --features nesting=0 --onboot 1
+RUN: pct start 200
+RUN: sh -c i=0; while [ $i -lt 60 ]; do pct exec 200 -- true >/dev/null 2>&1 && exit 0; i=$((i+1)); sleep 1; done; exit 1
+RUN: pct exec 200 -- sh -c set -eu
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y --no-install-recommends ca-certificates curl minisign openssl
+RUN: pct exec 200 -- sh -c set -eu
+rm -rf '/tmp/keyhole-install'
+mkdir -p '/tmp/keyhole-install'
+cd '/tmp/keyhole-install'
+arch=$(dpkg --print-architecture)
+curl -fsSL --proto '=https' --tlsv1.2 -o "keyhole-linux-$arch" "https://github.com/ssan9876/keyhole/releases/download/v1.0.0/keyhole-linux-$arch"
+curl -fsSL --proto '=https' --tlsv1.2 -o SHA256SUMS "https://github.com/ssan9876/keyhole/releases/download/v1.0.0/SHA256SUMS"
+curl -fsSL --proto '=https' --tlsv1.2 -o SHA256SUMS.minisig "https://github.com/ssan9876/keyhole/releases/download/v1.0.0/SHA256SUMS.minisig"
+RUN: pct exec 200 -- sh -c set -eu
+cd '/tmp/keyhole-install'
+minisign -Vm SHA256SUMS -P 'RWQ...replace-with-the-real-key...'
+RUN: pct exec 200 -- sh -c set -eu
+cd '/tmp/keyhole-install'
+sha256sum -c SHA256SUMS --ignore-missing
+RUN: pct exec 200 -- sh -c set -eu
+cd '/tmp/keyhole-install'
+arch=$(dpkg --print-architecture)
+install -o root -g root -m 0755 "keyhole-linux-$arch" /usr/local/bin/keyhole
+rm -rf '/tmp/keyhole-install'
+RUN: pct exec 200 -- sh -c set -eu
+umask 077
+cat > '/usr/local/bin/update' <<'KEYHOLE_EOF'
+#!/bin/sh
+exec /usr/local/bin/keyhole update "$@"
+KEYHOLE_EOF
+chown 'root:root' '/usr/local/bin/update'
+chmod '0755' '/usr/local/bin/update'
+RUN: pct exec 200 -- sh -c set -eu
+id -u 'keyhole' >/dev/null 2>&1 || useradd --system --home-dir '/var/lib/keyhole' --shell /usr/sbin/nologin 'keyhole'
+RUN: pct exec 200 -- install -d -o keyhole -g keyhole -m 0700 /var/lib/keyhole
+RUN: pct exec 200 -- install -d -o root -g root -m 0755 /etc/keyhole
+RUN: pct exec 200 -- sh -c set -eu
+ip=$(hostname -I | cut -d' ' -f1)
+[ -n "$ip" ] || { echo 'the container has no IPv4 address yet' >&2; exit 1; }
+umask 077
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 -subj "/CN=$ip" -addext "subjectAltName=IP:$ip" -keyout '/etc/keyhole/tls.key' -out '/etc/keyhole/tls.crt'
+chown root:keyhole '/etc/keyhole/tls.key' '/etc/keyhole/tls.crt'
+chmod 0640 '/etc/keyhole/tls.key' '/etc/keyhole/tls.crt'
+RUN: pct exec 200 -- openssl x509 -noout -fingerprint -sha256 -in /etc/keyhole/tls.crt
+RUN: pct exec 200 -- sh -c set -eu
+ip=$(hostname -I | cut -d' ' -f1)
+# An empty $ip here would write "base_url: https://:8477" and produce a vault
+# whose setup links point nowhere, with nothing to say why. configure_network
+# already fails on this, so reaching it means the two were reordered.
+[ -n "$ip" ] || { echo 'the container has no IPv4 address yet' >&2; exit 1; }
+umask 077
+cat > '/etc/keyhole/config.yml' <<EOF
+# Written by scripts/install.sh (Keyhole v1.0.0).
+addr: 0.0.0.0:8477
+data_dir: /var/lib/keyhole
+base_url: https://$ip:8477
+log_level: info
+tls_cert: /etc/keyhole/tls.crt
+tls_key: /etc/keyhole/tls.key
+EOF
+chown 'root:keyhole' '/etc/keyhole/config.yml'
+chmod 0640 '/etc/keyhole/config.yml'
+RUN: pct exec 200 -- sh -c set -eu
+umask 077
+cat > '/etc/systemd/system/keyhole.service' <<'KEYHOLE_EOF'
+[Unit]
+Description=Keyhole password manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=keyhole
+Group=keyhole
+ExecStart=/usr/local/bin/keyhole serve --config /etc/keyhole/config.yml
+Restart=on-failure
+RestartSec=2
+
+# The process needs one writable directory and nothing else. Everything below
+# is what keeps a compromise of the HTTP handler from becoming a compromise of
+# the container.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+# Safe here, and worth keeping: the binary is CGO_ENABLED=0 static Go with no
+# JIT and no plugins, so nothing it does needs a page that is both writable and
+# executable. If something later appears to break under it, that is a reason to
+# find out what is allocating W+X memory, not a reason to delete this line.
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/keyhole
+
+[Install]
+WantedBy=multi-user.target
+KEYHOLE_EOF
+chown 'root:root' '/etc/systemd/system/keyhole.service'
+chmod '0644' '/etc/systemd/system/keyhole.service'
+RUN: pct exec 200 -- systemctl daemon-reload
+RUN: pct exec 200 -- keyhole migrate --config /etc/keyhole/config.yml
+RUN: pct exec 200 -- chown -R keyhole:keyhole /var/lib/keyhole
+RUN: pct exec 200 -- systemctl enable --now keyhole
+RUN: sh -c i=0; while [ $i -lt 30 ]; do pct exec 200 -- curl -fsSk -o /dev/null 'https://127.0.0.1:8477/healthz' >/dev/null 2>&1 && exit 0; i=$((i+1)); sleep 1; done; exit 1
+RUN: pct exec 200 -- runuser -u keyhole -- keyhole admin create --email me@example.com --config /etc/keyhole/config.yml
+
+That is the entire plan for Keyhole v1.0.0 in container 200. Nothing was changed.
+The setup link is printed by "keyhole admin create" at the end of a real run.
+
+The certificate is self-signed, so the browser warns the first time. Check the
+fingerprint it shows you against this one rather than clicking through:
+
+  (read from the certificate once it has been generated)
+
+Worth knowing:
+
+  Data          /var/lib/keyhole inside container 200 — item bodies, names and
+                URLs are ciphertext the server has never held a key for
+  Back up       pct exec 200 -- keyhole backup
+                (a snapshot is entirely ciphertext, so copying it somewhere
+                less trusted than this host is a reasonable thing to do)
+  Update        pct exec 200 -- update
+                (verifies the signature the same way this install did, and
+                rolls back if the new binary will not answer /healthz)
+  Logs          pct exec 200 -- journalctl -u keyhole -f
