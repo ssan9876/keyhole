@@ -1,13 +1,40 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_KDF_PARAMS_JSON,
+  deriveRecoveryAuthHash,
+  deriveRecoveryKey,
   fromBase64,
   recoverUserKey,
   toBase64,
+  type KdfParams,
 } from "@keyhole/crypto";
 import type { ApiClient } from "./api.js";
 import { createSession } from "./session.js";
 import { enroll } from "./enroll.js";
+
+/**
+ * Every blob `enroll` made, in call order.
+ *
+ * `vi.hoisted` because `vi.mock`'s factory is hoisted above every `const` in
+ * this file and runs during import, so a plain module-level array would still
+ * be in its temporal dead zone when the factory closes over it.
+ */
+const { blobs } = vi.hoisted(() => ({ blobs: [] as { recoveryAuthHash: Uint8Array }[] }));
+
+// Everything real except a wrapper that keeps a handle on the blob object
+// `enroll` received. Nothing else can observe whether the auth hash buffer was
+// cleared afterwards: it is a local that never leaves the function.
+vi.mock("@keyhole/crypto", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@keyhole/crypto")>();
+  return {
+    ...actual,
+    createRecoveryBlob: async (...args: Parameters<typeof actual.createRecoveryBlob>) => {
+      const blob = await actual.createRecoveryBlob(...args);
+      blobs.push(blob);
+      return blob;
+    },
+  };
+});
 
 interface EnrolBody {
   kdfSalt: string;
@@ -19,6 +46,7 @@ interface EnrolBody {
   recoverySalt: string;
   recoveryProtectedUserKey: string;
   recoveryKdfParams: string;
+  recoveryAuthHash: string;
 }
 
 function recordingApi(): { api: ApiClient; bodies: Map<string, unknown> } {
@@ -68,6 +96,7 @@ const INPUT = {
 
 beforeEach(() => {
   localStorage.clear();
+  blobs.length = 0;
 });
 
 describe("enroll", () => {
@@ -104,6 +133,58 @@ describe("enroll", () => {
       Array.from(session.getKeys().userKey),
     );
   }, 60_000);
+
+  it("uploads the auth hash a redeeming client recomputes from the code and salt", async () => {
+    const { api, bodies } = recordingApi();
+
+    const { recoveryCode } = await enroll({ api, session: createSession() }, INPUT);
+    const body = bodies.get("/api/enroll") as EnrolBody;
+
+    // Recomputed here from the code and the two values the server keeps —
+    // exactly what POST /api/recover/prelogin hands a different device months
+    // later. Reading body.recoveryAuthHash back out and comparing it to itself
+    // would pass against a field of zeros, a field of the wrong key half, or a
+    // field derived under the wrong params: it asserts nothing at all.
+    const recoveryKey = await deriveRecoveryKey(
+      recoveryCode,
+      fromBase64(body.recoverySalt),
+      JSON.parse(body.recoveryKdfParams) as KdfParams,
+    );
+    expect(body.recoveryAuthHash).toBe(toBase64(deriveRecoveryAuthHash(recoveryKey)));
+  }, 120_000);
+
+  it("clears the auth hash buffer once it has been encoded, not before", async () => {
+    const { api, bodies } = recordingApi();
+
+    await enroll({ api, session: createSession() }, INPUT);
+    const body = bodies.get("/api/enroll") as EnrolBody;
+
+    // Order is the whole assertion. Zeroizing before toBase64 would upload a
+    // field of zeros and lock the account out of recovery, and a test that
+    // only checked the buffer was blank afterwards would call that a pass.
+    const uploaded = fromBase64(body.recoveryAuthHash);
+    expect(uploaded.some((byte) => byte !== 0)).toBe(true);
+    expect(blobs.at(-1)?.recoveryAuthHash).toEqual(new Uint8Array(uploaded.length));
+  }, 120_000);
+
+  it("never sends the recovery code to any endpoint, grouped or stripped", async () => {
+    const { api, bodies } = recordingApi();
+
+    const { recoveryCode } = await enroll({ api, session: createSession() }, INPUT);
+
+    // Array.from, not the Map: JSON.stringify of a Map is "{}", so the two
+    // not.toContain assertions below would hold against literally anything.
+    const serialized = JSON.stringify(Array.from(bodies.values()));
+    // Proof the haystack is the real payload before asserting on absence.
+    expect(serialized).toContain("recoveryAuthHash");
+    // The server never sees the code — that is the whole design (spec §3.6).
+    // Both forms: grouped as generated, and hyphen-stripped as
+    // normalizeCrockford produces, since a leak that split the code across
+    // fields at a hyphen boundary would read as a match for one and not the
+    // other.
+    expect(serialized).not.toContain(recoveryCode);
+    expect(serialized).not.toContain(recoveryCode.replace(/-/gu, ""));
+  }, 120_000);
 
   it("never uploads the user key or the private key", async () => {
     const { api, bodies } = recordingApi();

@@ -249,6 +249,15 @@ test("the server rejects a params object with reordered keys", async ({ request,
       recoverySalt: "recovery-salt",
       recoveryProtectedUserKey: "recovery-protected",
       recoveryKdfParams: "{}",
+      // Not decoration. handleEnroll (internal/httpapi/enroll.go) rejects an
+      // empty recoveryAuthHash before it looks the invite up, let alone
+      // reaches the params comparison in internal/store/enroll.go's
+      // validate() — so omitting this would make the test assert 400 for the
+      // wrong reason entirely, and it would keep doing so if the params check
+      // were deleted outright (verified: omitting it answers 'field
+      // "recoveryAuthHash" is required'). Any non-empty string gets past that
+      // guard; nothing here needs it to be a real hash.
+      recoveryAuthHash: "recovery-auth-hash",
     },
   });
 

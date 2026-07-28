@@ -5,6 +5,7 @@ import {
   enrollUser,
   generateRecoveryCode,
   toBase64,
+  zeroize,
 } from "@keyhole/crypto";
 import type { ApiClient } from "./api.js";
 import { rememberEmail, type Session, type SessionUser } from "./session.js";
@@ -60,6 +61,13 @@ export async function enroll(
     recoveryCode,
     DEFAULT_KDF_PARAMS,
   );
+  // Encoded and cleared in the same breath. It decrypts nothing — that is the
+  // point of the HKDF split — but it is derived from the recovery code, and
+  // once the base64 string exists there is no reason to leave the bytes live.
+  // Order matters: clearing before toBase64 would upload a field of zeros and
+  // leave the account with a recovery code no server will ever accept.
+  const recoveryAuthHash = toBase64(recovery.recoveryAuthHash);
+  zeroize(recovery.recoveryAuthHash);
 
   await deps.api.post(`/api/enroll/${encodeURIComponent(input.inviteToken)}`, {
     kdfSalt: toBase64(enrolled.kdfSalt),
@@ -72,6 +80,11 @@ export async function enroll(
     encryptedPrivateKey: enrolled.encryptedPrivateKey,
     recoverySalt: toBase64(recovery.recoverySalt),
     recoveryProtectedUserKey: recovery.recoveryProtectedUserKey,
+    // Proof of possession for the redeem endpoints, hashed again server-side
+    // before storage. Without it the server rejects the enrolment outright —
+    // a NULL here is reserved for accounts that predate the split, and those
+    // are unredeemable by design.
+    recoveryAuthHash,
     // NOT pinned: no endpoint returns it, so it leaks nothing, and recording
     // the params the blob was actually made under is what keeps a correct
     // recovery code from failing later — at the moment it is the last resort.

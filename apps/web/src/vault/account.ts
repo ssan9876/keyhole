@@ -120,6 +120,13 @@ export async function regenerateRecoveryCode(
     recoveryCode,
     DEFAULT_KDF_PARAMS,
   );
+  // Encoded and cleared in the same breath. It decrypts nothing — that is the
+  // point of the HKDF split — but it is derived from the recovery code, and
+  // once the base64 string exists there is no reason to leave the bytes live.
+  // Order matters: clearing before toBase64 would upload a field of zeros and
+  // leave the user holding a code no server will ever accept.
+  const recoveryAuthHash = toBase64(blob.recoveryAuthHash);
+  zeroize(blob.recoveryAuthHash);
   await deps.api.post("/api/account/recovery", {
     currentAuthHash: current,
     recoverySalt: toBase64(blob.recoverySalt),
@@ -128,6 +135,10 @@ export async function regenerateRecoveryCode(
     // a correct code from failing later.
     recoveryKdfParams: JSON.stringify(blob.params),
     recoveryProtectedUserKey: blob.recoveryProtectedUserKey,
+    // Proof of possession for the redeem endpoints, hashed again server-side
+    // before storage. The endpoint rejects a rotation without it rather than
+    // writing a recovery record no code can redeem.
+    recoveryAuthHash,
   });
   return recoveryCode;
 }
