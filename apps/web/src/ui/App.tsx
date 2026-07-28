@@ -114,6 +114,30 @@ export function App() {
     [api, session, store],
   );
 
+  // WebCrypto's SubtleCrypto is only exposed in a secure context. On a plain
+  // http:// origin that is not localhost it is simply absent, and every
+  // AES-GCM call throws "Cannot read properties of undefined" -- which reads
+  // like a bug in Keyhole rather than a deployment that cannot work. This
+  // guard runs before every other branch below: none of EnrolScreen,
+  // UnlockScreen, or VaultScreen is safe to reach without crypto.subtle,
+  // since the first two derive keys on submit and the third only exists
+  // once a session already has them. It comes after the hooks above rather
+  // than before them so App still calls the same hooks on every render --
+  // isSecureContext and crypto.subtle cannot change during a mount, so this
+  // costs nothing and keeps the component's hook calls unconditional.
+  if (!window.isSecureContext || globalThis.crypto?.subtle === undefined) {
+    return (
+      <main role="alert">
+        <h1>This page needs a secure connection</h1>
+        <p>
+          Keyhole does all of its encryption in your browser, and browsers only
+          provide the encryption API over HTTPS. Reach this server over{" "}
+          <code>https://</code> and try again.
+        </p>
+      </main>
+    );
+  }
+
   if (inviteToken !== null && !enrolled) {
     return (
       <EnrolScreen

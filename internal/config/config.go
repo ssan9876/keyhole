@@ -24,6 +24,20 @@ type Config struct {
 	BaseURL string
 	// LogLevel is one of debug, info, warn, error.
 	LogLevel string
+
+	// TLSCert and TLSKey terminate TLS in this process. Set by the installer on
+	// a LAN-only install, where the alternative is a plain-HTTP origin — and a
+	// plain-HTTP origin has no window.crypto.subtle, so the web app cannot
+	// derive a key, unwrap a key, or open a single item.
+	TLSCert string
+	TLSKey  string
+}
+
+// TLSEnabled reports whether this process should terminate TLS itself. Both
+// TLSCert and TLSKey must be set: one without the other is a misconfiguration
+// caught by Load, not a valid half-enabled state.
+func (c Config) TLSEnabled() bool {
+	return c.TLSCert != "" && c.TLSKey != ""
 }
 
 func Default() Config {
@@ -83,6 +97,10 @@ func Load(path string) (Config, error) {
 			c.BaseURL = strings.TrimRight(value, "/")
 		case "log_level":
 			c.LogLevel = value
+		case "tls_cert":
+			c.TLSCert = value
+		case "tls_key":
+			c.TLSKey = value
 		default:
 			return c, fmt.Errorf("config line %d: unknown key %q", lineNo, key)
 		}
@@ -90,5 +108,14 @@ func Load(path string) (Config, error) {
 	if err := scanner.Err(); err != nil {
 		return c, fmt.Errorf("read config: %w", err)
 	}
+
+	// One of tls_cert/tls_key without the other is not a half-enabled state --
+	// it is the install where a typo in one path silently drops back to plain
+	// HTTP, and the person who hits that has no way to tell why nothing
+	// decrypts. Name both keys so the fix is obvious from the error alone.
+	if (c.TLSCert != "") != (c.TLSKey != "") {
+		return c, fmt.Errorf("config: tls_cert and tls_key must both be set, or both left empty (got tls_cert=%q, tls_key=%q)", c.TLSCert, c.TLSKey)
+	}
+
 	return c, nil
 }

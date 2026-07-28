@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -32,6 +34,26 @@ func parseLevel(name string) slog.Level {
 	}
 }
 
+// isLoopbackAddr reports whether addr (a host:port pair, as stored in
+// Config.Addr) only accepts connections from this machine. An empty host
+// (":8477") binds every interface and is not loopback; a bare hostname other
+// than "localhost" is treated as routable too, since the safer assumption
+// when we cannot prove otherwise is to warn.
+func isLoopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if host == "" {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 func runServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	configPath := fs.String("config", defaultConfigPath, "path to config.yml")
@@ -44,6 +66,21 @@ func runServe(args []string) error {
 		return err
 	}
 
+	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	return serve(cfg, shutdownCtx, nil)
+}
+
+// serve builds and runs the server described by cfg until shutdownCtx is
+// cancelled or the server itself fails. It blocks either way, returning nil
+// on a clean shutdown.
+//
+// If ready is non-nil, serve sends it the address the listener actually
+// bound before serving a single request. That is the seam a test needs:
+// cfg.Addr can end in ":0" (let the kernel pick a free port), and without
+// this signal a test could only guess at the resulting port or poll for it.
+func serve(cfg config.Config, shutdownCtx context.Context, ready chan<- string) error {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
 		Level: parseLevel(cfg.LogLevel),
 	}))
@@ -77,7 +114,6 @@ func runServe(args []string) error {
 	defer api.Close()
 
 	srv := &http.Server{
-		Addr:              cfg.Addr,
 		Handler:           api.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -85,13 +121,35 @@ func runServe(args []string) error {
 		IdleTimeout:       120 * time.Second,
 	}
 
-	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	listener, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", cfg.Addr, err)
+	}
+
+	// Not fatal: a reverse proxy in front of a loopback bind is a correct
+	// deployment, and so is a tunnel. Binding a routable address in the clear
+	// is not, and the operator should hear about it at the moment they do it
+	// rather than from a user who cannot unlock.
+	if !cfg.TLSEnabled() && !isLoopbackAddr(cfg.Addr) {
+		logger.Warn("serving without TLS on a non-loopback address; " +
+			"the web app needs a secure context and will not be able to decrypt anything")
+	}
+
+	if ready != nil {
+		ready <- listener.Addr().String()
+	}
 
 	errCh := make(chan error, 1)
 	go func() {
-		logger.Info("listening", "addr", cfg.Addr, "base_url", cfg.BaseURL)
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		var err error
+		if cfg.TLSEnabled() {
+			logger.Info("listening", "addr", listener.Addr().String(), "tls", true, "base_url", cfg.BaseURL)
+			err = srv.ServeTLS(listener, cfg.TLSCert, cfg.TLSKey)
+		} else {
+			logger.Info("listening", "addr", listener.Addr().String(), "tls", false, "base_url", cfg.BaseURL)
+			err = srv.Serve(listener)
+		}
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()

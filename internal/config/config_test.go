@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -68,5 +69,62 @@ func TestDBPathSitsUnderDataDir(t *testing.T) {
 	want := filepath.Join("var", "lib", "keyhole", "keyhole.db")
 	if got := c.DBPath(); got != want {
 		t.Errorf("DBPath() = %q, want %q", got, want)
+	}
+}
+
+func TestLoadReadsTLSPaths(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yml")
+	body := "tls_cert: /etc/keyhole/tls.crt\ntls_key: /etc/keyhole/tls.key\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	c, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if c.TLSCert != "/etc/keyhole/tls.crt" {
+		t.Errorf("TLSCert = %q, want %q", c.TLSCert, "/etc/keyhole/tls.crt")
+	}
+	if c.TLSKey != "/etc/keyhole/tls.key" {
+		t.Errorf("TLSKey = %q, want %q", c.TLSKey, "/etc/keyhole/tls.key")
+	}
+}
+
+func TestTLSEnabledRequiresBothCertAndKey(t *testing.T) {
+	cases := []struct {
+		name string
+		cert string
+		key  string
+		want bool
+	}{
+		{"neither set", "", "", false},
+		{"cert only", "cert.pem", "", false},
+		{"key only", "", "key.pem", false},
+		{"both set", "cert.pem", "key.pem", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := Config{TLSCert: tc.cert, TLSKey: tc.key}
+			if got := c.TLSEnabled(); got != tc.want {
+				t.Errorf("TLSEnabled() with cert=%q key=%q = %v, want %v", tc.cert, tc.key, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLoadRejectsACertWithoutAKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yml")
+	body := "tls_cert: /etc/keyhole/tls.crt\n"
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := Load(path)
+	if err == nil {
+		t.Fatal("Load with tls_cert set and tls_key absent should have errored")
+	}
+	if !strings.Contains(err.Error(), "tls_cert") || !strings.Contains(err.Error(), "tls_key") {
+		t.Errorf("error %q should name both tls_cert and tls_key", err)
 	}
 }

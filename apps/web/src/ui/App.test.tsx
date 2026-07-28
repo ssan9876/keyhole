@@ -141,6 +141,65 @@ describe("App", () => {
   });
 });
 
+describe("App secure-context guard", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("explains that an insecure origin cannot work, instead of showing the unlock form", () => {
+    // jsdom defaults isSecureContext to true; this is the http:// case where
+    // the browser never exposed crypto.subtle to begin with.
+    vi.stubGlobal("isSecureContext", false);
+
+    render(<App />);
+
+    expect(screen.getByRole("alert")).toHaveTextContent(/https/i);
+    expect(screen.queryByLabelText("Master password")).not.toBeInTheDocument();
+  });
+
+  it("explains that an insecure origin cannot work when isSecureContext is true but crypto.subtle is missing", () => {
+    // This is Mutation B's covering case: an old browser can report a secure
+    // context (window.isSecureContext true) while still lacking the
+    // SubtleCrypto interface entirely. A guard that only checks
+    // isSecureContext would show the unlock form here and every encrypt call
+    // would throw "Cannot read properties of undefined" the instant the user
+    // submitted a password.
+    // `subtle` is a getter inherited from Crypto.prototype in Node's
+    // WebCrypto implementation, not an own property of globalThis.crypto --
+    // `delete globalThis.crypto.subtle` is a silent no-op against it (the
+    // inherited getter is untouched), so shadow it with an own property
+    // instead to actually make the lookup return undefined.
+    const originalSubtle = globalThis.crypto.subtle;
+    Object.defineProperty(globalThis.crypto, "subtle", {
+      value: undefined,
+      configurable: true,
+    });
+
+    try {
+      render(<App />);
+
+      expect(screen.getByRole("alert")).toHaveTextContent(/https/i);
+      expect(screen.queryByLabelText("Master password")).not.toBeInTheDocument();
+    } finally {
+      Object.defineProperty(globalThis.crypto, "subtle", {
+        value: originalSubtle,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+
+  it("shows the unlock form on a secure origin", () => {
+    // The control case: jsdom's defaults (isSecureContext true, crypto.subtle
+    // present) must not trip the guard, or every other test in this file
+    // that renders <App /> and expects real screens would be dead code.
+    render(<App />);
+
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByLabelText("Master password")).toBeInTheDocument();
+  });
+});
+
 describe("App auto-lock wiring", () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => {
