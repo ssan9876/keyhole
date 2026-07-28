@@ -17,13 +17,18 @@ func enrollBody() map[string]string {
 	return map[string]string{
 		// The crypto package fixes real KDF salts at 16 bytes; this fixture
 		// matches that length even though this package never validates it.
-		"kdfSalt":                  "c2FsdHNhbHRzYWx0c2FsdA==",
-		"params":                   `{"algorithm":"argon2id","memoryKiB":65536,"iterations":3,"parallelism":4}`,
-		"authHash":                 "YXV0aC1oYXNoLTMyLWJ5dGVzLWJhc2U2NA==",
-		"protectedUserKey":         `{"v":1,"alg":"A256GCM","n":"bm9uY2U=","ct":"Y2lwaGVy"}`,
-		"publicKey":                "cHVibGljS2V5MzJieXRlc2xvbmdoZXJl",
-		"encryptedPrivateKey":      `{"v":1,"alg":"A256GCM","n":"bm9uY2U=","ct":"cHJpdg=="}`,
-		"recoverySalt":             "cmVjb3ZlcnlzYWx0MTY=",
+		"kdfSalt":             "c2FsdHNhbHRzYWx0c2FsdA==",
+		"params":              `{"algorithm":"argon2id","memoryKiB":65536,"iterations":3,"parallelism":4}`,
+		"authHash":            "YXV0aC1oYXNoLTMyLWJ5dGVzLWJhc2U2NA==",
+		"protectedUserKey":    `{"v":1,"alg":"A256GCM","n":"bm9uY2U=","ct":"Y2lwaGVy"}`,
+		"publicKey":           "cHVibGljS2V5MzJieXRlc2xvbmdoZXJl",
+		"encryptedPrivateKey": `{"v":1,"alg":"A256GCM","n":"bm9uY2U=","ct":"cHJpdg=="}`,
+		// 16 bytes, like the KDF salt above and like the recovery salt a real
+		// client produces. The length is load-bearing for one test: the recovery
+		// prelogin decoy is 16 bytes, and a fixture of some other length would
+		// make the enumeration-parity comparison fail on the fixture rather than
+		// on the endpoint.
+		"recoverySalt":             "cmVjb3ZlcnlzYWx0MTYxNg==",
 		"recoveryProtectedUserKey": `{"v":1,"alg":"A256GCM","n":"bm9uY2U=","ct":"cmVjb3Zlcnk="}`,
 		"recoveryKdfParams":        `{"algorithm":"argon2id","memoryKiB":65536,"iterations":3,"parallelism":4}`,
 		// The auth half of the split recovery key: derived from the recovery

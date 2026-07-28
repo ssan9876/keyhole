@@ -139,10 +139,18 @@ func (s *Server) handleRotateRecovery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// recoveryKdfParams is NOT pinned: no endpoint ever returns it, so it
-	// cannot be compared against anything and leaks nothing. Recording the
-	// parameters the blob was actually made with is what keeps a correct
-	// recovery code from failing later (spec section 4.2).
+	// recoveryKdfParams is NOT pinned. Recording the parameters the blob was
+	// actually wrapped under is what keeps a correct recovery code from failing
+	// later (spec section 4.2); pinning would overwrite that record with
+	// whatever today's default happens to be.
+	//
+	// The older form of this comment said the field leaks nothing because no
+	// endpoint returns it. That stopped being true when /api/auth/recover/prelogin
+	// arrived: it hands this value to an unauthenticated caller and answers an
+	// unknown address with auth.DefaultKDFParamsJSON, so an account holding
+	// anything else here is distinguishable from a decoy. Every client writes
+	// the default, which is why the parity holds in practice — but unlike
+	// kdf_params, nothing enforces it.
 	if err := s.store.RotateRecovery(r.Context(), user.ID, store.RecoveryRotation{
 		RecoverySalt:             req.RecoverySalt,
 		RecoveryKDFParams:        req.RecoveryKDFParams,

@@ -74,6 +74,52 @@ func TestDecoySaltIsIndistinguishableFromARealSaltByLength(t *testing.T) {
 	}
 }
 
+func TestDecoyRecoverySaltIsStableAndSixteenBytesLikeARealOne(t *testing.T) {
+	secret := []byte("0123456789abcdef0123456789abcdef")
+
+	first := DecoyRecoverySalt(secret, "ghost@example.com")
+	if second := DecoyRecoverySalt(secret, "ghost@example.com"); first != second {
+		t.Errorf("DecoyRecoverySalt is not deterministic: %q then %q", first, second)
+	}
+
+	raw, err := base64.StdEncoding.DecodeString(first)
+	if err != nil {
+		t.Fatalf("decoy recovery salt is not standard base64: %v", err)
+	}
+	if len(raw) != 16 {
+		t.Errorf("decoy recovery salt decodes to %d bytes, want 16 to match a real one", len(raw))
+	}
+}
+
+// TestDecoyRecoverySaltDiffersFromTheLoginDecoyForTheSameAddress is the
+// separation the two decoys exist under.
+//
+// A real account holds two independent random salts, so its two prelogin
+// answers differ. If the decoys were one value, "ask both endpoints and
+// compare" would answer "does this address have an account here" — exactly the
+// question the decoys refuse.
+func TestDecoyRecoverySaltDiffersFromTheLoginDecoyForTheSameAddress(t *testing.T) {
+	secret := []byte("0123456789abcdef0123456789abcdef")
+
+	if DecoyRecoverySalt(secret, "ghost@example.com") == DecoySalt(secret, "ghost@example.com") {
+		t.Error("the recovery decoy and the login decoy are the same value for one address")
+	}
+}
+
+func TestDecoyRecoverySaltDiffersByAddressAndBySecret(t *testing.T) {
+	secretA := []byte("0123456789abcdef0123456789abcdef")
+	secretB := []byte("fedcba9876543210fedcba9876543210")
+
+	if DecoyRecoverySalt(secretA, "a@example.com") == DecoyRecoverySalt(secretA, "b@example.com") {
+		t.Error("two addresses produced the same decoy recovery salt")
+	}
+	// Keying by the server secret stops an attacker computing the decoy offline
+	// and comparing it against a live response.
+	if DecoyRecoverySalt(secretA, "a@example.com") == DecoyRecoverySalt(secretB, "a@example.com") {
+		t.Error("the decoy recovery salt does not depend on the server secret")
+	}
+}
+
 func TestDefaultKDFParamsJSONMatchesTheSpec(t *testing.T) {
 	want := `{"algorithm":"argon2id","memoryKiB":65536,"iterations":3,"parallelism":4}`
 	// If this drifts from what a real enrollment stores, the params field

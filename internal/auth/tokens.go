@@ -33,9 +33,25 @@ const DefaultKDFParamsJSON = `{"algorithm":"argon2id","memoryKiB":65536,"iterati
 // with the server secret stops an attacker computing the decoy offline and
 // comparing it against a live response.
 func DecoySalt(serverSecret []byte, normalizedEmail string) string {
+	return decoySalt(serverSecret, "keyhole:decoy-salt:v1", normalizedEmail)
+}
+
+// DecoyRecoverySalt is DecoySalt for the recovery prelogin endpoint.
+//
+// It is a separate value on purpose. A real account holds two independent
+// random salts — one for the master password, one for the recovery blob — so
+// its two prelogin answers differ. Were both endpoints to decoy an unknown
+// address with the same derived value, asking both and comparing them would
+// answer "does this address have an account here", which is the one question
+// the decoys exist to refuse. The domain string below is what keeps them apart.
+func DecoyRecoverySalt(serverSecret []byte, normalizedEmail string) string {
+	return decoySalt(serverSecret, "keyhole:decoy-recovery-salt:v1", normalizedEmail)
+}
+
+func decoySalt(serverSecret []byte, domain, normalizedEmail string) string {
 	mac := hmac.New(sha256.New, serverSecret)
-	mac.Write([]byte("keyhole:decoy-salt:v1"))
+	mac.Write([]byte(domain))
 	mac.Write([]byte(normalizedEmail))
-	// 16 bytes, matching a real KDF salt exactly.
+	// 16 bytes, matching a real salt exactly.
 	return base64.StdEncoding.EncodeToString(mac.Sum(nil)[:16])
 }

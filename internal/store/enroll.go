@@ -60,9 +60,10 @@ func (in EnrollmentInput) validate() error {
 	// anything that serializes differently is distinguishable even when it
 	// means the same thing.
 	//
-	// recovery_kdf_params is deliberately NOT pinned. No endpoint returns it,
-	// so it cannot be compared against anything and leaks nothing, and spec
-	// 4.2's reason for recording it as it actually was still holds.
+	// recovery_kdf_params is deliberately NOT pinned: spec 4.2's reason for
+	// recording it as it actually was outweighs the parity, and the recovery
+	// prelogin endpoint that returns it decoys an unknown address with the
+	// default. See internal/httpapi/account.go for the full note.
 	if in.KDFParams != auth.DefaultKDFParamsJSON {
 		return &ValidationError{
 			Field:   "params",
