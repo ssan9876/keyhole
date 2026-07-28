@@ -169,7 +169,25 @@ test("an admin shares a collection and the second user reads the item", async ({
     await test.step("9. Bee no longer sees the item", async () => {
       await beePage.reload();
       await beePage.getByLabel(/master password/i).fill(BEE_MASTER_PASSWORD);
-      await beePage.getByRole("button", { name: /^unlock$/i }).click();
+      // Wait for the GET /api/sync this unlock triggers before checking
+      // absence, mirroring step 5's wait for the members POST. Unlike step
+      // 7's positive assertion, which can only pass once the item actually
+      // appears, a negative assertion has no built-in synchronization
+      // point: App.tsx's handleUnlock awaits unlock() (which flips
+      // isUnlocked and mounts VaultScreen) *before* awaiting store.load's
+      // GET /api/sync, and VaultList renders "Add an item" unconditionally,
+      // independent of store.status. Without this wait, the "not visible"
+      // check could pass on its first poll simply because the item list is
+      // still empty pre-sync -- indistinguishable from the server actually
+      // having removed the item.
+      const [syncResponse] = await Promise.all([
+        beePage.waitForResponse(
+          (res) => /\/api\/sync$/.test(res.url()) && res.request().method() === "GET",
+          { timeout: 20_000 },
+        ),
+        beePage.getByRole("button", { name: /^unlock$/i }).click(),
+      ]);
+      expect(syncResponse.ok()).toBe(true);
       await expect(beePage.getByText(/add an item/i)).toBeVisible();
       await expect(beePage.getByText("Shared Router")).not.toBeVisible();
     });
@@ -180,6 +198,9 @@ test("an admin shares a collection and the second user reads the item", async ({
 });
 
 test("the server rejects a params object with reordered keys", async ({ request, browser }) => {
+  // Depends on the admin account the first test in this file enrols: running
+  // this test alone via --grep will fail at the unlock step below with no
+  // such account provisioned.
   test.setTimeout(60_000);
 
   // A fresh, unused invite token to submit the reordered payload against.
