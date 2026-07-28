@@ -73,6 +73,33 @@ interface RecoverResponse {
 }
 
 /**
+ * What a finished recovery hands back.
+ *
+ * The shape mirrors `EnrolmentOutcome` in `enroll.ts`, and for the identical
+ * reason: once the server may have committed, nothing is allowed to destroy
+ * `recoveryCode`, so a failure that leaves the outcome unknown has to be
+ * reported *alongside* the code rather than instead of it.
+ */
+export interface RecoveryOutcome {
+  /** Shown exactly once. It cannot be recovered afterwards — not by an admin,
+   *  not by anyone holding the database. */
+  recoveryCode: string;
+  /**
+   * True once POST /api/auth/recover/complete answered.
+   *
+   * False means we do not know: the request was sent and no answer came back
+   * (a dropped connection, a proxy timeout, a 5xx from something in front of
+   * the server, a background tab throttled mid-flight). The rotation may well
+   * have committed — the transaction runs before the response is written — so
+   * the master password may already be the new one, every session may already
+   * be revoked, and the account's recovery blob may already be sealed to
+   * `recoveryCode`. The caller must surface the code either way and say that
+   * the change may already have been applied.
+   */
+  confirmed: boolean;
+}
+
+/**
  * The first half of redeeming a recovery code: prove possession, get the blobs
  * back, open them.
  *
@@ -180,16 +207,29 @@ export async function recoverAccount(
  * locked out exactly as they were. The request also ends every session,
  * including any the person who may have read the old code was holding.
  *
- * Returns the new recovery code, which is shown once and then gone. It is
- * returned only after the upload succeeds: unlike enrolment, where the account
- * already exists by the time the code is minted, a code whose blob never
- * reached the server opens nothing and showing it would be a lie.
+ * Returns the new recovery code, and whether the server was heard to accept it.
+ * The two cases are not symmetrical and must not be collapsed:
+ *
+ *   - The server *refused* (any 4xx: a spent token, a rejected field). It read
+ *     the request and declined it, the transaction did not run, the account is
+ *     untouched, and the code minted below opens nothing. That is a lie to show
+ *     and it is thrown away — the caller can safely try again.
+ *   - The answer never arrived (`NetworkError`, a 5xx, a timeout). The rotation
+ *     may already have committed, because it commits before the response is
+ *     written. Destroying the code here is the one unrecoverable mistake
+ *     available on this path: the master password would be the one just typed,
+ *     every session revoked, and the account's only second way in sealed to a
+ *     code that exists nowhere. So it is returned, with `confirmed: false`.
+ *
+ * `enroll.ts` and `EnrolmentOutcome.loggedIn` exist for the same reason. This
+ * path is worse: a user whose enrolment hiccupped can still unlock, while a
+ * user here has just been told their vault is unreachable.
  */
 export async function completeRecovery(
   deps: { api: ApiClient },
   session: RecoverySession,
   newMasterPassword: string,
-): Promise<string> {
+): Promise<RecoveryOutcome> {
   const rotation = await rotateMasterPassword(
     newMasterPassword,
     session.userKey,
@@ -204,21 +244,33 @@ export async function completeRecovery(
   const recoveryAuthHash = toBase64(blob.recoveryAuthHash);
   zeroize(blob.recoveryAuthHash);
 
-  await deps.api.post("/api/auth/recover/complete", {
-    recoveryToken: session.recoveryToken,
-    kdfSalt: toBase64(rotation.kdfSalt),
-    // The pinned constants, verbatim, both of them. Never JSON.stringify an
-    // object into either field: the server compares raw bytes, because its two
-    // prelogin endpoints answer unknown addresses with these exact strings and
-    // any divergence would make this account distinguishable from a decoy.
-    params: DEFAULT_KDF_PARAMS_JSON,
-    authHash: toBase64(rotation.authHash),
-    protectedUserKey: rotation.protectedUserKey,
-    recoverySalt: toBase64(blob.recoverySalt),
-    recoveryKdfParams: DEFAULT_KDF_PARAMS_JSON,
-    recoveryProtectedUserKey: blob.recoveryProtectedUserKey,
-    recoveryAuthHash,
-  });
+  try {
+    await deps.api.post("/api/auth/recover/complete", {
+      recoveryToken: session.recoveryToken,
+      kdfSalt: toBase64(rotation.kdfSalt),
+      // The pinned constants, verbatim, both of them. Never JSON.stringify an
+      // object into either field: the server compares raw bytes, because its two
+      // prelogin endpoints answer unknown addresses with these exact strings and
+      // any divergence would make this account distinguishable from a decoy.
+      params: DEFAULT_KDF_PARAMS_JSON,
+      authHash: toBase64(rotation.authHash),
+      protectedUserKey: rotation.protectedUserKey,
+      recoverySalt: toBase64(blob.recoverySalt),
+      recoveryKdfParams: DEFAULT_KDF_PARAMS_JSON,
+      recoveryProtectedUserKey: blob.recoveryProtectedUserKey,
+      recoveryAuthHash,
+    });
+  } catch (error) {
+    // `status`, not `code`: api.ts maps an unrecognised or missing envelope
+    // code to "internal" regardless of the status line, so a 4xx from a proxy
+    // that answered with a bare HTML page would be branched on as a 5xx here if
+    // this read `code`. The status is the one thing that is always the server's
+    // own.
+    if (error instanceof ApiError && error.status >= 400 && error.status < 500) {
+      throw error;
+    }
+    return { recoveryCode, confirmed: false };
+  }
 
-  return recoveryCode;
+  return { recoveryCode, confirmed: true };
 }

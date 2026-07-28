@@ -129,6 +129,25 @@ function bodyFor(calls: RecordedCall[], path: string): Record<string, unknown> {
   return call.body;
 }
 
+/**
+ * The complete step, failing after the payload has already been recorded.
+ *
+ * The recording matters: it is what models a request that *reached* the server
+ * and was acted on, with only the answer going missing. Throwing before
+ * `base.post` would model a request that never left, which is the case the
+ * client can safely assume nothing about.
+ */
+function completeFailsWith(base: ApiClient, failure: unknown): ApiClient {
+  return {
+    ...base,
+    async post<T>(path: string, body?: unknown): Promise<T> {
+      const answer = await base.post<T>(path, body);
+      if (path === "/api/auth/recover/complete") throw failure;
+      return answer;
+    },
+  };
+}
+
 const NEW_PASSWORD = "a new master password";
 
 let account: Account;
@@ -270,7 +289,8 @@ describe("completeRecovery", () => {
       { email: account.email, recoveryCode: account.recoveryCode },
     );
 
-    await completeRecovery({ api }, session, NEW_PASSWORD);
+    const outcome = await completeRecovery({ api }, session, NEW_PASSWORD);
+    expect(outcome.confirmed).toBe(true);
 
     const body = bodyFor(calls, "/api/auth/recover/complete");
     // Derived from the new password and the *uploaded* salt — the two things a
@@ -295,7 +315,7 @@ describe("completeRecovery", () => {
       { email: account.email, recoveryCode: account.recoveryCode },
     );
 
-    const newCode = await completeRecovery({ api }, session, NEW_PASSWORD);
+    const { recoveryCode: newCode } = await completeRecovery({ api }, session, NEW_PASSWORD);
 
     expect(newCode).not.toBe(account.recoveryCode);
     const body = bodyFor(calls, "/api/auth/recover/complete");
@@ -319,7 +339,7 @@ describe("completeRecovery", () => {
       { email: account.email, recoveryCode: account.recoveryCode },
     );
 
-    const newCode = await completeRecovery({ api }, session, NEW_PASSWORD);
+    const { recoveryCode: newCode } = await completeRecovery({ api }, session, NEW_PASSWORD);
 
     const body = bodyFor(calls, "/api/auth/recover/complete");
     const recoveryKey = await deriveRecoveryKey(
@@ -361,7 +381,7 @@ describe("completeRecovery", () => {
       { email: account.email, recoveryCode: account.recoveryCode },
     );
 
-    const newCode = await completeRecovery({ api }, session, NEW_PASSWORD);
+    const { recoveryCode: newCode } = await completeRecovery({ api }, session, NEW_PASSWORD);
 
     const serialized = JSON.stringify(calls);
     // Proof the haystack is the real payload before asserting on absence.
@@ -383,5 +403,79 @@ describe("completeRecovery", () => {
     // of someone who has just declared they lost control of their credentials.
     expect(localStorage.length).toBe(0);
     session.destroy();
+  }, 30_000);
+
+  it("still returns the new code when the answer to the complete request never arrives", async () => {
+    const { api: reachable, calls } = recoveringServer(account);
+    const session = await recoverAccount(
+      { api: reachable },
+      { email: account.email, recoveryCode: account.recoveryCode },
+    );
+    const api = completeFailsWith(reachable, new NetworkError(new TypeError("Failed to fetch")));
+
+    const outcome = await completeRecovery({ api }, session, NEW_PASSWORD);
+
+    // The request landed; only the response was lost. store.CompleteRecovery
+    // commits before anything is written back, so by now the master password
+    // may already be the one just typed, every session may be revoked, and the
+    // account's recovery blob may be sealed to this code. Throwing here -- which
+    // is what this function used to do -- garbage-collects the only copy of it
+    // and leaves the account with no second way in that anyone knows.
+    expect(outcome.confirmed).toBe(false);
+    const body = bodyFor(calls, "/api/auth/recover/complete");
+    // Not "a code came back": the code that came back has to open the blob that
+    // was uploaded, or surfacing it is worse than useless. Derived end to end
+    // through the public helper, exactly as the next redemption will.
+    const recovered = await recoverUserKey(
+      body["recoveryProtectedUserKey"] as string,
+      outcome.recoveryCode,
+      fromBase64(body["recoverySalt"] as string),
+      JSON.parse(body["recoveryKdfParams"] as string) as KdfParams,
+    );
+    expect(Array.from(recovered)).toEqual(Array.from(account.userKey));
+  }, 30_000);
+
+  it("still returns the new code when the complete request answers 500", async () => {
+    const { api: reachable } = recoveringServer(account);
+    const session = await recoverAccount(
+      { api: reachable },
+      { email: account.email, recoveryCode: account.recoveryCode },
+    );
+    const api = completeFailsWith(
+      reachable,
+      new ApiError("internal", 500, "could not complete the recovery", null),
+    );
+
+    const outcome = await completeRecovery({ api }, session, NEW_PASSWORD);
+
+    // A 5xx is not the server refusing the request, it is the server failing to
+    // say what happened to it: handleRecoverComplete answers 500 from paths on
+    // both sides of the transaction. Indistinguishable from the outside, so it
+    // is treated as the dangerous one.
+    expect(outcome.confirmed).toBe(false);
+    expect(outcome.recoveryCode).toMatch(/^[0-9A-Z]{5}(-[0-9A-Z]{5}){4}$/u);
+  }, 30_000);
+
+  it("discards the new code when the server refuses the rotation", async () => {
+    const { api: reachable } = recoveringServer(account);
+    const session = await recoverAccount(
+      { api: reachable },
+      { email: account.email, recoveryCode: account.recoveryCode },
+    );
+    const refusal = new ApiError(
+      "unauthorized",
+      401,
+      "this recovery session is no longer valid",
+      null,
+    );
+    const api = completeFailsWith(reachable, refusal);
+
+    // The other half of the distinction, and the reason it cannot be collapsed
+    // into "always return the code": a 4xx means the server read the request
+    // and declined it, the transaction never ran, and the account still has its
+    // old password and old recovery blob. A code minted here opens nothing, and
+    // showing it would tell the user their vault now answers to something it
+    // does not.
+    await expect(completeRecovery({ api }, session, NEW_PASSWORD)).rejects.toBe(refusal);
   }, 30_000);
 });

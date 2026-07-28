@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
+import { ApiError } from "../vault/api.js";
 import { createSession, type Session } from "../vault/session.js";
 import { fakeApi } from "../vault/test-helpers.js";
 import type { VaultState, VaultStore } from "../vault/store.js";
@@ -22,6 +23,11 @@ vi.mock("../vault/recover.js", async (importOriginal) => ({
 vi.mock("../vault/unlock.js", () => ({ unlock: vi.fn() }));
 
 const NEW_CODE = "ABCDE-FGHJK-MNPQR-STVWX-YZ234";
+/** completeRecovery's answer when the server acknowledged the rotation. */
+const ROTATED = { recoveryCode: NEW_CODE, confirmed: true };
+/** And when it did not: the request was sent, nothing came back, and the
+ *  rotation may or may not have committed. */
+const UNCONFIRMED = { recoveryCode: NEW_CODE, confirmed: false };
 
 /** A stand-in for what recoverAccount returns, with a spy for `destroy`. */
 function fakeRecoverySession(email = "a@example.com"): RecoverySession & { destroy: ReturnType<typeof vi.fn> } {
@@ -73,7 +79,7 @@ describe("useRecoverScreen", () => {
   it("carries the session recoverAccount opened into completeRecovery", async () => {
     const recovery = fakeRecoverySession();
     vi.mocked(recoverAccount).mockResolvedValue(recovery);
-    vi.mocked(completeRecovery).mockResolvedValue(NEW_CODE);
+    vi.mocked(completeRecovery).mockResolvedValue(ROTATED);
     const { result } = setup();
 
     await act(async () => {
@@ -94,13 +100,13 @@ describe("useRecoverScreen", () => {
       recovery,
       "a new master password",
     );
-    expect(issued).toBe(NEW_CODE);
+    expect(issued.recoveryCode).toBe(NEW_CODE);
   });
 
   it("signs in with the new master password so the user lands in the vault", async () => {
     const recovery = fakeRecoverySession("recovered@example.com");
     vi.mocked(recoverAccount).mockResolvedValue(recovery);
-    vi.mocked(completeRecovery).mockResolvedValue(NEW_CODE);
+    vi.mocked(completeRecovery).mockResolvedValue(ROTATED);
     vi.mocked(unlock).mockImplementation(async (deps: { session: Session }) => {
       deps.session.open({
         tokens: { accessToken: "at", refreshToken: "rt" },
@@ -132,7 +138,7 @@ describe("useRecoverScreen", () => {
   it("still returns the new recovery code when the post-recovery sign-in fails", async () => {
     const recovery = fakeRecoverySession();
     vi.mocked(recoverAccount).mockResolvedValue(recovery);
-    vi.mocked(completeRecovery).mockResolvedValue(NEW_CODE);
+    vi.mocked(completeRecovery).mockResolvedValue(ROTATED);
     vi.mocked(unlock).mockRejectedValue(new Error("network blip"));
     const { result, session } = setup();
 
@@ -147,36 +153,69 @@ describe("useRecoverScreen", () => {
     // to be fixed for.
     const issued = await act(async () => result.current.onSetNewPassword("a new master password"));
 
-    expect(issued).toBe(NEW_CODE);
+    expect(issued.recoveryCode).toBe(NEW_CODE);
     expect(session.isUnlocked).toBe(false);
   });
 
-  it("keeps the recovery usable when completing it fails, so it can be retried", async () => {
+  it("keeps the recovery usable when the server refuses to complete it, so it can be retried", async () => {
     const recovery = fakeRecoverySession();
     vi.mocked(recoverAccount).mockResolvedValue(recovery);
-    vi.mocked(completeRecovery).mockRejectedValueOnce(new Error("network blip"));
-    vi.mocked(completeRecovery).mockResolvedValue(NEW_CODE);
+    // A 4xx, which is the whole retryable class now: completeRecovery throws
+    // only when the server read the request and declined it (or when nothing
+    // was sent at all), so a throw here means the account is untouched and the
+    // ten-minute token is still worth spending.
+    vi.mocked(completeRecovery).mockRejectedValueOnce(
+      new ApiError("bad_request", 400, "field \"kdfSalt\" is required", null),
+    );
+    vi.mocked(completeRecovery).mockResolvedValue(ROTATED);
     const { result } = setup();
 
     await act(async () => {
       await result.current.onRedeemCode({ email: "a@example.com", recoveryCode: "CODE" });
     });
     await expect(result.current.onSetNewPassword("a new master password")).rejects.toThrow(
-      /network blip/,
+      /kdfSalt/,
     );
 
     // The token is good for ten minutes server-side. Destroying the session on
-    // a failed attempt would turn one dropped request into a dead end that only
-    // a second recovery code could get out of.
+    // a refused attempt would turn one bad request into a dead end that only a
+    // second recovery code could get out of.
     expect(recovery.destroy).not.toHaveBeenCalled();
     const issued = await act(async () => result.current.onSetNewPassword("a new master password"));
-    expect(issued).toBe(NEW_CODE);
+    expect(issued.recoveryCode).toBe(NEW_CODE);
+  });
+
+  it("hands back an unconfirmed rotation's code instead of retrying it", async () => {
+    const recovery = fakeRecoverySession();
+    vi.mocked(recoverAccount).mockResolvedValue(recovery);
+    vi.mocked(completeRecovery).mockResolvedValue(UNCONFIRMED);
+    // The rotation is not known to have failed, so the new password is the one
+    // to try -- and if it did land, this succeeds and the user is simply in.
+    vi.mocked(unlock).mockRejectedValue(new Error("network blip"));
+    const { result } = setup();
+
+    await act(async () => {
+      await result.current.onRedeemCode({ email: "a@example.com", recoveryCode: "CODE" });
+    });
+    const issued = await act(async () => result.current.onSetNewPassword("a new master password"));
+
+    // The code reaches the caller with its uncertainty attached, so the screen
+    // can say the change may already have been applied.
+    expect(issued.recoveryCode).toBe(NEW_CODE);
+    expect(issued.confirmed).toBe(false);
+    // And the recovery is over: offering a retry here would send a token the
+    // server has very likely already spent, and the 401 that came back would
+    // tell the user the recovery failed when it had succeeded.
+    expect(recovery.destroy).toHaveBeenCalled();
+    await expect(result.current.onSetNewPassword("a new master password")).rejects.toThrow(
+      /no recovery in progress/i,
+    );
   });
 
   it("destroys the recovered keys once the rotation has landed", async () => {
     const recovery = fakeRecoverySession();
     vi.mocked(recoverAccount).mockResolvedValue(recovery);
-    vi.mocked(completeRecovery).mockResolvedValue(NEW_CODE);
+    vi.mocked(completeRecovery).mockResolvedValue(ROTATED);
     vi.mocked(unlock).mockResolvedValue(undefined);
     const { result } = setup();
 

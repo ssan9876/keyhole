@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { WrongRecoveryCodeError } from "../../vault/recover.js";
+import { WrongRecoveryCodeError, type RecoveryOutcome } from "../../vault/recover.js";
 import { Button } from "../components/Button.js";
 import { Field } from "../components/Field.js";
 import { describeFailure } from "../errors.js";
@@ -14,8 +14,9 @@ export interface RecoverScreenProps {
    *  failures for anything else. */
   onRedeemCode(input: { email: string; recoveryCode: string }): Promise<void>;
   /** Rotates both credentials and resolves with the *new* recovery code, which
-   *  is shown once and then gone. */
-  onSetNewPassword(newMasterPassword: string): Promise<string>;
+   *  is shown once and then gone, plus whether the server was heard to accept
+   *  it. Rejects only when the rotation provably did not happen. */
+  onSetNewPassword(newMasterPassword: string): Promise<RecoveryOutcome>;
   onFinish(): void;
   onCancel(): void;
 }
@@ -70,6 +71,7 @@ export function RecoverScreen({
   const [newPassword, setNewPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [newCode, setNewCode] = useState<string | null>(null);
+  const [confirmed, setConfirmed] = useState(true);
   const [acknowledged, setAcknowledged] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -105,8 +107,9 @@ export function RecoverScreen({
     }
     setBusy(true);
     try {
-      const issued = await onSetNewPassword(newPassword);
-      setNewCode(issued);
+      const outcome = await onSetNewPassword(newPassword);
+      setNewCode(outcome.recoveryCode);
+      setConfirmed(outcome.confirmed);
       setNewPassword("");
       setConfirm("");
     } catch (failure) {
@@ -120,10 +123,24 @@ export function RecoverScreen({
     return (
       <main style={{ maxWidth: "28rem", margin: "0 auto", padding: "var(--space-8) var(--space-4)" }}>
         <h1 style={{ fontSize: "1.25rem", fontWeight: 600 }}>Save your new recovery code</h1>
+        {/* The unconfirmed case is not an error and must not read as one: the
+            rotation may have committed and simply not been acknowledged, in
+            which case this code is the account's only second way in. Saying
+            "something went wrong" here would invite the user to discard it. */}
+        {!confirmed && (
+          <p role="status" style={{ color: "var(--ink-muted)" }}>
+            We did not hear back from the server, so we cannot tell you whether
+            the change went through &mdash; it may already have been applied.
+            Save the code below either way, then try unlocking with your new
+            master password. If that is refused, your old master password and
+            old recovery code still work.
+          </p>
+        )}
         <p style={{ color: "var(--ink-muted)" }}>
-          Your old code no longer works. Save this one somewhere safe and
-          offline: it is shown once and cannot be recovered afterwards &mdash;
-          not by an administrator, and not by anyone with the database.
+          {confirmed && "Your old code no longer works. "}
+          Save this one somewhere safe and offline: it is shown once and cannot
+          be recovered afterwards &mdash; not by an administrator, and not by
+          anyone with the database.
         </p>
         <p style={CODE_PANEL_STYLE}>{newCode}</p>
         <label style={{ display: "flex", gap: "var(--space-2)", marginBottom: "var(--space-6)" }}>
@@ -146,6 +163,7 @@ export function RecoverScreen({
             // moved on, re-renderable — shipped in EnrolScreen once and had to
             // be fixed.
             setNewCode(null);
+            setConfirmed(true);
             setAcknowledged(false);
             onFinish();
           }}

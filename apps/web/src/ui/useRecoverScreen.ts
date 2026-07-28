@@ -2,7 +2,12 @@ import { useCallback, useEffect, useRef } from "react";
 import type { ApiClient } from "../vault/api.js";
 import type { Session } from "../vault/session.js";
 import type { VaultStore } from "../vault/store.js";
-import { completeRecovery, recoverAccount, type RecoverySession } from "../vault/recover.js";
+import {
+  completeRecovery,
+  recoverAccount,
+  type RecoveryOutcome,
+  type RecoverySession,
+} from "../vault/recover.js";
 import { unlock } from "../vault/unlock.js";
 import type { RecoverScreenProps } from "./screens/RecoverScreen.js";
 
@@ -61,7 +66,7 @@ export function useRecoverScreen({
   );
 
   const onSetNewPassword = useCallback(
-    async (newMasterPassword: string): Promise<string> => {
+    async (newMasterPassword: string): Promise<RecoveryOutcome> => {
       const pending = recovery.current;
       if (pending === null) {
         // Unreachable from RecoverScreen, which renders the password step only
@@ -70,16 +75,20 @@ export function useRecoverScreen({
         throw new Error("There is no recovery in progress");
       }
 
-      // Deliberately outside a try/finally: a failure here leaves the recovery
-      // session intact so the user can press the button again. The token is
-      // good for ten minutes server-side, and discarding it on a dropped
-      // request would turn one blip into a dead end that only a second recovery
-      // code could escape.
-      const newRecoveryCode = await completeRecovery({ api }, pending, newMasterPassword);
+      // Deliberately outside a try/finally: a throw here leaves the recovery
+      // session intact so the user can press the button again. That is now
+      // narrowed to the cases where retrying can actually work — completeRecovery
+      // throws only when the server *refused* (a 4xx) or when nothing was sent
+      // at all, and turns "we never heard back" into a resolved outcome with
+      // confirmed:false instead. It used to throw on those too, and the retry
+      // that followed sent a token the server had already spent and came back
+      // 401, confirming a failure that had in fact succeeded.
+      const outcome = await completeRecovery({ api }, pending, newMasterPassword);
 
       const { email } = pending;
-      // Spent. The rotation has landed, so these copies open nothing that the
-      // login below will not hand back.
+      // Spent, whether or not the answer arrived: the token is one-time and the
+      // screen is on its way to showing the new code either way. Retrying is
+      // not on offer from here, so nothing is served by keeping the keys live.
       discard();
 
       try {
@@ -96,9 +105,13 @@ export function useRecoverScreen({
         // is unrecoverable afterwards by anyone, so it must reach the user even
         // if this device cannot sign in. They land on the unlock screen after
         // acknowledging it, which is a recoverable place to be.
+        //
+        // Attempted even when outcome.confirmed is false, because it is the
+        // cheapest available answer to "did the rotation land?": if it did, this
+        // succeeds and the user is simply in their vault.
       }
 
-      return newRecoveryCode;
+      return outcome;
     },
     [api, deviceLabel, discard, session, store],
   );

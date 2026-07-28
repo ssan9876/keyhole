@@ -53,7 +53,10 @@ vi.mock("../vault/recover.js", async (importOriginal) => ({
     expiresIn: 600,
     destroy: () => undefined,
   })),
-  completeRecovery: vi.fn(async () => NEW_RECOVERY_CODE),
+  completeRecovery: vi.fn(async () => ({
+    recoveryCode: NEW_RECOVERY_CODE,
+    confirmed: true,
+  })),
 }));
 
 describe("inviteTokenFromPath", () => {

@@ -25,7 +25,7 @@ function renderScreen(overrides: Partial<RecoverScreenProps> = {}): RecoverScree
   const props: RecoverScreenProps = {
     rememberedEmail: null,
     onRedeemCode: vi.fn().mockResolvedValue(undefined),
-    onSetNewPassword: vi.fn().mockResolvedValue(NEW_CODE),
+    onSetNewPassword: vi.fn().mockResolvedValue({ recoveryCode: NEW_CODE, confirmed: true }),
     onFinish: vi.fn(),
     onCancel: vi.fn(),
     ...overrides,
@@ -162,6 +162,46 @@ describe("RecoverScreen", () => {
     expect(continueButton).toBeEnabled();
     await userEvent.click(continueButton);
     expect(props.onFinish).toHaveBeenCalledOnce();
+  });
+
+  it("says the change may already have been applied when the server never answered", async () => {
+    renderScreen({
+      onSetNewPassword: vi.fn().mockResolvedValue({ recoveryCode: NEW_CODE, confirmed: false }),
+    });
+
+    await submitCode();
+    await waitFor(() => expect(screen.getByLabelText("New master password")).toBeInTheDocument());
+    await submitNewPassword("correct horse battery staple");
+
+    // The code is the point. completeRecovery resolves this way only after the
+    // request was sent and no answer came back, which means the rotation may
+    // already have committed -- and if it has, this string is the account's
+    // only second way in and exists nowhere else.
+    await waitFor(() => expect(screen.getByText(NEW_CODE)).toBeInTheDocument());
+    const notice = screen.getByText(/may already have been applied/i);
+    // A live region, not a paragraph the eye has to find: the screen has just
+    // swapped under a user who pressed a button expecting either success or an
+    // error, and this is neither.
+    expect(notice).toHaveAttribute("role", "status");
+    expect(notice).toHaveTextContent(/new master password/i);
+    // And the certainty the confirmed path states must not be stated here: the
+    // old code may well be the one that still works.
+    expect(screen.queryByText(/your old code no longer works/i)).not.toBeInTheDocument();
+  });
+
+  it("states plainly that the old code is dead once the server has confirmed", async () => {
+    renderScreen();
+
+    await submitCode();
+    await waitFor(() => expect(screen.getByLabelText("New master password")).toBeInTheDocument());
+    await submitNewPassword("correct horse battery staple");
+
+    // The other half of the pair. Without this assertion the screen could show
+    // the hedged copy unconditionally and the test above would still pass,
+    // leaving every successful recovery reading like a failure.
+    await waitFor(() => expect(screen.getByText(NEW_CODE)).toBeInTheDocument());
+    expect(screen.getByText(/your old code no longer works/i)).toBeInTheDocument();
+    expect(screen.queryByText(/may already have been applied/i)).not.toBeInTheDocument();
   });
 
   it("clears the new recovery code from its own state on acknowledgement", async () => {
