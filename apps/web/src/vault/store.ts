@@ -27,7 +27,11 @@ export interface VaultState {
 interface SyncResponse {
   revision: number;
   items: WireItem[];
-  collections: WireCollection[];
+  // Optional, not just in practice but in the type: an older server may omit
+  // this field entirely (it predates collections), which is exactly what the
+  // `?? []` guard in fetchInto exists to handle. Without `| undefined` here,
+  // that guard is invisible to the type system and reads as dead code.
+  collections: WireCollection[] | undefined;
 }
 
 export interface VaultStore {
