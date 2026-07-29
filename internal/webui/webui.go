@@ -86,6 +86,15 @@ func Handler() (http.Handler, error) {
 			r.URL.Path = "/" + placeholderPath
 		}
 
+		// The manifest's own MIME type, set before ServeContent runs: Go's
+		// http.FileServer has no built-in type for .webmanifest, so it would
+		// content-sniff the JSON body to text/plain, which browsers warn on.
+		// http.ServeContent only sniffs when Content-Type is unset, so setting
+		// it here wins.
+		if strings.HasSuffix(name, ".webmanifest") {
+			w.Header().Set("Content-Type", "application/manifest+json")
+		}
+
 		// Overwrites the blanket no-store from securityHeaders, which runs
 		// before this handler and has not flushed yet. Vite puts a content hash
 		// in every asset filename, so those are immutable; the index names them

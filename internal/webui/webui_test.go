@@ -87,6 +87,27 @@ func TestHashedAssetsAreCacheableAndTheIndexIsNot(t *testing.T) {
 	}
 }
 
+// The manifest must be served as application/manifest+json, not the text/plain
+// Go's FileServer would content-sniff a JSON body to. A wrong type makes some
+// browsers refuse to install the PWA and logs a console warning on the rest.
+func TestManifestHasTheCorrectContentType(t *testing.T) {
+	files, err := dist()
+	if err != nil {
+		t.Fatalf("dist: %v", err)
+	}
+	if _, err := fs.Stat(files, "manifest.webmanifest"); err != nil {
+		t.Skip("no built manifest; run `pnpm --filter @keyhole/web build`")
+	}
+	h, _ := Handler()
+	rec := get(t, h, "/manifest.webmanifest")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /manifest.webmanifest = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/manifest+json" {
+		t.Errorf("manifest Content-Type = %q, want application/manifest+json", ct)
+	}
+}
+
 // When the app has not been built, dist holds only placeholder.html and there
 // is no real index.html. Handler must still answer "/" with 200 and the
 // placeholder's explanation, not a bare 404 that leaves an operator guessing.
