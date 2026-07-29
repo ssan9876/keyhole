@@ -22,12 +22,14 @@ import { useVaultState } from "../useVault.js";
 import { useCollectionsPanel } from "../useCollectionsPanel.js";
 import { useSettingsPanel } from "../useSettingsPanel.js";
 import { useAdminPanel } from "../useAdminPanel.js";
+import { useImportPanel } from "../useImportPanel.js";
 import { ItemEditor } from "./ItemEditor.js";
 import { CollectionsScreen } from "./CollectionsScreen.js";
 import { SettingsScreen } from "./SettingsScreen.js";
 import { AdminScreen } from "./AdminScreen.js";
+import { ImportScreen } from "./ImportScreen.js";
 
-export type Tab = "vault" | "collections" | "settings" | "admin";
+export type Tab = "vault" | "collections" | "import" | "settings" | "admin";
 
 const BLANK_LOGIN: LoginItem = {
   type: "login",
@@ -198,6 +200,7 @@ export function VaultList({ items, collections = [], onSelect, onNew }: VaultLis
 const TABS: { id: Tab; label: string }[] = [
   { id: "vault", label: "Vault" },
   { id: "collections", label: "Collections" },
+  { id: "import", label: "Import" },
   { id: "settings", label: "Settings" },
   { id: "admin", label: "Admin" },
 ];
@@ -265,6 +268,8 @@ export function VaultScreen({
     api,
     active: activeTab === "admin" && isAdmin,
   });
+
+  const importPanel = useImportPanel({ api, session, store });
 
   // Re-sync on focus rather than a timer: it catches the realistic case — you
   // edited on your phone, you come back to this tab — with no polling, no
@@ -446,6 +451,8 @@ export function VaultScreen({
         ))}
 
       {activeTab === "collections" && <CollectionsScreen {...collectionsPanel} />}
+
+      {activeTab === "import" && <ImportScreen {...importPanel} />}
 
       {activeTab === "settings" && <SettingsScreen {...settingsPanel} />}
 
