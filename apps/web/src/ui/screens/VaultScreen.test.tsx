@@ -267,6 +267,7 @@ describe("VaultScreen collections", () => {
       revision: 1,
       items: [sharedRecord as ItemRecord, personalRecord as ItemRecord],
       collections: [{ id: "c1", name: "Household", role: "member", usable: true }],
+      folders: [],
       status: "ready",
       error: null,
     });
@@ -296,6 +297,7 @@ describe("VaultScreen collections", () => {
       revision: 1,
       items: [sharedRecord as ItemRecord, personalRecord as ItemRecord],
       collections: [{ id: "c1", name: "Household", role: "member", usable: true }],
+      folders: [],
       status: "ready",
       error: null,
     });
@@ -313,7 +315,7 @@ describe("VaultScreen collections", () => {
 
   it("does not render the admin tab for a non-admin session", () => {
     const session = openSession(); // role "user", per test-helpers.ts
-    const store = fakeStore({ revision: 0, items: [], collections: [], status: "ready", error: null });
+    const store = fakeStore({ revision: 0, items: [], folders: [], collections: [], status: "ready", error: null });
 
     render(<VaultScreen api={fakeApi()} session={session} store={store} />);
 
@@ -328,6 +330,7 @@ describe("VaultScreen collections", () => {
       revision: 1,
       items: [],
       collections: [{ id: "c1", name: "Household", role: "manager", usable: true }],
+      folders: [],
       status: "ready",
       error: null,
     });
@@ -387,6 +390,7 @@ describe("VaultScreen collections", () => {
       revision: 1,
       items: [sharedRecord as ItemRecord],
       collections: [{ id: "c1", name: "Household", role: "manager", usable: true }],
+      folders: [],
       status: "ready",
       error: null,
     });
@@ -422,6 +426,7 @@ describe("VaultScreen undecryptable items", () => {
       revision: 1,
       items: [record({ id: "bad", collectionId: "c1", plaintext: null })],
       collections: [{ id: "c1", name: "Household", role: "member", usable: false }],
+      folders: [],
       status: "ready",
       error: null,
     });
@@ -446,6 +451,7 @@ describe("VaultScreen undecryptable items", () => {
       revision: 1,
       items: [record()],
       collections: [],
+      folders: [],
       status: "ready",
       error: null,
     });

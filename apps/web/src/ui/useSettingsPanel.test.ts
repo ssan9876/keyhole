@@ -23,7 +23,7 @@ vi.mock("../vault/account.js", async (importOriginal) => {
 });
 
 function fakeStore(): VaultStore {
-  const state: VaultState = { revision: 0, items: [], collections: [], status: "ready", error: null };
+  const state: VaultState = { revision: 0, items: [], folders: [], collections: [], status: "ready", error: null };
   return {
     getState: () => state,
     subscribe: () => () => undefined,

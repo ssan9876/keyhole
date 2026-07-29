@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   encryptItem,
+  encryptString,
   generateCollectionKey,
   generateKeyPair,
   generateUserKey,
@@ -9,6 +10,7 @@ import {
 } from "@keyhole/crypto";
 import type { ApiClient } from "./api.js";
 import { createVaultStore } from "./store.js";
+import type { WireFolder } from "./folders.js";
 import type { WireItem } from "./items.js";
 import { fakeApi, openSession, sessionWithUserKey } from "./test-helpers.js";
 
@@ -376,5 +378,120 @@ describe("collections in sync", () => {
     store.clear();
 
     expect(store.getState().collections).toEqual([]);
+  });
+});
+
+describe("folders in sync", () => {
+  it("decrypts a folder from a full sync into state.folders", async () => {
+    const userKey = generateUserKey();
+    const folder: WireFolder = {
+      id: "f1",
+      encryptedName: await encryptString("Work", userKey),
+      revision: 1,
+      deletedAt: null,
+    };
+    const api = syncApi({
+      "/api/sync": { revision: 4, items: [], folders: [folder], collections: [] },
+    });
+
+    const store = createVaultStore();
+    await store.load({ api, session: sessionWithUserKey(userKey) });
+
+    // The store carries folders, not just collections, and opens their names
+    // with the userKey the same way it opens a personal item.
+    expect(store.getState().folders).toEqual([
+      { id: "f1", revision: 1, deletedAt: null, name: "Work" },
+    ]);
+  });
+
+  it("removes a folder from state when a later incremental sync tombstones it", async () => {
+    const userKey = generateUserKey();
+    const folder: WireFolder = {
+      id: "f1",
+      encryptedName: await encryptString("Work", userKey),
+      revision: 1,
+      deletedAt: null,
+    };
+    const api = syncApi({
+      "/api/sync": { revision: 4, items: [], folders: [folder], collections: [] },
+      "/api/sync?since=4": {
+        revision: 5,
+        items: [],
+        // The server blanks encryptedName on delete; the tombstone is an id and
+        // a revision, which is exactly enough to remove the row here.
+        folders: [{ ...folder, revision: 2, encryptedName: "", deletedAt: "2026-01-02T00:00:00Z" }],
+        collections: [],
+      },
+    });
+
+    const store = createVaultStore();
+    const session = sessionWithUserKey(userKey);
+
+    await store.load({ api, session });
+    expect(store.getState().folders).toHaveLength(1);
+
+    await store.resync({ api, session });
+
+    // A delete on another device has to reach this one, or the folder lingers
+    // in the sidebar forever.
+    expect(store.getState().folders).toHaveLength(0);
+    expect(store.getState().revision).toBe(5);
+  });
+
+  it("keeps an unchanged folder that a later incremental sync does not mention", async () => {
+    const userKey = generateUserKey();
+    const kept: WireFolder = {
+      id: "f1",
+      encryptedName: await encryptString("Kept", userKey),
+      revision: 1,
+      deletedAt: null,
+    };
+    const added: WireFolder = {
+      id: "f2",
+      encryptedName: await encryptString("Added", userKey),
+      revision: 1,
+      deletedAt: null,
+    };
+    const api = syncApi({
+      "/api/sync": { revision: 4, items: [], folders: [kept], collections: [] },
+      // An incremental sync carries only what changed since the cursor — here
+      // the newly-created f2 and nothing about the unchanged f1. Folders are
+      // merged, not replaced, so f1 must survive its own absence. A wholesale
+      // replace from this response would drop f1 with no tombstone to blame.
+      "/api/sync?since=4": { revision: 5, items: [], folders: [added], collections: [] },
+    });
+
+    const store = createVaultStore();
+    const session = sessionWithUserKey(userKey);
+
+    await store.load({ api, session });
+    expect(store.getState().folders.map((f) => f.id)).toEqual(["f1"]);
+
+    await store.resync({ api, session });
+
+    expect(store.getState().folders.map((f) => f.id).sort()).toEqual(["f1", "f2"]);
+  });
+
+  it("clears folders on clear()", async () => {
+    const userKey = generateUserKey();
+    const folder: WireFolder = {
+      id: "f1",
+      encryptedName: await encryptString("Work", userKey),
+      revision: 1,
+      deletedAt: null,
+    };
+    const api = syncApi({
+      "/api/sync": { revision: 4, items: [], folders: [folder], collections: [] },
+    });
+
+    const store = createVaultStore();
+    await store.load({ api, session: sessionWithUserKey(userKey) });
+    expect(store.getState().folders).toHaveLength(1);
+
+    store.clear();
+
+    // Decrypted folder names must not outlive the unlocked session, exactly as
+    // decrypted item plaintext must not.
+    expect(store.getState().folders).toEqual([]);
   });
 });

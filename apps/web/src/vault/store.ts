@@ -1,6 +1,7 @@
 import type { ApiClient } from "./api.js";
 import type { Session } from "./session.js";
 import { adoptCollections, type CollectionSummary, type WireCollection } from "./collections.js";
+import { decryptFolders, type FolderRecord, type WireFolder } from "./folders.js";
 import { decryptRecords, type ItemRecord, type WireItem } from "./items.js";
 
 /**
@@ -17,6 +18,12 @@ import { decryptRecords, type ItemRecord, type WireItem } from "./items.js";
 export interface VaultState {
   revision: number;
   items: ItemRecord[];
+  /** Incremental with tombstones, exactly like `items` and unlike `collections`:
+   *  an incremental `/api/sync` sends only the folders that changed since the
+   *  cursor, so a wholesale replace would drop every folder it did not mention.
+   *  Holds the live (non-tombstone) folders, decryptable or not — an
+   *  undecryptable name is carried as `null` rather than hidden. */
+  folders: FolderRecord[];
   /** Sent in full on every sync, so this is a replacement rather than a merge:
    *  a revoked membership is expressed by absence (internal/store/sync.go:17). */
   collections: CollectionSummary[];
@@ -28,9 +35,11 @@ interface SyncResponse {
   revision: number;
   items: WireItem[];
   // Optional, not just in practice but in the type: an older server may omit
-  // this field entirely (it predates collections), which is exactly what the
-  // `?? []` guard in fetchInto exists to handle. Without `| undefined` here,
-  // that guard is invisible to the type system and reads as dead code.
+  // these fields entirely (both predate the feature that added them), which is
+  // exactly what the `?? []` guards in fetchInto exist to handle. Without
+  // `| undefined` here, those guards are invisible to the type system and read
+  // as dead code.
+  folders: WireFolder[] | undefined;
   collections: WireCollection[] | undefined;
 }
 
@@ -47,6 +56,7 @@ export interface VaultStore {
 const EMPTY: VaultState = {
   revision: 0,
   items: [],
+  folders: [],
   collections: [],
   status: "empty",
   error: null,
@@ -63,13 +73,20 @@ export function createVaultStore(): VaultStore {
     for (const listener of listeners) listener();
   };
 
-  const merge = (existing: ItemRecord[], incoming: ItemRecord[]): ItemRecord[] => {
-    const byId = new Map(existing.map((item) => [item.id, item]));
-    for (const item of incoming) {
-      if (item.deletedAt !== null) {
-        byId.delete(item.id);
+  // One merge for items and folders both: they share the same incremental
+  // contract — an incremental sync carries only what changed, a tombstone
+  // (`deletedAt !== null`) removes a row, and everything absent is left in
+  // place. Collections do not go through here; they are replaced wholesale.
+  const merge = <T extends { id: string; deletedAt: string | null }>(
+    existing: T[],
+    incoming: T[],
+  ): T[] => {
+    const byId = new Map(existing.map((record) => [record.id, record]));
+    for (const record of incoming) {
+      if (record.deletedAt !== null) {
+        byId.delete(record.id);
       } else {
-        byId.set(item.id, item);
+        byId.set(record.id, record);
       }
     }
     return [...byId.values()];
@@ -87,9 +104,18 @@ export function createVaultStore(): VaultStore {
       // unreadable until their key is in the session.
       const collections = await adoptCollections(response.collections ?? [], deps.session);
       const records = await decryptRecords(response.items, deps.session);
+      // A folder name is symmetric ciphertext under the userKey, just like a
+      // personal item body. The store holds the decrypted names — the same
+      // bounded plaintext concession it makes for items — but never the key:
+      // it reads the userKey out of the session at the point of use and hands
+      // it to decryptFolders, which retains nothing.
+      const folders = await decryptFolders(response.folders ?? [], deps.session.getKeys().userKey);
       set({
         revision: response.revision,
         items: since === null ? merge([], records) : merge(state.items, records),
+        // Merged like items, never replaced like collections: an incremental
+        // response omits every unchanged folder, so a replace would drop them.
+        folders: since === null ? merge([], folders) : merge(state.folders, folders),
         collections,
         status: "ready",
         error: null,

@@ -43,7 +43,7 @@ function fakeStore(
   items: ItemRecord[] = [],
   collections: CollectionSummary[] = [],
 ): { store: VaultStore; resync: ReturnType<typeof vi.fn> } {
-  const state: VaultState = { revision: 1, items, collections, status: "ready", error: null };
+  const state: VaultState = { revision: 1, items, folders: [], collections, status: "ready", error: null };
   const resync = vi.fn().mockResolvedValue(undefined);
   const store: VaultStore = {
     getState: () => state,
