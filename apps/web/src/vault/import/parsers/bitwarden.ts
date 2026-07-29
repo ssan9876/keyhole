@@ -2,12 +2,21 @@ import { parseCsv, type CsvRow } from "../csv.js";
 import {
   blankImportItem,
   folderSegments,
-  type ImportFieldKind,
   type ImportItem,
   type ImportItemType,
   type ImportResult,
   type ImportRowError,
 } from "../types.js";
+import {
+  carry,
+  indexColumns,
+  isRowError,
+  mapCsvRows,
+  requiredPassword,
+  surplusFieldsError,
+  type Columns,
+  type RowOutcome,
+} from "./shared.js";
 
 /**
  * Bitwarden's two exports: the JSON one and the CSV one.
@@ -108,24 +117,6 @@ const CSV_COLUMNS = {
   password: "login_password",
   totp: "login_totp",
 } as const;
-
-/**
- * Adds one entry to `item.extra`, in the order the export carried it.
- *
- * One entry each, never merged by name, because two things can legitimately
- * claim one name: Bitwarden allows two custom fields with the same name, and a
- * custom field may itself be named `totp`. Merging them into a single value —
- * which is what the record this used to be forced — leaves the user's two "PIN"
- * fields as one string that nothing downstream can take apart again.
- *
- * An empty value is not carried at all: otherwise every ordinary login would
- * arrive with an empty `totp` and the preview screen would warn about the loss
- * of nothing on every row of the import.
- */
-function carry(item: ImportItem, name: string, value: string, kind: ImportFieldKind): void {
-  if (value === "") return;
-  item.extra.push({ name, value, kind });
-}
 
 /**
  * What Bitwarden nests folders with.
@@ -275,7 +266,7 @@ function jsonItem(
   position: number,
   folders: ReadonlyMap<string, string>,
   collections: ReadonlyMap<string, string>,
-): ImportItem | ImportRowError {
+): RowOutcome {
   const source = asObject(raw);
   if (source === null) {
     return { row: position, message: `Item ${position} is not an object, so it could not be read` };
@@ -409,7 +400,7 @@ export function parseBitwardenJson(text: string): ImportResult {
 
   raw.forEach((entry, at) => {
     const outcome = jsonItem(entry, at + 1, folders, collections);
-    if ("message" in outcome) {
+    if (isRowError(outcome)) {
       errors.push(outcome);
     } else {
       items.push(outcome);
@@ -422,40 +413,6 @@ export function parseBitwardenJson(text: string): ImportResult {
 /* -------------------------------------------------------------------------- */
 /*                                     CSV                                    */
 /* -------------------------------------------------------------------------- */
-
-/** The header's columns, addressable by lowercased name. */
-interface Columns {
-  /** True when the file has this column at all. */
-  has(column: string): boolean;
-  /**
-   * The value of `column` in `row`, or `undefined` for a column the file does
-   * not have and for a row that ended before reaching it — both of which mean
-   * "the export did not say", as distinct from `""`, which is the export saying
-   * the field is empty.
-   */
-  value(row: CsvRow, column: string): string | undefined;
-}
-
-function indexColumns(header: readonly string[]): Columns {
-  const at = new Map<string, number>();
-  header.forEach((cell, position) => {
-    // Trimmed and lowercased, as `detect.ts` matches them: a spreadsheet round
-    // trip changes the case and can add a space, and neither changes which
-    // column holds the password. A BOM on the first name is removed by the
-    // reader, and `trim` removes a stray one anywhere else.
-    const key = cell.trim().toLowerCase();
-    // First occurrence wins for a duplicated name, matching the reader's rule.
-    if (!at.has(key)) at.set(key, position);
-  });
-
-  return {
-    has: (column) => at.has(column),
-    value: (row, column) => {
-      const position = at.get(column);
-      return position === undefined ? undefined : row.values[position];
-    },
-  };
-}
 
 /**
  * The URLs in one `login_uri` cell.
@@ -479,26 +436,9 @@ function isFavorite(value: string | undefined): boolean {
   return text === "1" || text === "true";
 }
 
-function csvItem(row: CsvRow, columns: Columns, width: number): ImportItem | ImportRowError {
-  if (row.extra.length > 0) {
-    // Fields past the end of the header. An export whose writer failed to quote
-    // a password containing a comma produces exactly this, and from here on the
-    // values no longer line up with the columns naming them — so the field this
-    // row calls a password is part of one, and the rest is in `row.extra`.
-    //
-    // All-empty surplus is the trailing-comma shape rather than a column shift,
-    // and says so; `browser.ts` carries the same distinction and the same
-    // reason for still refusing the row.
-    const allSurplusEmpty = row.extra.every((value) => value === "");
-    return {
-      row: row.line,
-      message: allSurplusEmpty
-        ? `This row has ${row.values.length} fields where the header has ${width}, ` +
-          `though every surplus field is empty, so a trailing comma is the likely cause`
-        : `This row has ${row.values.length} fields where the header has ${width}, ` +
-          `so a value has been split across columns`,
-    };
-  }
+function csvItem(row: CsvRow, columns: Columns, width: number): RowOutcome {
+  const surplus = surplusFieldsError(row, width);
+  if (surplus !== null) return surplus;
 
   // A row whose type column is absent or blank is read as a login, which is
   // what the remaining columns describe. The guess is safe rather than
@@ -525,13 +465,8 @@ function csvItem(row: CsvRow, columns: Columns, width: number): ImportItem | Imp
   item.folderPath = folderSegments(columns.value(row, CSV_COLUMNS.folder) ?? "", FOLDER_SEPARATOR);
 
   if (kind === "login") {
-    const password = columns.value(row, CSV_COLUMNS.password);
-    if (password === undefined) {
-      return { row: row.line, message: "This row ends before its password column" };
-    }
-    if (password === "") {
-      return { row: row.line, message: "This row has an empty password, so it was not imported" };
-    }
+    const password = requiredPassword(row, columns.value(row, CSV_COLUMNS.password));
+    if (typeof password !== "string") return password;
     item.username = columns.value(row, CSV_COLUMNS.username) ?? "";
     // Byte for byte: the value as the reader unescaped it, and nothing else.
     item.password = password;
@@ -578,28 +513,5 @@ export function parseBitwardenCsv(text: string): ImportResult {
     };
   }
 
-  // A record the reader reported damage on is not mapped at all. Its fields have
-  // already been shown not to mean what their columns say — an unclosed quote
-  // swallows the rest of the file into one value — so importing it would store a
-  // password the user never had, underneath a report that said the file had a
-  // problem. The reader's error is that row's error; it does not get a second.
-  const damaged = new Set(table.errors.map((error) => error.row));
-  const items: ImportItem[] = [];
-  const errors: ImportRowError[] = [...table.errors];
-
-  for (const row of table.rows) {
-    if (damaged.has(row.line)) continue;
-    const outcome = csvItem(row, columns, table.header.length);
-    if ("message" in outcome) {
-      errors.push(outcome);
-    } else {
-      items.push(outcome);
-    }
-  }
-
-  // By line, so the report reads in the order of the user's own file. Stable, so
-  // a reader error and a row error on one line keep the order above.
-  errors.sort((left, right) => left.row - right.row);
-
-  return { items, errors };
+  return mapCsvRows(table, (row) => csvItem(row, columns, table.header.length));
 }

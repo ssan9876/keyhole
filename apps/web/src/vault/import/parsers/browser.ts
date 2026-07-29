@@ -1,11 +1,14 @@
 import { parseCsv, type CsvRow } from "../csv.js";
+import { blankImportItem, type ImportFieldKind, type ImportResult } from "../types.js";
 import {
-  blankImportItem,
-  type ImportFieldKind,
-  type ImportItem,
-  type ImportResult,
-  type ImportRowError,
-} from "../types.js";
+  carry,
+  indexColumns,
+  mapCsvRows,
+  requiredPassword,
+  surplusFieldsError,
+  type Columns,
+  type RowOutcome,
+} from "./shared.js";
 
 /**
  * The password export of every browser Keyhole reads: Chrome, Edge, Brave,
@@ -170,53 +173,6 @@ const LAYOUTS: readonly BrowserLayout[] = [
   },
 ];
 
-/** The header's columns, addressable by lowercased name. */
-interface Columns {
-  /** True when the file has this column at all. */
-  has(column: string): boolean;
-  /**
-   * The value of `column` in `row`.
-   *
-   * `undefined` for a column the file does not have, for a row that ended
-   * before reaching it, and for the `null` column of a layout that has none —
-   * all three of which mean "the export did not say", as distinct from `""`,
-   * which is the export saying the field is empty.
-   */
-  value(row: CsvRow, column: string | null): string | undefined;
-  /** The header's own spelling of `column`, for keying `extra`. */
-  sourceName(column: string): string;
-}
-
-function indexColumns(header: readonly string[]): Columns {
-  const at = new Map<string, number>();
-  header.forEach((cell, position) => {
-    // Trimmed and lowercased: a spreadsheet round trip changes the case and can
-    // add a space, and neither changes which column holds the password. A BOM
-    // on the first name is removed by the reader, and `trim` removes a stray
-    // one anywhere else.
-    const key = cell.trim().toLowerCase();
-    // First occurrence wins for a duplicated name, matching the reader's rule.
-    if (!at.has(key)) at.set(key, position);
-  });
-
-  return {
-    has: (column) => at.has(column),
-    value: (row, column) => {
-      if (column === null) return undefined;
-      const position = at.get(column);
-      return position === undefined ? undefined : row.values[position];
-    },
-    sourceName: (column) => {
-      const position = at.get(column);
-      const cell = position === undefined ? undefined : header[position];
-      // The file's own spelling, so `extra` is keyed the way `types.ts` asks:
-      // by "the source's own column or property name". A Safari export writes
-      // `OTPAuth`, and that is what the user will be shown.
-      return cell === undefined ? column : cell.trim();
-    },
-  };
-}
-
 /**
  * A display name for the item: the export's, or the URL's host when it has none.
  *
@@ -251,38 +207,12 @@ function toItem(
   layout: BrowserLayout,
   columns: Columns,
   width: number,
-): ImportItem | ImportRowError {
-  if (row.extra.length > 0) {
-    // Fields past the end of the header. An export whose writer failed to quote
-    // a password containing a comma produces exactly this, and from here on the
-    // values no longer line up with the columns naming them — so the field this
-    // row calls a password is part of one, and the rest is in `row.extra`.
-    //
-    // Surplus fields that are **all empty** are a different shape and get a
-    // different sentence: nothing has shifted, and a trailing comma is the
-    // ordinary cause. The row is still refused, because the other way to get an
-    // empty surplus field is a last column whose value ended in a comma, and
-    // the two are the same bytes. But "a value has been split across columns" is
-    // a claim about this row that is simply false, and it sends the user looking
-    // through their export for damage that is not there.
-    const allSurplusEmpty = row.extra.every((value) => value === "");
-    return {
-      row: row.line,
-      message: allSurplusEmpty
-        ? `This row has ${row.values.length} fields where the header has ${width}, ` +
-          `though every surplus field is empty, so a trailing comma is the likely cause`
-        : `This row has ${row.values.length} fields where the header has ${width}, ` +
-          `so a value has been split across columns`,
-    };
-  }
+): RowOutcome {
+  const surplus = surplusFieldsError(row, width);
+  if (surplus !== null) return surplus;
 
-  const password = columns.value(row, layout.password);
-  if (password === undefined) {
-    return { row: row.line, message: "This row ends before its password column" };
-  }
-  if (password === "") {
-    return { row: row.line, message: "This row has an empty password, so it was not imported" };
-  }
+  const password = requiredPassword(row, columns.value(row, layout.password));
+  if (typeof password !== "string") return password;
 
   const url = columns.value(row, layout.url) ?? "";
   const item = blankImportItem(row.line);
@@ -295,13 +225,10 @@ function toItem(
   item.notes = columns.value(row, layout.notes) ?? "";
 
   for (const { column, kind } of layout.carry) {
-    const carried = columns.value(row, column);
-    // Only when the column actually holds something: otherwise every Safari
-    // item without a TOTP seed would carry an empty `OTPAuth`, and the preview
+    // `carry` skips an absent or empty value: otherwise every Safari item
+    // without a TOTP seed would arrive with an empty `OTPAuth`, and the preview
     // screen would warn about the loss of nothing on every row of the import.
-    if (carried !== undefined && carried !== "") {
-      item.extra.push({ name: columns.sourceName(column), value: carried, kind });
-    }
+    carry(item, columns.sourceName(column), columns.value(row, column), kind);
   }
 
   return item;
@@ -337,29 +264,5 @@ export function parseBrowserCsv(text: string): ImportResult {
     };
   }
 
-  // A record the reader reported damage on is not mapped at all. Its fields
-  // have already been shown not to mean what their columns say — an unclosed
-  // quote swallows the rest of the file into one value — so importing it would
-  // store a password the user never had, underneath a report that said the file
-  // had a problem. The reader's error is that row's error; it does not get a
-  // second one.
-  const damaged = new Set(table.errors.map((error) => error.row));
-  const items: ImportItem[] = [];
-  const errors: ImportRowError[] = [...table.errors];
-
-  for (const row of table.rows) {
-    if (damaged.has(row.line)) continue;
-    const outcome = toItem(row, layout, columns, table.header.length);
-    if ("message" in outcome) {
-      errors.push(outcome);
-    } else {
-      items.push(outcome);
-    }
-  }
-
-  // By line, so the report reads in the order of the user's own file. Stable,
-  // so a reader error and a row error on one line keep the order above.
-  errors.sort((left, right) => left.row - right.row);
-
-  return { items, errors };
+  return mapCsvRows(table, (row) => toItem(row, layout, columns, table.header.length));
 }
