@@ -14,7 +14,7 @@
 - **Key material lives only in `src/vault/session.ts`.** `folders.ts` takes the userKey as an argument and retains nothing.
 - **`src/ui/**` must never import `@keyhole/crypto`**; the ban fires on type-only imports. Route types through `src/vault/types.ts`.
 - **A folder whose name will not decrypt is shown, not dropped** — `"Couldn't decrypt this folder"` — for the same reason an undecryptable item is shown: a silently missing folder reads as data loss.
-- **Deleting a folder does not delete its items.** The server nulls their `folderId` — confirm this is what the server does before assuming it; if it does not, the client must, or an item vanishes with its folder. State what you found.
+- **Deleting a folder does not delete its items, and the server does not touch them.** Confirmed in `internal/store/folders.go:169` — folder membership lives inside each item's *encrypted body*, which the server cannot read, so it tombstones the folder and leaves every item's `folderId` pointing at a folder that no longer exists. **The client is responsible for reconciling orphaned items.** An item whose `folderId` is not among the live (non-tombstone, in-state) folders must be treated as folder-less — shown under Personal, not hidden, and not crashing a lookup. This is the one genuinely load-bearing rule in the plan; a filter that assumes every `folderId` resolves will drop every item whose folder was ever deleted.
 - **Folders are personal.** There is no shared-folder concept; a collection item has no folder.
 - Colour from `src/ui/tokens.css`; every control labelled; `Confirm` for the destructive delete. Test names describe what the body verifies. Every task ends with a mutation check.
 
