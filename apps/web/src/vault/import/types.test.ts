@@ -17,20 +17,20 @@ describe("blankImportItem", () => {
       notes: "",
       favorite: false,
       folderName: null,
-      extra: {},
+      extra: [],
       sourceRow: 12,
     });
   });
 
-  it("gives each item its own urls array and extra object", () => {
+  it("gives each item its own urls and extra arrays", () => {
     // A shared default would make one row's second URL appear on every other
     // row that never set one.
     const first = blankImportItem(1);
     const second = blankImportItem(2);
     first.urls.push("https://x.example");
-    first.extra["totp"] = "seed";
+    first.extra.push({ name: "totp", value: "seed" });
 
     expect(second.urls).toEqual([]);
-    expect(second.extra).toEqual({});
+    expect(second.extra).toEqual([]);
   });
 });

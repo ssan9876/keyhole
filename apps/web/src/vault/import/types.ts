@@ -21,6 +21,22 @@
 /** Which of Keyhole's two item kinds a row became. */
 export type ImportItemType = "login" | "note";
 
+/**
+ * One thing the export carried that Keyhole has no field for.
+ *
+ * **A list of named fields, not a `Record<string, string>` keyed by name.** Two
+ * of these can legitimately share a name and mean different things: Bitwarden's
+ * `fields[]` is an array of `{name, value, type}` and nothing stops a user
+ * having two custom fields called "PIN"; LastPass's and NordPass's custom
+ * columns are the same. A record would keep one of them — the shape that exists
+ * to stop information going missing would be where it went missing.
+ */
+export interface ImportField {
+  /** The source's own spelling of the name, which is what the user is shown. */
+  name: string;
+  value: string;
+}
+
 /** One row of an export, in Keyhole's vocabulary but not yet its shape. */
 export interface ImportItem {
   /**
@@ -48,15 +64,17 @@ export interface ImportItem {
    */
   folderName: string | null;
   /**
-   * Whatever the source carried that Keyhole has no home for, keyed by the
-   * source's own column or property name: TOTP seeds, custom fields, card
-   * numbers, "reprompt" flags.
+   * Whatever the source carried that Keyhole has no home for: TOTP seeds,
+   * custom fields, card numbers, "reprompt" flags.
    *
    * Dropping these silently loses data the user believes they moved. Keeping
    * them lets the mapper append them to the note and lets the preview screen
    * say what will not survive.
+   *
+   * In the source's own order, and one entry per thing the source carried —
+   * never merged by name. See `ImportField`.
    */
-  extra: Record<string, string>;
+  extra: ImportField[];
   /**
    * 1-based line in the source file this row came from, so an error can name a
    * line the user can actually find in their own file.
@@ -100,7 +118,7 @@ export function blankImportItem(sourceRow: number): ImportItem {
     notes: "",
     favorite: false,
     folderName: null,
-    extra: {},
+    extra: [],
     sourceRow,
   };
 }

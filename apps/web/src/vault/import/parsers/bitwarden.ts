@@ -108,20 +108,21 @@ const CSV_COLUMNS = {
 } as const;
 
 /**
- * Puts `value` into `item.extra` under `key`, keeping anything already there.
+ * Adds one entry to `item.extra`, in the order the export carried it.
  *
- * Appending rather than assigning, because two things can legitimately claim one
- * key: Bitwarden allows two custom fields with the same name, and a custom field
- * may be named `totp`. An assignment would delete one of them with nothing to
- * say it had happened, which is the failure this whole channel exists to
- * prevent. An empty value is not carried at all — otherwise every ordinary login
- * would arrive with an empty `totp` and the preview screen would warn about the
- * loss of nothing on every row of the import.
+ * One entry each, never merged by name, because two things can legitimately
+ * claim one name: Bitwarden allows two custom fields with the same name, and a
+ * custom field may itself be named `totp`. Merging them into a single value —
+ * which is what the record this used to be forced — leaves the user's two "PIN"
+ * fields as one string that nothing downstream can take apart again.
+ *
+ * An empty value is not carried at all: otherwise every ordinary login would
+ * arrive with an empty `totp` and the preview screen would warn about the loss
+ * of nothing on every row of the import.
  */
-function carry(item: ImportItem, key: string, value: string): void {
+function carry(item: ImportItem, name: string, value: string): void {
   if (value === "") return;
-  const existing = item.extra[key];
-  item.extra[key] = existing === undefined ? value : `${existing}\n${value}`;
+  item.extra.push({ name, value });
 }
 
 /**

@@ -275,7 +275,7 @@ function toItem(
     // item without a TOTP seed would carry an empty `OTPAuth`, and the preview
     // screen would warn about the loss of nothing on every row of the import.
     if (carried !== undefined && carried !== "") {
-      item.extra[columns.sourceName(column)] = carried;
+      item.extra.push({ name: columns.sourceName(column), value: carried });
     }
   }
 

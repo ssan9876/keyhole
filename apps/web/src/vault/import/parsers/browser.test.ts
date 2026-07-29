@@ -79,7 +79,7 @@ const CHROMIUM_ITEMS: readonly ImportItem[] = [
     notes: NOTICE,
     favorite: false,
     folderName: null,
-    extra: {},
+    extra: [],
     sourceRow: 2,
   },
   {
@@ -91,7 +91,7 @@ const CHROMIUM_ITEMS: readonly ImportItem[] = [
     notes: "",
     favorite: false,
     folderName: null,
-    extra: {},
+    extra: [],
     sourceRow: 3,
   },
 ];
@@ -126,7 +126,7 @@ describe("parseBrowserCsv, against one sample export per browser", () => {
           notes: "",
           favorite: false,
           folderName: null,
-          extra: { httpRealm: NOTICE },
+          extra: [{ name: "httpRealm", value: NOTICE }],
           sourceRow: 2,
         },
         {
@@ -138,7 +138,7 @@ describe("parseBrowserCsv, against one sample export per browser", () => {
           notes: "",
           favorite: false,
           folderName: null,
-          extra: {},
+          extra: [],
           sourceRow: 3,
         },
       ],
@@ -160,7 +160,7 @@ describe("parseBrowserCsv, against one sample export per browser", () => {
           notes: NOTICE,
           favorite: false,
           folderName: null,
-          extra: {},
+          extra: [],
           sourceRow: 2,
         },
         {
@@ -172,7 +172,7 @@ describe("parseBrowserCsv, against one sample export per browser", () => {
           notes: "",
           favorite: false,
           folderName: null,
-          extra: {},
+          extra: [],
           sourceRow: 3,
         },
       ],
@@ -316,7 +316,7 @@ describe("parseBrowserCsv, on rows a browser exports that Keyhole has no field f
 
     const item = only(parseBrowserCsv(csv));
 
-    expect(item.extra).toEqual({ OTPAuth: otpauth });
+    expect(item.extra).toEqual([{ name: "OTPAuth", value: otpauth }]);
     expect(item.notes).toBe("a note the user typed");
   });
 
@@ -329,7 +329,7 @@ describe("parseBrowserCsv, on rows a browser exports that Keyhole has no field f
       "mail.example.com,https://mail.example.com,ada@example.com,fixture-pw-8Hq2vN,note,",
     );
 
-    expect(only(parseBrowserCsv(csv)).extra).toEqual({});
+    expect(only(parseBrowserCsv(csv)).extra).toEqual([]);
   });
 });
 

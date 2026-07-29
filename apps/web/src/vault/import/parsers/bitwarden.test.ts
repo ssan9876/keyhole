@@ -91,7 +91,7 @@ describe("parseBitwardenJson, against the sample export", () => {
           notes: NOTICE,
           favorite: true,
           folderName: "Personal",
-          extra: {},
+          extra: [],
           sourceRow: 1,
         },
         {
@@ -103,7 +103,7 @@ describe("parseBitwardenJson, against the sample export", () => {
           notes: "first line\nsecond line",
           favorite: false,
           folderName: null,
-          extra: {},
+          extra: [],
           sourceRow: 2,
         },
         {
@@ -119,7 +119,13 @@ describe("parseBitwardenJson, against the sample export", () => {
           notes: "",
           favorite: false,
           folderName: "Work/Servers",
-          extra: { totp: TOTP, reprompt: "1", "Security question": "first pet" },
+          // In the order the export carried them, which is the order `extra` is
+          // a list to preserve.
+          extra: [
+            { name: "totp", value: TOTP },
+            { name: "Security question", value: "first pet" },
+            { name: "reprompt", value: "1" },
+          ],
           sourceRow: 3,
         },
       ],
@@ -235,11 +241,11 @@ describe("parseBitwardenJson, on what Keyhole has no field for", () => {
       ],
     });
 
-    expect(only(parseBitwardenJson(json)).extra).toEqual({
-      totp: TOTP,
-      reprompt: "1",
-      "Security question": "first pet",
-    });
+    expect(only(parseBitwardenJson(json)).extra).toEqual([
+      { name: "totp", value: TOTP },
+      { name: "Security question", value: "first pet" },
+      { name: "reprompt", value: "1" },
+    ]);
   });
 
   it("leaves extra empty for an item with no totp, no custom fields and reprompt off", () => {
@@ -257,13 +263,15 @@ describe("parseBitwardenJson, on what Keyhole has no field for", () => {
       ],
     });
 
-    expect(only(parseBitwardenJson(json)).extra).toEqual({});
+    expect(only(parseBitwardenJson(json)).extra).toEqual([]);
   });
 
-  it("keeps both of two custom fields sharing a name, joined rather than overwritten", () => {
-    // Bitwarden allows two custom fields with the same name, and `extra` is
-    // keyed by name. Assigning the second over the first would delete data the
-    // user typed, with nothing to say it had happened.
+  it("keeps two custom fields sharing a name as two entries, not one merged value", () => {
+    // Bitwarden's `fields[]` is an array and nothing stops a user having two
+    // fields with one name. `extra` is a list for this reason: a record keyed by
+    // name has to either drop one of them or glue them into a single string that
+    // nothing downstream can take apart again, and this is the channel that
+    // exists to stop the user's own data going missing.
     const json = asExport({
       items: [
         {
@@ -278,7 +286,10 @@ describe("parseBitwardenJson, on what Keyhole has no field for", () => {
       ],
     });
 
-    expect(only(parseBitwardenJson(json)).extra).toEqual({ "Recovery code": "first\nsecond" });
+    expect(only(parseBitwardenJson(json)).extra).toEqual([
+      { name: "Recovery code", value: "first" },
+      { name: "Recovery code", value: "second" },
+    ]);
   });
 
   it("names an organisation export's collections in extra, since they are not folders", () => {
@@ -308,7 +319,7 @@ describe("parseBitwardenJson, on what Keyhole has no field for", () => {
     const item = only(parseBitwardenJson(json));
 
     expect(item.folderName).toBeNull();
-    expect(item.extra).toEqual({ collections: "Shared/Infra, Shared/Billing" });
+    expect(item.extra).toEqual([{ name: "collections", value: "Shared/Infra, Shared/Billing" }]);
   });
 });
 
@@ -522,7 +533,7 @@ describe("parseBitwardenCsv, against the sample export", () => {
           notes: NOTICE,
           favorite: true,
           folderName: "Personal",
-          extra: {},
+          extra: [],
           sourceRow: 2,
         },
         {
@@ -534,7 +545,7 @@ describe("parseBitwardenCsv, against the sample export", () => {
           notes: "",
           favorite: false,
           folderName: null,
-          extra: {},
+          extra: [],
           sourceRow: 3,
         },
         {
@@ -546,7 +557,7 @@ describe("parseBitwardenCsv, against the sample export", () => {
           notes: "first line\nsecond line",
           favorite: false,
           folderName: "Work",
-          extra: {},
+          extra: [],
           sourceRow: 4,
         },
         {
@@ -566,7 +577,11 @@ describe("parseBitwardenCsv, against the sample export", () => {
           // `name: value` per line. It is carried whole rather than split back
           // apart, because a value containing ": " would split wrongly and
           // silently.
-          extra: { fields: "Security question: first pet", totp: TOTP, reprompt: "1" },
+          extra: [
+            { name: "totp", value: TOTP },
+            { name: "fields", value: "Security question: first pet" },
+            { name: "reprompt", value: "1" },
+          ],
           sourceRow: 6,
         },
       ],
