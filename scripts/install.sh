@@ -46,7 +46,7 @@ readonly OWNER REPO VERSION
 #   - scripts/install_test.sh asserts that a real run refuses to start on a
 #     placeholder key, which a real key makes untestable here — that assertion
 #     goes away with the placeholder.
-readonly MINISIGN_PUBKEY="RWQ...replace-with-the-real-key..."
+readonly MINISIGN_PUBKEY="RWQaHZz2jLPpRLK2aEj7/A/Rp0QtvRtJj/H8fjePukf3JMGPiyt91Ts6"
 
 readonly TEMPLATE_STORAGE="local"
 readonly SERVICE_USER="keyhole"
