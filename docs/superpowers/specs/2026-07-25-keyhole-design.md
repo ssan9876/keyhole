@@ -389,7 +389,11 @@ holding a session grants no ability to decrypt.
 - Constant-time comparison on all token and hash checks.
 - `CF-Connecting-IP` is trusted **only** from the tunnel's loopback connection.
   Trusting it unconditionally would make rate limiting bypassable.
-- Strict CSP, `X-Content-Type-Options`, `Referrer-Policy: no-referrer`.
+- Strict CSP, `X-Content-Type-Options`, `Referrer-Policy: no-referrer`. The CSP
+  must permit WebAssembly: `script-src` carries `'wasm-unsafe-eval'` because the
+  browser Argon2id (hash-wasm) compiles a WASM module, which a bare
+  `script-src 'self'` blocks — without it every enrol, unlock, and recovery
+  fails. It re-enables WASM compilation only, not `eval()` of JavaScript strings.
 - Server secret generated on first run, stored `0600`.
 
 ---
@@ -470,6 +474,25 @@ labelled form controls, focus-trapped dialogs.
 
 Web app manifest, service worker, home-screen install, offline read against the
 encrypted cache. Offline is read-only in v1.
+
+**Amended 2026-07-28 (Keyhole PWA plan) — narrowed to shell-only.** The
+installable PWA was built; "offline read against the encrypted cache" was
+deliberately not. Offline is **shell-only**: a web app manifest
+(`apps/web/public/manifest.webmanifest`) and a hand-written service worker
+precache the built shell — `index.html` plus the hashed `/assets/*` bundle — so
+the app installs to a home screen and *loads* without a network, reaching the
+unlock screen rather than a browser error page. The **vault is not cached to
+disk** — not IndexedDB, not the Cache API — so it still needs a connection to
+populate, and the UI says so plainly instead of showing an empty or broken vault.
+
+The reason is the device-theft defense. The memory-only session (§6.3) is what
+makes a stolen device yield nothing; an on-disk vault cache would weaken it even
+encrypted, because the ciphertext and the *plaintext* collection names (§2) would
+then rest on the device. The service worker enforces this with one rule — it
+**never caches `/api/*`** (`apps/web/src/sw/route.ts` routes every `/api` path to
+`bypass`) — which is what keeps vault ciphertext and bearer tokens off disk; the
+Cache API holds shell assets only. A full offline-read cache remains a possible
+**future feature behind an explicit user opt-in**, not a default.
 
 ---
 

@@ -169,6 +169,24 @@ in the app: 1, 5, 15, 30 or 60 minutes, when the tab closes, or never.
 
 ---
 
+## Install to your home screen
+
+Keyhole is an installable web app. Use the browser's *Install* or *Add to Home
+Screen* prompt to add it to a phone or desktop home screen, where it opens in
+its own window and **loads without a network** — a manifest and a service worker
+cache the app shell, so a cold offline launch reaches the unlock screen instead
+of a browser error page.
+
+The **vault still needs a connection.** Keyhole deliberately keeps nothing
+decryptable — and nothing about your vault at all, including any on-disk cache —
+on the device: the service worker never stores vault data, not in IndexedDB and
+not in the browser cache. That is the point, not a shortcoming. A memory-only
+session is what makes a lost or stolen device yield nothing, so the vault syncs
+fresh when you connect and exists only in memory while unlocked. Keyhole installs
+and loads offline; it does not read your vault offline.
+
+---
+
 ## Accepted limitations
 
 These are design decisions with known costs, not oversights. From the design
