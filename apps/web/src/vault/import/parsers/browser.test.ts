@@ -432,6 +432,37 @@ describe("parseBrowserCsv, on rows it must refuse", () => {
     expect(result.items.map((item) => item.name)).toEqual(["good.example.com"]);
   });
 
+  it("refuses a row whose quoted password holds an undoubled quote, and keeps its neighbours", () => {
+    // An exporter that quoted the password but failed to double the `"` inside
+    // it. The row has exactly as many fields as the header, so nothing else here
+    // would refuse it -- it would arrive as an item whose password is
+    // `fixture-pw9Kd3xR"` rather than `fixture-pw"9Kd3xR`: the same length, one
+    // character deleted from the middle and one appended at the end, and no
+    // error to tell the user which of their logins to check.
+    const csv = withRows(
+      "chrome-passwords.csv",
+      "before.example.com,https://before.example.com/,ada,fixture-pw-8Hq2vN,",
+      'broken.example.com,https://broken.example.com/,ada,"fixture-pw"9Kd3xR",',
+      "after.example.com,https://after.example.com/,bob,fixture-pw-7Jm4tQ,",
+    );
+
+    const result = parseBrowserCsv(csv);
+
+    expect(result.errors).toEqual([
+      { row: 3, message: "This row has a quote inside a quoted field that is not doubled" },
+    ]);
+    // The rows either side are the point: one damaged line must not cost the
+    // user the rest of the file.
+    expect(result.items.map((item) => item.name)).toEqual([
+      "before.example.com",
+      "after.example.com",
+    ]);
+    expect(result.items.map((item) => item.password)).toEqual([
+      "fixture-pw-8Hq2vN",
+      "fixture-pw-7Jm4tQ",
+    ]);
+  });
+
   it("answers with one error for a CSV that is not a browser export, instead of throwing", () => {
     // Detection routes this file to the generic mapper, so the parser should
     // never see it -- but "never throws" has to hold for the caller that gets

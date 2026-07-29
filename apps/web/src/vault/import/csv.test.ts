@@ -228,6 +228,49 @@ describe("parseCsv", () => {
     expect(rowAt(table, 0).get("password")).toBe(lf("never closed", "Next,pw"));
   });
 
+  it("reports a quoted field holding an undoubled quote instead of rewriting the value", () => {
+    // The classic CSV-writer bug: the exporter quoted the field but did not
+    // double the `"` inside it. Appending what follows to the same field and
+    // dropping the quote pair turns the password `pa"ss` into `pass"` -- the
+    // same length, one character deleted from the middle and one appended at
+    // the end -- and reports nothing at all. It is the one structural anomaly
+    // this reader can see that would otherwise rewrite a password rather than
+    // report it.
+    const table = parseCsv(lf("name,password", 'Site,"pa"ss"'));
+
+    expect(table.errors).toEqual([
+      { row: 2, message: "This row has a quote inside a quoted field that is not doubled" },
+    ]);
+    // The damaged value is still returned, as it is for an unclosed quote: the
+    // user is told which line broke and can still see what was in it. What must
+    // not happen is the row arriving as an item, and that is the mapper's job.
+    expect(rowAt(table, 0).get("password")).toBe('pass"');
+  });
+
+  it("reports an undoubled quote in a field that also holds a comma", () => {
+    // The same defect one character worse: the field genuinely needed quoting,
+    // so an exporter that wrote it unquoted was never an option and the row
+    // cannot be salvaged by re-reading it as unquoted data.
+    const table = parseCsv(lf("name,password", 'Site,"p,a"ss"'));
+
+    expect(table.errors).toEqual([
+      { row: 2, message: "This row has a quote inside a quoted field that is not doubled" },
+    ]);
+  });
+
+  it("reports a row with two undoubled quoted fields once, not once per field", () => {
+    // Two damaged fields in one record, each closing its quote against a
+    // character that is not a delimiter, a line ending or the end of the file.
+    // One broken row is one error: two identical messages against one line read
+    // as two broken rows, and the count is what the user uses to decide whether
+    // their export came across.
+    const table = parseCsv(lf("name,password,notes", 'Site,"a"b,"c"d'));
+
+    expect(table.errors).toEqual([
+      { row: 2, message: "This row has a quote inside a quoted field that is not doubled" },
+    ]);
+  });
+
   it("ends rows on a bare carriage return, as a classic-Mac export writes them", () => {
     // Without this the whole file is one enormous row and the import shows a
     // single item whose name is the entire vault.

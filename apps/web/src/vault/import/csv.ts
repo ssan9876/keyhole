@@ -114,6 +114,10 @@ function scan(text: string): ScanResult {
   // Whether any field of the current record opened with a quote — the one thing
   // that separates a blank line from a line holding `""`.
   let recordHadQuote = false;
+  // Whether this record has already been reported as damaged. One error per
+  // record: a row with three undoubled quotes is one broken row, and three
+  // identical messages against one line would be read as three broken rows.
+  let recordReported = false;
   let line = 1;
   let recordLine = 1;
 
@@ -132,6 +136,7 @@ function scan(text: string): ScanResult {
     });
     fields = [];
     recordHadQuote = false;
+    recordReported = false;
   };
 
   let i = 0;
@@ -151,6 +156,27 @@ function scan(text: string): ScanResult {
         }
         inQuotes = false;
         i += 1;
+        // A closing quote may only be followed by the end of the field, the end
+        // of the record, or the end of the file. Anything else means the writer
+        // opened a quoted field and then wrote a `"` inside it without doubling
+        // it — the classic CSV-writer bug, and the reason `""` exists at all.
+        //
+        // Without this check the characters after the quote pair are appended to
+        // the same field and the pair is dropped, so `"pa"ss"` reads back as
+        // `pass"`: one character deleted from the middle of the password, one
+        // appended at the end, the same length, and no error. It is the only
+        // structural anomaly this reader can see that would otherwise rewrite a
+        // value instead of reporting it, so it is reported and the mapper
+        // refuses the row.
+        const next = text.charAt(i);
+        const endsField = next === "" || next === DELIMITER || next === "\r" || next === "\n";
+        if (!endsField && !recordReported) {
+          recordReported = true;
+          errors.push({
+            row: recordLine,
+            message: "This row has a quote inside a quoted field that is not doubled",
+          });
+        }
         continue;
       }
       // Inside quotes everything is data, newlines included: a multi-line
