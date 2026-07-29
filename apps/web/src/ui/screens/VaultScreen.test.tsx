@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 // Brief defect fix: the brief's example imports `LoginItem` straight from
 // "@keyhole/crypto". eslint.config.js bans that import from anywhere under
@@ -12,20 +12,36 @@ import type { LoginItem } from "../../vault/types.js";
 import { ApiError, type ApiClient } from "../../vault/api.js";
 import { createSession, type Session } from "../../vault/session.js";
 import { createVaultStore, type VaultState, type VaultStore } from "../../vault/store.js";
-import { createItem, decryptRecords, type ItemRecord, type WireItem } from "../../vault/items.js";
+import {
+  createItem,
+  decryptRecords,
+  updateItem,
+  type ItemRecord,
+  type WireItem,
+} from "../../vault/items.js";
 import { fakeApi, openSession } from "../../vault/test-helpers.js";
 import { VaultList, VaultScreen } from "./VaultScreen.js";
 
-// Wraps the real createItem so "saves a new item into the collection chosen
-// in the editor" can assert on the exact arguments VaultScreen passed it --
-// the collectionId is the whole point of that test, and only a spy on the
-// real function (not a hand-rolled fake api body inspection) matches the
-// brief's own assertion shape. Every other test in this file still gets the
-// real encryption behaviour: the mock delegates to it, it only adds
-// observability.
+// Wraps the real createItem/updateItem so the tests that care about the exact
+// arguments VaultScreen passed them -- the collectionId, or the folderId now
+// carried on the plaintext -- can assert on those arguments rather than on a
+// control's appearance (a picker that renders and passes null shares nothing).
+// Every other test in this file still gets the real encryption behaviour: the
+// mock delegates to it, it only adds observability.
 vi.mock("../../vault/items.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../vault/items.js")>();
-  return { ...actual, createItem: vi.fn(actual.createItem) };
+  return {
+    ...actual,
+    createItem: vi.fn(actual.createItem),
+    updateItem: vi.fn(actual.updateItem),
+  };
+});
+
+// Call history only, not implementation: the spies above keep delegating to the
+// real functions, so a test that reads toHaveBeenCalledWith sees only its own
+// call and never a leftover from an earlier test in this file.
+beforeEach(() => {
+  vi.clearAllMocks();
 });
 
 const LOGIN: LoginItem = {
@@ -461,5 +477,139 @@ describe("VaultScreen undecryptable items", () => {
     await userEvent.click(screen.getByText("Example"));
 
     expect(screen.getByLabelText(/^name/i)).toHaveValue("Example");
+  });
+});
+
+describe("VaultScreen folder assignment (editor)", () => {
+  it("writes the chosen folder onto the saved item's plaintext", async () => {
+    const session = openSession();
+    const store = fakeStore({
+      revision: 1,
+      items: [],
+      collections: [],
+      folders: [{ id: "f1", revision: 1, deletedAt: null, name: "Work" }],
+      status: "ready",
+      error: null,
+    });
+
+    const api = fakeApi({
+      post: async (_path, body) => {
+        const sent = body as {
+          collectionId: string | null;
+          ciphertext: string;
+          wrappedItemKey: string;
+        };
+        return {
+          id: "i9",
+          collectionId: sent.collectionId,
+          ownerUserId: "u1",
+          ciphertext: sent.ciphertext,
+          wrappedItemKey: sent.wrappedItemKey,
+          revision: 1,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          deletedAt: null,
+        };
+      },
+    });
+
+    render(<VaultScreen api={api} session={session} store={store} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /add.*item/i }));
+    await userEvent.type(screen.getByLabelText(/^name/i), "New login");
+    await userEvent.selectOptions(screen.getByLabelText(/^folder$/i), "f1");
+    await userEvent.click(screen.getByRole("button", { name: /save/i }));
+
+    // The assertion is on the folderId reaching the plaintext createItem is
+    // given -- not on the select rendering. A picker that renders and assigns
+    // null would still render, and would fail here.
+    await waitFor(() => {
+      // The third argument is the collectionId (null -- a personal item);
+      // expect.anything() would reject null, so it is asserted literally.
+      expect(createItem).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ folderId: "f1" }),
+        null,
+      );
+    });
+  });
+
+  it("keeps an item's undecryptable folder id when it is saved unchanged", async () => {
+    // The folder still exists on the server -- only its name would not open on
+    // this device. Silently rewriting the assignment to Personal on save would
+    // move the item out of a folder the user never touched.
+    const session = openSession();
+    const store = fakeStore({
+      revision: 1,
+      items: [record({ id: "i1", plaintext: { ...LOGIN, folderId: "fUnd" } })],
+      collections: [],
+      folders: [{ id: "fUnd", revision: 1, deletedAt: null, name: null }],
+      status: "ready",
+      error: null,
+    });
+
+    const api = fakeApi({
+      put: async (_path, body) => {
+        const sent = body as {
+          collectionId: string | null;
+          ciphertext: string;
+          wrappedItemKey: string;
+          revision: number;
+        };
+        return {
+          id: "i1",
+          collectionId: sent.collectionId,
+          ownerUserId: "u1",
+          ciphertext: sent.ciphertext,
+          wrappedItemKey: sent.wrappedItemKey,
+          revision: sent.revision + 1,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          deletedAt: null,
+        };
+      },
+    });
+
+    render(<VaultScreen api={api} session={session} store={store} />);
+
+    await userEvent.click(screen.getByText("Example"));
+    // The current assignment is shown, but as an un-selectable option.
+    expect(screen.getByText(/couldn.t decrypt this folder/i)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^save$/i }));
+
+    await waitFor(() => {
+      expect(updateItem).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          plaintext: expect.objectContaining({ folderId: "fUnd" }),
+        }),
+      );
+    });
+  });
+
+  it("does not crash and offers Personal when the item's folder was deleted", async () => {
+    // The folder was deleted, so it is not in state at all -- the orphan case.
+    // A picker that assumed every folderId resolves to a live folder would
+    // throw here; instead the dangling id resolves to Personal.
+    const session = openSession();
+    const store = fakeStore({
+      revision: 1,
+      items: [record({ id: "i1", plaintext: { ...LOGIN, folderId: "gone" } })],
+      collections: [],
+      folders: [{ id: "f1", revision: 1, deletedAt: null, name: "Work" }],
+      status: "ready",
+      error: null,
+    });
+
+    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+
+    await userEvent.click(screen.getByText("Example"));
+
+    // The editor opened rather than throwing on the dangling id.
+    expect(screen.getByLabelText(/^name/i)).toHaveValue("Example");
+    const folderSelect = screen.getByLabelText(/^folder$/i) as HTMLSelectElement;
+    expect(within(folderSelect).getByRole("option", { name: "Personal" })).toBeInTheDocument();
+    // Resolves to Personal, not a phantom selection stuck on the dead id.
+    expect(folderSelect.value).toBe("");
   });
 });

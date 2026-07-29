@@ -237,6 +237,14 @@ export function VaultScreen({
   // diverges from it when the user actually changes the selection.
   const [editorCollectionId, setEditorCollectionId] = useState<string | null>(null);
   const collectionSelectId = useId();
+  // The folder chosen in the editor's picker. Unlike the collection, this is
+  // part of the item's own plaintext (`ItemPlaintext.folderId`), so `save`
+  // writes it onto the body rather than passing it as a separate argument.
+  // Starts at the item's current folderId -- which may name a folder that is
+  // undecryptable, or one that was deleted and is no longer in state at all;
+  // both are handled where the picker renders and where save normalises it.
+  const [editorFolderId, setEditorFolderId] = useState<string | null>(null);
+  const folderSelectId = useId();
 
   const [activeTab, setActiveTab] = useState<Tab>("vault");
 
@@ -284,8 +292,18 @@ export function VaultScreen({
 
   const save = useCallback(
     async (next: ItemPlaintext): Promise<void> => {
+      // The picker's selection wins over whatever folderId the plaintext
+      // carried in. An id naming a folder no longer in state (its folder was
+      // deleted) is reconciled to Personal here rather than persisted as a
+      // dangling reference -- the orphan rule, applied on write. An
+      // undecryptable folder is still in state, so its id is kept.
+      const folderId =
+        editorFolderId !== null && state.folders.some((folder) => folder.id === editorFolderId)
+          ? editorFolderId
+          : null;
+      const withFolder: ItemPlaintext = { ...next, folderId };
       if (editing === "new") {
-        store.upsert(await createItem({ api, session }, next, editorCollectionId));
+        store.upsert(await createItem({ api, session }, withFolder, editorCollectionId));
         setEditing(null);
         setConflict(null);
         return;
@@ -294,7 +312,12 @@ export function VaultScreen({
       try {
         const updated = await updateItem(
           { api, session },
-          { id: editing.id, revision: editing.revision, collectionId: editorCollectionId, plaintext: next },
+          {
+            id: editing.id,
+            revision: editing.revision,
+            collectionId: editorCollectionId,
+            plaintext: withFolder,
+          },
         );
         store.upsert(updated);
         setEditing(null);
@@ -313,7 +336,7 @@ export function VaultScreen({
         throw error;
       }
     },
-    [api, editing, editorCollectionId, session, store],
+    [api, editing, editorCollectionId, editorFolderId, session, state.folders, store],
   );
 
   const remove = useCallback(async (): Promise<void> => {
@@ -325,6 +348,23 @@ export function VaultScreen({
   }, [api, editing, session, store]);
 
   const usableCollections = state.collections.filter((c) => c.usable);
+  // Only a decryptable folder is an assignable option -- an undecryptable one
+  // has no name to show in a list you would pick from.
+  const assignableFolders = state.folders.filter((folder) => folder.name !== null);
+  // The item's current assignment, if that folder is still in state at all.
+  // A deleted folder is absent from state (tombstoned out), so this is null
+  // for the orphan case and the select falls back to Personal below.
+  const currentFolder =
+    editorFolderId === null
+      ? null
+      : (state.folders.find((folder) => folder.id === editorFolderId) ?? null);
+  // The current assignment names a folder still on the server whose name would
+  // not decrypt here. It is shown as a disabled option so the id is visibly
+  // retained rather than silently reset to Personal.
+  const currentFolderUndecryptable = currentFolder !== null && currentFolder.name === null;
+  // A value with no matching option (a deleted folder's id) would leave the
+  // select showing nothing; resolving it to "" shows Personal instead.
+  const folderSelectValue = currentFolder !== null ? (editorFolderId ?? "") : "";
   // Moving a shared item is only a genuine "move out" when it started in a
   // collection and the picker's selection has actually diverged from that --
   // not on every render, and not for a brand-new item, which never had
@@ -400,11 +440,15 @@ export function VaultScreen({
               }
               setEditing(record);
               setEditorCollectionId(record.collectionId);
+              // record.plaintext is non-null here (the guard above returned
+              // for the null case), so its folderId seeds the picker.
+              setEditorFolderId(record.plaintext.folderId);
               setConflict(null);
             }}
             onNew={() => {
               setEditing("new");
               setEditorCollectionId(null);
+              setEditorFolderId(null);
               setConflict(null);
             }}
           />
@@ -425,6 +469,31 @@ export function VaultScreen({
                     {collection.name}
                   </option>
                 ))}
+              </select>
+            </div>
+            <div style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-4)" }}>
+              <label htmlFor={folderSelectId} style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
+                Folder
+              </label>
+              <select
+                id={folderSelectId}
+                value={folderSelectValue}
+                onChange={(e) => setEditorFolderId(e.target.value === "" ? null : e.target.value)}
+              >
+                <option value="">Personal</option>
+                {assignableFolders.map((folder) => (
+                  <option key={folder.id} value={folder.id}>
+                    {folder.name}
+                  </option>
+                ))}
+                {/* The item is already in a folder whose name will not decrypt
+                    here: shown, disabled, so the assignment is visible and kept
+                    rather than silently reset. */}
+                {currentFolderUndecryptable && (
+                  <option value={editorFolderId ?? ""} disabled>
+                    Couldn&rsquo;t decrypt this folder
+                  </option>
+                )}
               </select>
             </div>
             {isMovingOut && (
