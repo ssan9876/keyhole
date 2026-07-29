@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { crc32, deflateRawSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
+import { DEFLATED, STORED, zipOf } from "./zip-fixture.js";
 import { isZipProblem, openZip, type ZipArchive } from "./zip.js";
 
 /**
@@ -10,117 +10,15 @@ import { isZipProblem, openZip, type ZipArchive } from "./zip.js";
  * A ZIP fixture is unreadable in review and unchangeable without a script, and
  * every case below is a deliberate deformation of a valid archive — a wrong
  * CRC, a size that runs past the end of the file, a compression method nothing
- * here can read. Committing eight binaries to say that would leave a reviewer
+ * here can read. Committing a dozen binaries to say that would leave a reviewer
  * unable to see what distinguishes one from the next.
  *
- * **The builder's CRCs come from `node:zlib.crc32` and its deflate from
- * `node:zlib.deflateRawSync`.** Both are implementations `zip.ts` does not
- * share: if the reader's CRC table were wrong it would disagree with zlib's and
- * every stored-member test would fail, where a builder using the reader's own
- * table would agree with it and prove nothing.
+ * `zip-fixture.ts` holds the builder, and says there why its CRCs and its
+ * deflate come from `node:zlib` rather than from the reader under test.
  *
  * The real `.1pux` fixture is read at the end, so the whole path is exercised
  * against bytes this file did not write.
  */
-
-const LOCAL_HEADER = 0x04034b50;
-const CENTRAL_HEADER = 0x02014b50;
-const END_OF_CENTRAL_DIRECTORY = 0x06054b50;
-
-const STORED = 0;
-const DEFLATED = 8;
-
-interface Member {
-  readonly name: string;
-  readonly body: string | Uint8Array;
-  /** `STORED` or `DEFLATED`; a real `.1pux` uses both. */
-  readonly method?: number;
-  /** The general-purpose bit flags, for the encrypted-entry case. */
-  readonly flags?: number;
-  /**
-   * An extra field written into the **local** header only.
-   *
-   * Real writers do this — a macOS-made archive carries an extended-timestamp
-   * field locally that the central directory does not repeat — and it is the
-   * one case where the two headers disagree about where a member's bytes begin.
-   */
-  readonly localExtra?: Uint8Array;
-}
-
-const utf8 = (value: string | Uint8Array): Uint8Array =>
-  typeof value === "string" ? new TextEncoder().encode(value) : value;
-
-/** A ZIP archive holding exactly the given members. */
-function zipOf(...members: readonly Member[]): Uint8Array {
-  const local: Uint8Array[] = [];
-  const central: Uint8Array[] = [];
-  let offset = 0;
-
-  for (const member of members) {
-    const name = new TextEncoder().encode(member.name);
-    const plain = utf8(member.body);
-    const method = member.method ?? STORED;
-    const body = method === DEFLATED ? new Uint8Array(deflateRawSync(plain)) : plain;
-    // `>>> 0` because `crc32` returns a signed-looking number for high values
-    // and the header field is unsigned.
-    const checksum = crc32(plain) >>> 0;
-
-    const localExtra = member.localExtra ?? new Uint8Array(0);
-    const header = new Uint8Array(30 + name.length + localExtra.length);
-    const headerView = new DataView(header.buffer);
-    headerView.setUint32(0, LOCAL_HEADER, true);
-    headerView.setUint16(4, 20, true);
-    headerView.setUint16(6, member.flags ?? 0, true);
-    headerView.setUint16(8, method, true);
-    headerView.setUint32(14, checksum, true);
-    headerView.setUint32(18, body.length, true);
-    headerView.setUint32(22, plain.length, true);
-    headerView.setUint16(26, name.length, true);
-    headerView.setUint16(28, localExtra.length, true);
-    header.set(name, 30);
-    header.set(localExtra, 30 + name.length);
-
-    const entry = new Uint8Array(46 + name.length);
-    const entryView = new DataView(entry.buffer);
-    entryView.setUint32(0, CENTRAL_HEADER, true);
-    entryView.setUint16(4, 20, true);
-    entryView.setUint16(6, 20, true);
-    entryView.setUint16(8, member.flags ?? 0, true);
-    entryView.setUint16(10, method, true);
-    entryView.setUint32(16, checksum, true);
-    entryView.setUint32(20, body.length, true);
-    entryView.setUint32(24, plain.length, true);
-    entryView.setUint16(28, name.length, true);
-    entryView.setUint32(42, offset, true);
-    entry.set(name, 46);
-
-    local.push(header, body);
-    central.push(entry);
-    offset += header.length + body.length;
-  }
-
-  const directorySize = central.reduce((total, entry) => total + entry.length, 0);
-  const end = new Uint8Array(22);
-  const endView = new DataView(end.buffer);
-  endView.setUint32(0, END_OF_CENTRAL_DIRECTORY, true);
-  endView.setUint16(8, members.length, true);
-  endView.setUint16(10, members.length, true);
-  endView.setUint32(12, directorySize, true);
-  endView.setUint32(16, offset, true);
-
-  return concat([...local, ...central, end]);
-}
-
-function concat(parts: readonly Uint8Array[]): Uint8Array {
-  const total = parts.reduce((sum, part) => sum + part.length, 0);
-  const merged = new Uint8Array(total);
-  let at = 0;
-  for (const part of parts) {
-    merged.set(part, at);
-    at += part.length;
-  }
-  return merged;
-}
 
 /** The offset of the first central-directory entry, read from the archive's own end record. */
 function directoryAt(archive: Uint8Array): number {
@@ -233,7 +131,11 @@ describe("openZip, on the members an archive holds", () => {
     // The whole reason this reader exists is to hand a parser a password. A
     // round trip that dropped a trailing space or mangled a quote would be
     // invisible in a JSON.parse that still succeeded.
-    const body = JSON.stringify({ password: 'fixture-pw "quoted", commaé\t ' });
+    // The accented letter is written as an escape rather than as a literal: a
+    // file write that normalised it would leave both sides of the comparison
+    // equally wrong, and the test would pass while verifying nothing about the
+    // multi-byte characters a real password contains.
+    const body = JSON.stringify({ password: "fixture-pw \"quoted\", comma\u00e9\t " });
     const archive = zipOf({ name: "export.data", body, method: DEFLATED });
 
     expect(await textOf(archive, "export.data")).toBe(body);
