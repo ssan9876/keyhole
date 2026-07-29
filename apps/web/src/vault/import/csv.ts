@@ -120,6 +120,10 @@ function scan(text: string): ScanResult {
   let recordReported = false;
   let line = 1;
   let recordLine = 1;
+  // The line the currently-open quote was opened on. Only meaningful while
+  // `inQuotes`, and only read at EOF, where the difference between it and the
+  // final line count is how much of the file one unclosed quote swallowed.
+  let quoteOpenedLine = 1;
 
   const endField = (): void => {
     fields.push(field);
@@ -192,6 +196,7 @@ function scan(text: string): ScanResult {
       inQuotes = true;
       fieldWasQuoted = true;
       recordHadQuote = true;
+      quoteOpenedLine = line;
       i += 1;
       continue;
     }
@@ -221,9 +226,22 @@ function scan(text: string): ScanResult {
     // onward has been swallowed into one value, which is worth saying out loud:
     // silently returning it as a password is how a truncated export becomes a
     // vault full of wrong secrets.
+    //
+    // **How much it swallowed is part of the message**, because the count the
+    // user reads is otherwise wrong in the direction that matters. A stray `"`
+    // at row 50 of a 400-row export produces 48 items and one error naming line
+    // 50, while the other 350 rows are inside line 50's last field. "One row
+    // broke" and "one row broke and took 350 with it" call for different
+    // actions, and the file no longer says which happened.
+    const swallowed = line - quoteOpenedLine;
     errors.push({
       row: recordLine,
-      message: "This row opens a quoted field that is never closed",
+      message:
+        swallowed === 0
+          ? "This row opens a quoted field that is never closed"
+          : `This row opens a quoted field that is never closed; the remaining ` +
+            `${swallowed} ${swallowed === 1 ? "line" : "lines"} of the file ` +
+            `${swallowed === 1 ? "was" : "were"} read as part of it`,
     });
   }
 

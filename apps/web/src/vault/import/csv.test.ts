@@ -222,10 +222,47 @@ describe("parseCsv", () => {
 
     expect(table.errors).toHaveLength(1);
     expect(table.errors[0]?.row).toBe(2);
-    expect(table.errors[0]?.message).toMatch(/quote/i);
+    // Singular, because exactly one line was swallowed. Asserted in full rather
+    // than matched loosely: "1 lines ... were" is the kind of thing a plural
+    // rule written for the two-line case gets wrong and nothing notices.
+    expect(table.errors[0]?.message).toBe(
+      "This row opens a quoted field that is never closed; " +
+        "the remaining 1 line of the file was read as part of it",
+    );
     // The swallowed text is still returned rather than discarded: the user gets
     // told which line broke and can still see what was in it.
     expect(rowAt(table, 0).get("password")).toBe(lf("never closed", "Next,pw"));
+  });
+
+  it("says how many lines an unclosed quote swallowed, not just which line opened it", () => {
+    // Rows 4 and 5 are consumed into row 3's field. A message naming only line 3
+    // makes this indistinguishable from one broken row -- and in a 400-row
+    // export with a stray quote at row 50, the user reads "48 items, 1 error"
+    // while 350 passwords sit inside line 50's last field. Nothing is corrupted
+    // (the mapper refuses the swallowing row) but the count is wrong in the one
+    // direction that matters, and the file no longer says so.
+    const table = parseCsv(lf("name,password", "A,1", 'B,"oops', "C,3", "D,4"));
+
+    expect(table.errors).toHaveLength(1);
+    expect(table.errors[0]?.row).toBe(3);
+    expect(table.errors[0]?.message).toBe(
+      "This row opens a quoted field that is never closed; " +
+        "the remaining 2 lines of the file were read as part of it",
+    );
+    // The rows named in the message really are gone: three data lines in, two
+    // rows out.
+    expect(table.rows).toHaveLength(2);
+  });
+
+  it("does not claim an unclosed quote swallowed anything when the file ends on its line", () => {
+    // The quote opens on the last line, so there is nothing after it to swallow
+    // and a "the remaining 0 lines" clause would be noise on the commonest
+    // shape of this defect: a download that was cut short.
+    const table = parseCsv(lf("name,password", 'Broken,"never closed'));
+
+    expect(table.errors).toEqual([
+      { row: 2, message: "This row opens a quoted field that is never closed" },
+    ]);
   });
 
   it("reports a quoted field holding an undoubled quote instead of rewriting the value", () => {
