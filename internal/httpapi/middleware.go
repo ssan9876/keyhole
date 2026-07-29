@@ -44,8 +44,19 @@ func securityHeaders(next http.Handler) http.Handler {
 		h := w.Header()
 		// No inline script, no external anything. The web app is served from
 		// this same origin and is built without inline handlers.
+		//
+		// 'wasm-unsafe-eval' is required, and is the narrowest thing that works:
+		// the whole of Keyhole's cryptography runs Argon2id in the browser via
+		// hash-wasm, which compiles a WebAssembly module — and WebAssembly.compile
+		// is blocked under a bare script-src 'self'. 'wasm-unsafe-eval' permits
+		// exactly WASM compilation and nothing else; unlike 'unsafe-eval' it does
+		// NOT re-enable eval() of JavaScript strings, so the anti-XSS posture on
+		// the one page that handles a master password is unchanged. Without this
+		// every enrol, unlock and recovery fails against the real binary, and only
+		// an end-to-end run against the production CSP catches it — the dev server
+		// sets no CSP at all.
 		h.Set("Content-Security-Policy",
-			"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "+
+			"default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data:; "+
 				"connect-src 'self'; font-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("Referrer-Policy", "no-referrer")

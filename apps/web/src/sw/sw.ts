@@ -14,6 +14,7 @@ import {
   handleRequest,
   precacheShell,
   type CacheLike,
+  type Fetcher,
 } from "./handler.js";
 import { cacheName } from "./precache.js";
 
@@ -22,6 +23,16 @@ declare const __PRECACHE__: readonly string[];
 const PRECACHE = __PRECACHE__;
 const CACHE = cacheName(PRECACHE);
 const SHELL_URL = "/";
+
+// fetch must run with the worker global as its receiver. Passing the bare global
+// as a plain object property (deps.fetch) and calling it — which is exactly what
+// precacheShell and handleRequest do — detaches `this` and throws
+// "Failed to execute 'fetch' on 'WorkerGlobalScope': Illegal invocation" in a
+// real browser, failing install and every intercepted request. A thin wrapper
+// that calls the global fetch directly restores the correct receiver. The unit
+// tests inject their own fetch and so never hit this; only the e2e against a real
+// Chromium does.
+const swFetch: Fetcher = (input, init) => fetch(input, init);
 
 // Only the service-worker-specific bits are declared locally; caches, fetch,
 // URL, Request, and Response come from the DOM lib. Declaring a minimal shape
@@ -48,7 +59,7 @@ sw.addEventListener("install", (event) => {
   event.waitUntil(
     (async () => {
       const cache = (await caches.open(CACHE)) as CacheLike;
-      await precacheShell({ cache, fetch }, PRECACHE, SHELL_URL);
+      await precacheShell({ cache, fetch: swFetch }, PRECACHE, SHELL_URL);
       // Take over as soon as the shell is cached rather than waiting for every
       // tab to close; activate then wipes any older cache.
       await sw.skipWaiting();
@@ -74,7 +85,7 @@ sw.addEventListener("fetch", (event) => {
   event.respondWith(
     (async () => {
       const cache = (await caches.open(CACHE)) as CacheLike;
-      return handleRequest(event.request, { cache, fetch, shellUrl: SHELL_URL });
+      return handleRequest(event.request, { cache, fetch: swFetch, shellUrl: SHELL_URL });
     })(),
   );
 });

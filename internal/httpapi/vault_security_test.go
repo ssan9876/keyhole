@@ -140,8 +140,14 @@ func TestTheContentSecurityPolicyIsRestrictive(t *testing.T) {
 		}
 	}
 	// 'unsafe-inline' or 'unsafe-eval' in script-src would defeat the policy
-	// entirely for the one page that must not be defeated.
-	for _, unsafe := range []string{"unsafe-inline", "unsafe-eval", "*"} {
+	// entirely for the one page that must not be defeated. Matched as quoted
+	// source-expression tokens, not bare substrings: 'wasm-unsafe-eval' — which
+	// the policy DOES carry so Argon2id's WebAssembly can compile — ends in the
+	// bytes "unsafe-eval'", and a bare-substring check would wrongly flag it.
+	// 'wasm-unsafe-eval' permits only WASM, never eval() of JavaScript, so it is
+	// not one of the policy-defeating tokens; the exact-token forms below still
+	// reject a real 'unsafe-eval' or 'unsafe-inline'.
+	for _, unsafe := range []string{"'unsafe-inline'", "'unsafe-eval'", "*"} {
 		if strings.Contains(policy, unsafe) {
 			t.Errorf("CSP contains %q: %s", unsafe, policy)
 		}
