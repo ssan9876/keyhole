@@ -182,11 +182,43 @@ function hasColumns(file: FileEvidence, ...columns: string[]): boolean {
 }
 
 /**
+ * True when the header holds exactly `columns` — the same number of them, and
+ * every one present, in any order.
+ *
+ * **Equality rather than subset**, because the browser CSVs' columns are a
+ * subset of several richer exports: NordPass's header also carries `name`,
+ * `url`, `username`, `password` and `note`, and `hasColumns` would call a
+ * NordPass export a Chrome one. Requiring the same *count* is what excludes it —
+ * NordPass has 22 columns to Chromium's 5.
+ *
+ * **Equality rather than order**, because order is evidence this project does
+ * not have. `safari-passwords.csv` is a reconstruction: Task 2 confirmed
+ * Safari's column *set* from Bitwarden's importer but found no source quoting
+ * the header line, so the order in the fixture is a guess. Matching on it makes
+ * a guess load-bearing — a real Safari export whose columns are in a different
+ * order would match nothing, fall through to `generic-csv`, and land the user in
+ * the manual column mapper for a file `parseBrowserCsv` reads correctly (its
+ * lookups are by name, and a test pins that a reordered header maps identically).
+ * Set equality collides with nothing in the fixture set, which the cross-check
+ * suite in `detect.test.ts` is what proves.
+ */
+function headerSetIs(file: FileEvidence, ...columns: string[]): boolean {
+  if (file.csvHeader.length !== columns.length) return false;
+  // A header with a duplicated name has fewer distinct names than columns, so
+  // one of `columns` is necessarily missing and the check fails — which is the
+  // right answer for a header that is not a permutation of `columns`.
+  const present = new Set(file.csvHeader);
+  return columns.every((column) => present.has(column));
+}
+
+/**
  * True when the header is exactly `columns`, in order and with nothing else.
  *
- * The strict form exists for the browser CSVs, whose columns are a subset of
- * several richer exports: NordPass's header also opens `name,url,...,password,
- * note`, and `hasColumns` would call a NordPass export a Chrome one.
+ * Kept for KeePass 2's export alone, whose header Task 2 took verbatim from
+ * KeePass's own documentation of the "KeePass CSV (1.x)" format, so the order
+ * there is recorded evidence rather than a reconstruction. Prefer `headerSetIs`
+ * for anything else: order is the part of a header signature most likely to be a
+ * guess, and it buys nothing the column count does not already buy.
  */
 function headerIs(file: FileEvidence, ...columns: string[]): boolean {
   return (
@@ -226,6 +258,41 @@ const BITWARDEN: readonly ImportVendor[] = ["bitwarden"];
 const CHROMIUM_FAMILY: readonly ImportVendor[] = ["chrome", "edge", "brave"];
 
 /**
+ * True for any of Bitwarden's three JSON export shapes.
+ *
+ * Two of them carry `items`: the plain export and the account-encrypted
+ * `.json (Encrypted)` one, whose items are the same objects with ciphertext
+ * strings in their fields.
+ *
+ * The third does not. A **password-protected** export is a single `data` blob
+ * with no `items` array at all, so an items-first rule answered `generic-csv`
+ * for a file that is plainly a Bitwarden export, and the user landed in the
+ * column mapper instead of reading the "export it again unencrypted" sentence
+ * `bitwarden.ts` already returns for exactly this file.
+ *
+ * **What is assumed.** That shape is matched on `passwordProtected: true` plus a
+ * string `data` — the two keys `bitwarden.ts`'s own encrypted-export branch and
+ * its test fixture use, and the two that cannot be confused with anything else
+ * detected here. The rest of that envelope (`salt`, `kdfType`, `kdfIterations`,
+ * `kdfMemory`, `kdfParallelism`, `encKeyValidation_DO_NOT_EDIT`) is deliberately
+ * *not* required: the KDF keys changed when Argon2 was added, and this repo has
+ * no bytes from a real password-protected export to check the current set
+ * against. Confirming it against one is a loose end worth closing.
+ */
+function isBitwardenJson(value: unknown): boolean {
+  const root = asObject(value);
+  if (root === null) return false;
+  if (Array.isArray(root["items"])) {
+    return (
+      Array.isArray(root["folders"]) ||
+      Array.isArray(root["collections"]) ||
+      root["encrypted"] !== undefined
+    );
+  }
+  return root["passwordProtected"] === true && typeof root["data"] === "string";
+}
+
+/**
  * Dashlane's JSON export is one array per record kind, keyed in capitals.
  * A vault with no logins has no `AUTHENTIFIANT`, so any one of these is enough.
  */
@@ -253,13 +320,7 @@ export const FORMAT_SIGNATURES: readonly FormatSignature[] = [
   {
     id: "bitwarden-json",
     parser: "bitwarden-json",
-    match: (file) =>
-      hasArray(file.json, "items") &&
-      (hasArray(file.json, "folders") ||
-        hasArray(file.json, "collections") ||
-        asObject(file.json)?.["encrypted"] !== undefined)
-        ? BITWARDEN
-        : null,
+    match: (file) => (isBitwardenJson(file.json) ? BITWARDEN : null),
   },
   {
     id: "protonpass-json",
@@ -325,8 +386,8 @@ export const FORMAT_SIGNATURES: readonly FormatSignature[] = [
     match: (file) => {
       // Chrome added `note` around 2023; older exports stop at `password`.
       const chromium =
-        headerIs(file, "name", "url", "username", "password", "note") ||
-        headerIs(file, "name", "url", "username", "password");
+        headerSetIs(file, "name", "url", "username", "password", "note") ||
+        headerSetIs(file, "name", "url", "username", "password");
       if (!chromium) return null;
       // Edge and Brave ship Chromium's exporter unchanged, so the bytes are
       // identical and the download's name is the only remaining evidence. When
@@ -349,9 +410,12 @@ export const FORMAT_SIGNATURES: readonly FormatSignature[] = [
   {
     id: "safari-csv",
     parser: "browser-csv",
+    // By set, not by order: this fixture's header order is a reconstruction, so
+    // an order match would make a guess the thing that decides whether a real
+    // Safari export is recognised at all. See `headerSetIs`.
     match: (file) =>
-      headerIs(file, "title", "url", "username", "password", "notes", "otpauth") ||
-      headerIs(file, "title", "url", "username", "password", "notes")
+      headerSetIs(file, "title", "url", "username", "password", "notes", "otpauth") ||
+      headerSetIs(file, "title", "url", "username", "password", "notes")
         ? ["safari"]
         : null,
   },

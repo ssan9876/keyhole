@@ -276,6 +276,89 @@ describe("detect, where the file cannot name its own vendor", () => {
   });
 });
 
+describe("detect, where a header's order is not evidence", () => {
+  /**
+   * A fixture with its header's columns reversed and its rows left alone.
+   *
+   * Derived from the file rather than typed out, so it cannot drift from the
+   * real column names — which are the part with provenance. The rows no longer
+   * line up with the reversed header, and that is fine: detection reads the
+   * header and nothing else.
+   */
+  const withReversedHeader = (file: string): string => {
+    const [header, ...rest] = read(file).split("\n");
+    if (header === undefined) throw new Error(`${file} has no header line`);
+    return [header.split(",").reverse().join(","), ...rest].join("\n");
+  };
+
+  it("detects a Safari export whose columns are in an order the fixture does not use", () => {
+    // `safari-passwords.csv` is a reconstruction: Task 2 confirmed the column
+    // set from Bitwarden's importer but found no source quoting the header line,
+    // so its order is a guess. Matching on order makes that guess decide whether
+    // a real Safari export is recognised at all — and when it is not, the file
+    // falls through to `generic-csv` and the user is sent to the manual column
+    // mapper for a file `parseBrowserCsv` reads correctly.
+    expect(detect("safari-passwords.csv", withReversedHeader("safari-passwords.csv"))).toEqual({
+      parser: "browser-csv",
+      vendors: ["safari"],
+    });
+  });
+
+  it("detects a Chromium export whose columns are in an order the fixture does not use", () => {
+    expect(detect("chrome-passwords.csv", withReversedHeader("chrome-passwords.csv"))).toEqual({
+      parser: "browser-csv",
+      vendors: ["chrome"],
+    });
+  });
+
+  it("still refuses a header that merely contains a browser export's columns", () => {
+    // The reason the browser signatures are not `hasColumns`: NordPass's header
+    // carries `name`, `url`, `username`, `password` and `note` too. Matching by
+    // set keeps the count as the thing that separates them, so relaxing order
+    // does not relax this.
+    expect(detect("nordpass-export.csv", read("nordpass-export.csv")).parser).toBe("nordpass-csv");
+  });
+});
+
+describe("detect, on an export it can name but cannot read", () => {
+  /**
+   * Bitwarden's password-protected export: one `data` blob and no `items`.
+   *
+   * Written inline rather than added to `fixtures/`, because the envelope's
+   * remaining keys are not confirmed against a real export — see `detect.ts`'s
+   * `isBitwardenJson`. A fixture would present a shape assembled here as
+   * something with provenance, which is what the fixture directory is for.
+   */
+  const passwordProtected = JSON.stringify({
+    encrypted: true,
+    passwordProtected: true,
+    salt: "not-a-real-salt",
+    kdfIterations: 600000,
+    data: "2.GENERATED-FIXTURE-not-real-ciphertext",
+  });
+
+  it("names a password-protected Bitwarden export, which carries no items array", () => {
+    // Requiring `items` sent this file to the generic mapper, so the user was
+    // asked to map columns in a JSON file with no columns — instead of being
+    // shown the one sentence `bitwarden.ts` already returns for it: export again
+    // with the format set to .json rather than .json (Encrypted).
+    expect(detect("bitwarden_encrypted_export.json", passwordProtected)).toEqual({
+      parser: "bitwarden-json",
+      vendors: ["bitwarden"],
+    });
+  });
+
+  it("lets only the Bitwarden signature claim that export, not Proton Pass's", () => {
+    // Proton Pass's rule also reads `encrypted`, and it is the next JSON rule
+    // after Bitwarden's. Broadening one envelope rule into another's territory
+    // is the failure the cross-check suite exists for, and this shape has no
+    // fixture to be cross-checked by.
+    expect(claimedBy("bitwarden_encrypted_export.json", passwordProtected)).toEqual([
+      "bitwarden-json",
+    ]);
+  });
+});
+
 describe("detect, on files mangled in transit", () => {
   it("detects a Bitwarden export whose first column name carries a UTF-8 BOM", () => {
     // A BOM makes the first header name "\uFEFFfolder". Every column lookup

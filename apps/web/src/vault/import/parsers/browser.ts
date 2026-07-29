@@ -56,10 +56,18 @@ interface BrowserLayout {
   /**
    * The columns that must all be present for this layout to fit the file.
    *
-   * Deliberately the same evidence `detect.ts`'s matching signature uses, so a
-   * file detection routes here is a file exactly one layout claims. Extra
-   * columns are ignored and absent optional ones are tolerated: Chrome only
-   * grew its `note` column around 2023, and older exports stop at `password`.
+   * A **subset** test, and deliberately looser than `detect.ts`, which matches a
+   * browser export's header by its whole column set. Extra columns are ignored
+   * and absent optional ones tolerated: Chrome only grew its `note` column
+   * around 2023, and older exports stop at `password`.
+   *
+   * That looseness is safe because of what actually separates the three, which
+   * is not the strictness of the test: Chromium exports a `name` column, Safari
+   * a `title`, Firefox neither, and no browser export here carries two of those.
+   * So a file `detect` routes to this parser is claimed by exactly one layout.
+   * (A 1Password CSV would match the Safari layout on `title, url, username,
+   * password` — detection sends it elsewhere, which is why this is stated as the
+   * reason rather than left to be inferred from the fingerprints.)
    */
   readonly fingerprint: readonly string[];
   /**
