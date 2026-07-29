@@ -26,11 +26,26 @@ import type { ImportItem, ImportResult } from "../types.js";
  * started. One directory up from `parsers/`.
  */
 export function read(file: string): string {
+  return readFileSync(fixturePath(file), "utf8");
+}
+
+/**
+ * A fixture's bytes, for the one fixture that is not text.
+ *
+ * `1password-export.1pux` is a ZIP. Reading it with `read` decodes it as UTF-8,
+ * which replaces every byte that is not valid UTF-8 — most of a ZIP's headers —
+ * and produces a string that can never be turned back into the archive.
+ */
+export function readBytes(file: string): Uint8Array {
+  return new Uint8Array(readFileSync(fixturePath(file)));
+}
+
+function fixturePath(file: string): string {
   const testPath = expect.getState().testPath;
   if (testPath === undefined) {
     throw new Error("vitest reported no test path, so fixtures cannot be located");
   }
-  return readFileSync(join(dirname(testPath), "..", "fixtures", file), "utf8");
+  return join(dirname(testPath), "..", "fixtures", file);
 }
 
 /**
