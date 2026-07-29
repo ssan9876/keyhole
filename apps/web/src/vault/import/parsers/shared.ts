@@ -1,4 +1,4 @@
-import type { CsvRow, CsvTable } from "../csv.js";
+import type { CsvRow } from "../csv.js";
 import type {
   ImportFieldKind,
   ImportItem,
@@ -163,7 +163,7 @@ export function surplusFieldsError(row: CsvRow, width: number): ImportRowError |
  * `typeof … === "string"` and cannot forget to check.
  */
 export function requiredPassword(
-  row: CsvRow,
+  row: { readonly line: number },
   value: string | undefined,
 ): string | ImportRowError {
   if (value === undefined) {
@@ -201,7 +201,7 @@ export function carry(
 }
 
 /**
- * Runs `toItem` over a CSV table's rows and collects the two outcomes.
+ * Runs `toItem` over a CSV file's rows and collects the two outcomes.
  *
  * **A record the reader reported damage on is not mapped at all.** Its fields
  * have already been shown not to mean what their columns say — an unclosed
@@ -213,8 +213,15 @@ export function carry(
  * Errors come back sorted by line, so the report reads in the order of the
  * user's own file. The sort is stable, so a reader error and a row error on one
  * line keep the order above.
+ *
+ * Generic in the row, because Keeper's CSV has no header and so has no
+ * `CsvRow`s — only `CsvRecord`s, which carry a line and their fields and
+ * nothing addressable by name. Everything here needs is the line.
  */
-export function mapCsvRows(table: CsvTable, toItem: (row: CsvRow) => RowOutcome): ImportResult {
+export function mapCsvRows<Row extends { readonly line: number }>(
+  table: { readonly rows: readonly Row[]; readonly errors: readonly ImportRowError[] },
+  toItem: (row: Row) => RowOutcome,
+): ImportResult {
   const damaged = new Set(table.errors.map((error) => error.row));
   const items: ImportItem[] = [];
   const errors: ImportRowError[] = [...table.errors];

@@ -68,6 +68,28 @@ export interface CsvRow {
   get(column: string): string | undefined;
 }
 
+/**
+ * One record of a file that has **no header line**, so nothing can be addressed
+ * by name and every field is a position.
+ *
+ * Keeper's CSV export is the case: it writes no header at all, so `parseCsv`
+ * would read the user's first login as the column names and lose it. This is
+ * the same records `parseCsv` sees, before any of them is treated as a header.
+ */
+export interface CsvRecord {
+  /** 1-based line in the source file where this record begins. */
+  line: number;
+  /** Every field, in source order, exactly as the file held it. */
+  values: readonly string[];
+}
+
+export interface CsvRecords {
+  /** Every record, blank lines excluded. */
+  rows: readonly CsvRecord[];
+  /** Structural problems found while reading, addressed by line. */
+  errors: readonly ImportRowError[];
+}
+
 export interface CsvTable {
   /** The first non-blank record. Empty for an empty file. */
   header: readonly string[];
@@ -267,6 +289,30 @@ function buildRow(record: RawRecord, index: Map<string, number>, width: number):
       // record never reached that column.
       return at === undefined ? undefined : values[at];
     },
+  };
+}
+
+/**
+ * Reads `text` into records, treating **none** of them as a header. Never
+ * throws.
+ *
+ * For the one export here that writes no header line: Keeper's CSV. Handing
+ * such a file to `parseCsv` costs the user their first login, which is read as
+ * the column names instead — and silently, since a row of credentials is a
+ * perfectly well-formed header.
+ *
+ * A leading UTF-8 BOM is removed, blank lines are skipped, and a line holding
+ * `""` is not blank — all exactly as `parseCsv` does, because both go through
+ * the same scanner and differ only in whether the first record is spent.
+ */
+export function parseCsvRecords(text: string): CsvRecords {
+  const withoutBom = text.startsWith(BOM) ? text.slice(BOM.length) : text;
+  const { records, errors } = scan(withoutBom);
+  return {
+    rows: records
+      .filter((record) => !record.blank)
+      .map((record) => ({ line: record.line, values: record.fields })),
+    errors,
   };
 }
 
