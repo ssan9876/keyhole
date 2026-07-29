@@ -210,7 +210,10 @@ explicitly and requires typing the user's email to proceed.
 
 Default 15 minutes idle; options 1 / 5 / 15 / 30 / 60 minutes, on-close, or never
 (with a warning). Lock zeroes `wrappingKey`, `userKey`, decrypted item keys, and the
-plaintext cache. The IndexedDB ciphertext cache is retained for offline reads.
+plaintext cache — all of which live in memory only. (Amended 2026-07-28 with §6.5:
+there is no IndexedDB ciphertext cache to retain. The original sentence assumed the
+offline-read cache that the shell-only PWA decision removed; the vault is not
+persisted to disk at all, so a lock leaves nothing vault-related behind.)
 
 ### 3.9 Accepted limitations
 
@@ -453,8 +456,14 @@ sessions, recovery) · admin (users, collections, pending grants, audit) · impo
 ### 6.3 Key handling rule
 
 Decrypted keys and plaintext live in memory only — never `localStorage`,
-`sessionStorage`, or IndexedDB. The IndexedDB cache holds ciphertext only. This is a
-code-review gate, not a guideline.
+`sessionStorage`, or IndexedDB. **Nothing about the vault reaches disk at all**, not
+even ciphertext: `localStorage` holds only `keyhole.email` and `keyhole.autolock`, and
+the service worker's Cache API holds the static app shell and never an `/api/*`
+response. This is a code-review gate, not a guideline, and it is verified end to end by
+the PWA e2e leak assertion. (Amended 2026-07-28 with §6.5: the original sentence
+allowed an IndexedDB ciphertext cache; the shell-only decision removed it, because an
+on-disk vault cache — even encrypted — would weaken the memory-only device-theft
+defense.)
 
 ### 6.4 Visual direction — Mono
 
