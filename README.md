@@ -89,7 +89,7 @@ To verify a release by hand, download `keyhole-linux-amd64`, `SHA256SUMS`, and
 `SHA256SUMS.minisig` from the release page, then:
 
 ```bash
-minisign -Vm SHA256SUMS -P 'RWQ...replace-with-the-real-key...'
+minisign -Vm SHA256SUMS -P 'RWQaHZz2jLPpRLK2aEj7/A/Rp0QtvRtJj/H8fjePukf3JMGPiyt91Ts6'
 sha256sum -c SHA256SUMS --ignore-missing
 ```
 
