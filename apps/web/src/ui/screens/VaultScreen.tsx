@@ -20,10 +20,12 @@ import { Field } from "../components/Field.js";
 import { TabNav } from "../components/TabNav.js";
 import { useVaultState } from "../useVault.js";
 import { useCollectionsPanel } from "../useCollectionsPanel.js";
+import { useFoldersPanel } from "../useFoldersPanel.js";
 import { useSettingsPanel } from "../useSettingsPanel.js";
 import { useAdminPanel } from "../useAdminPanel.js";
 import { useImportPanel } from "../useImportPanel.js";
 import { ItemEditor } from "./ItemEditor.js";
+import { FolderSidebar } from "./FolderSidebar.js";
 import { CollectionsScreen } from "./CollectionsScreen.js";
 import { SettingsScreen } from "./SettingsScreen.js";
 import { AdminScreen } from "./AdminScreen.js";
@@ -62,6 +64,36 @@ function requirePlaintext(record: ItemRecord): ItemPlaintext {
     throw new Error("Cannot edit an item this device could not decrypt");
   }
   return record.plaintext;
+}
+
+/**
+ * Filters items by the folder sidebar's selection.
+ *
+ * `""` is All items. A named folder id matches items whose folderId equals it.
+ * `"personal"` is the no-folder bucket -- and, crucially, it also holds every
+ * *orphan*: an item whose folderId names a folder no longer among the live ids
+ * (its folder was deleted, so the server tombstoned it out of state but left the
+ * item's folderId pointing at it). Membership lives inside the item's encrypted
+ * body, which the server cannot touch, so this reconciliation is the client's
+ * job. A filter that assumed every folderId resolved would drop every item whose
+ * folder was ever deleted; here they surface under Personal instead.
+ *
+ * An undecryptable item (plaintext null) has no readable folderId, so it too
+ * falls to Personal and matches no named folder.
+ */
+export function filterByFolder(
+  items: ItemRecord[],
+  folderFilter: string,
+  liveFolderIds: Set<string>,
+): ItemRecord[] {
+  if (folderFilter === "") return items;
+  if (folderFilter === "personal") {
+    return items.filter((item) => {
+      const folderId = item.plaintext?.folderId ?? null;
+      return folderId === null || !liveFolderIds.has(folderId);
+    });
+  }
+  return items.filter((item) => (item.plaintext?.folderId ?? null) === folderFilter);
 }
 
 interface VaultListProps {
@@ -245,6 +277,9 @@ export function VaultScreen({
   // both are handled where the picker renders and where save normalises it.
   const [editorFolderId, setEditorFolderId] = useState<string | null>(null);
   const folderSelectId = useId();
+  // The folder sidebar's active filter: "" (All items), "personal", or a folder
+  // id. Lifted here so the sidebar and the item list stay in agreement.
+  const [folderFilter, setFolderFilter] = useState("");
 
   const [activeTab, setActiveTab] = useState<Tab>("vault");
 
@@ -257,6 +292,8 @@ export function VaultScreen({
     store,
     active: activeTab === "collections",
   });
+
+  const foldersPanel = useFoldersPanel({ api, session, store });
 
   const settingsPanel = useSettingsPanel({
     api,
@@ -348,6 +385,14 @@ export function VaultScreen({
   }, [api, editing, session, store]);
 
   const usableCollections = state.collections.filter((c) => c.usable);
+  // The set of folders that actually exist right now. An item's folderId that
+  // is not in here belongs to a deleted folder, and filterByFolder treats it
+  // as Personal -- the orphan rule.
+  const liveFolderIds = useMemo(
+    () => new Set(state.folders.map((folder) => folder.id)),
+    [state.folders],
+  );
+  const visibleItems = filterByFolder(state.items, folderFilter, liveFolderIds);
   // Only a decryptable folder is an assignable option -- an undecryptable one
   // has no name to show in a list you would pick from.
   const assignableFolders = state.folders.filter((folder) => folder.name !== null);
@@ -426,32 +471,42 @@ export function VaultScreen({
             </Button>
           </div>
         ) : editing === null ? (
-          <VaultList
-            items={state.items}
-            collections={state.collections}
-            onSelect={(record) => {
-              // An undecryptable record must never reach ItemEditor -- see
-              // requirePlaintext's comment. This is the one place that
-              // invariant is enforced: every other read of `editing` in this
-              // component trusts it.
-              if (record.plaintext === null) {
-                setUndecryptable(record);
-                return;
-              }
-              setEditing(record);
-              setEditorCollectionId(record.collectionId);
-              // record.plaintext is non-null here (the guard above returned
-              // for the null case), so its folderId seeds the picker.
-              setEditorFolderId(record.plaintext.folderId);
-              setConflict(null);
-            }}
-            onNew={() => {
-              setEditing("new");
-              setEditorCollectionId(null);
-              setEditorFolderId(null);
-              setConflict(null);
-            }}
-          />
+          <>
+            <FolderSidebar
+              folders={state.folders}
+              selected={folderFilter}
+              onSelect={setFolderFilter}
+              onCreateFolder={foldersPanel.onCreateFolder}
+              onRenameFolder={foldersPanel.onRenameFolder}
+              onDeleteFolder={foldersPanel.onDeleteFolder}
+            />
+            <VaultList
+              items={visibleItems}
+              collections={state.collections}
+              onSelect={(record) => {
+                // An undecryptable record must never reach ItemEditor -- see
+                // requirePlaintext's comment. This is the one place that
+                // invariant is enforced: every other read of `editing` in this
+                // component trusts it.
+                if (record.plaintext === null) {
+                  setUndecryptable(record);
+                  return;
+                }
+                setEditing(record);
+                setEditorCollectionId(record.collectionId);
+                // record.plaintext is non-null here (the guard above returned
+                // for the null case), so its folderId seeds the picker.
+                setEditorFolderId(record.plaintext.folderId);
+                setConflict(null);
+              }}
+              onNew={() => {
+                setEditing("new");
+                setEditorCollectionId(null);
+                setEditorFolderId(null);
+                setConflict(null);
+              }}
+            />
+          </>
         ) : (
           <>
             <div style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-4)" }}>

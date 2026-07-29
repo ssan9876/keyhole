@@ -19,8 +19,9 @@ import {
   type ItemRecord,
   type WireItem,
 } from "../../vault/items.js";
+import { createFolder } from "../../vault/folders.js";
 import { fakeApi, openSession } from "../../vault/test-helpers.js";
-import { VaultList, VaultScreen } from "./VaultScreen.js";
+import { VaultList, VaultScreen, filterByFolder } from "./VaultScreen.js";
 
 // Wraps the real createItem/updateItem so the tests that care about the exact
 // arguments VaultScreen passed them -- the collectionId, or the folderId now
@@ -35,6 +36,15 @@ vi.mock("../../vault/items.js", async (importOriginal) => {
     createItem: vi.fn(actual.createItem),
     updateItem: vi.fn(actual.updateItem),
   };
+});
+
+// Same treatment for createFolder, so "creates a folder with the typed name"
+// can assert on the plaintext name reaching it -- the wire body carries only
+// the encrypted name, so the plaintext is observable nowhere else. decryptFolders
+// (which the store depends on) is left real.
+vi.mock("../../vault/folders.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../vault/folders.js")>();
+  return { ...actual, createFolder: vi.fn(actual.createFolder) };
 });
 
 // Call history only, not implementation: the spies above keep delegating to the
@@ -611,5 +621,140 @@ describe("VaultScreen folder assignment (editor)", () => {
     expect(within(folderSelect).getByRole("option", { name: "Personal" })).toBeInTheDocument();
     // Resolves to Personal, not a phantom selection stuck on the dead id.
     expect(folderSelect.value).toBe("");
+  });
+});
+
+describe("filterByFolder", () => {
+  const item = (id: string, folderId: string | null): ItemRecord =>
+    record({ id, plaintext: { ...LOGIN, folderId } });
+
+  it("returns everything under All items", () => {
+    const items = [item("a", "f1"), item("b", null), item("c", "gone")];
+    expect(filterByFolder(items, "", new Set(["f1"]))).toEqual(items);
+  });
+
+  it("matches only the selected folder's items for a named folder", () => {
+    const items = [item("a", "f1"), item("b", "f2"), item("c", null)];
+    expect(filterByFolder(items, "f1", new Set(["f1", "f2"])).map((i) => i.id)).toEqual(["a"]);
+  });
+
+  it("puts a deleted folder's orphans under Personal, alongside the truly folder-less", () => {
+    // "gone" is not among the live folder ids, so its item is an orphan. The
+    // load-bearing rule: it must surface under Personal, never vanish.
+    const items = [item("a", "f1"), item("b", null), item("c", "gone")];
+    const personal = filterByFolder(items, "personal", new Set(["f1"]));
+    expect(personal.map((i) => i.id)).toEqual(["b", "c"]);
+    // And it belongs to no named folder.
+    expect(filterByFolder(items, "f1", new Set(["f1"])).map((i) => i.id)).toEqual(["a"]);
+  });
+});
+
+describe("VaultScreen folder sidebar", () => {
+  const foldered = (id: string, name: string, folderId: string | null): ItemRecord =>
+    record({ id, plaintext: { ...LOGIN, name, folderId } });
+
+  it("filters the list to a folder's items when that folder is selected", async () => {
+    const session = openSession();
+    const store = fakeStore({
+      revision: 1,
+      items: [foldered("i1", "Work login", "f1"), foldered("i2", "Loose login", null)],
+      collections: [],
+      folders: [{ id: "f1", revision: 1, deletedAt: null, name: "Work" }],
+      status: "ready",
+      error: null,
+    });
+
+    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+
+    expect(screen.getByText("Work login")).toBeInTheDocument();
+    expect(screen.getByText("Loose login")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Work" }));
+
+    expect(screen.getByText("Work login")).toBeInTheDocument();
+    expect(screen.queryByText("Loose login")).not.toBeInTheDocument();
+  });
+
+  it("keeps an item whose folder was deleted under Personal rather than dropping it", async () => {
+    // The orphan test -- the one that matters most. "gone" was deleted, so it
+    // is absent from state.folders; a filter that assumed every folderId
+    // resolves would drop this item from every view.
+    const session = openSession();
+    const store = fakeStore({
+      revision: 1,
+      items: [
+        foldered("i1", "Orphan login", "gone"),
+        foldered("i2", "Work login", "f1"),
+        foldered("i3", "Loose login", null),
+      ],
+      collections: [],
+      folders: [{ id: "f1", revision: 1, deletedAt: null, name: "Work" }],
+      status: "ready",
+      error: null,
+    });
+
+    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+
+    // Never hidden: All items shows it.
+    expect(screen.getByText("Orphan login")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Personal" }));
+    expect(screen.getByText("Orphan login")).toBeInTheDocument();
+    expect(screen.getByText("Loose login")).toBeInTheDocument();
+    expect(screen.queryByText("Work login")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Work" }));
+    expect(screen.getByText("Work login")).toBeInTheDocument();
+    // The orphan does not masquerade as a member of the (still-live) folder.
+    expect(screen.queryByText("Orphan login")).not.toBeInTheDocument();
+  });
+
+  it("shows an item with no folder under Personal and under no named folder", async () => {
+    const session = openSession();
+    const store = fakeStore({
+      revision: 1,
+      items: [foldered("i1", "Loose login", null), foldered("i2", "Work login", "f1")],
+      collections: [],
+      folders: [{ id: "f1", revision: 1, deletedAt: null, name: "Work" }],
+      status: "ready",
+      error: null,
+    });
+
+    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Personal" }));
+    expect(screen.getByText("Loose login")).toBeInTheDocument();
+    expect(screen.queryByText("Work login")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Work" }));
+    expect(screen.queryByText("Loose login")).not.toBeInTheDocument();
+    expect(screen.getByText("Work login")).toBeInTheDocument();
+  });
+
+  it("creates a folder with the typed name", async () => {
+    const session = openSession();
+    const store = fakeStore({
+      revision: 1,
+      items: [],
+      collections: [],
+      folders: [],
+      status: "ready",
+      error: null,
+    });
+
+    const api = fakeApi({
+      post: async () => ({ id: "f9", encryptedName: "opaque", revision: 1, deletedAt: null }),
+    });
+
+    render(<VaultScreen api={api} session={session} store={store} />);
+
+    await userEvent.type(screen.getByLabelText("New folder name"), "Travel");
+    await userEvent.click(screen.getByRole("button", { name: "Add folder" }));
+
+    // The plaintext name reaches createFolder -- the wire body carries only its
+    // ciphertext, so this is the only place it can be asserted.
+    await waitFor(() => {
+      expect(createFolder).toHaveBeenCalledWith(expect.anything(), "Travel");
+    });
   });
 });
