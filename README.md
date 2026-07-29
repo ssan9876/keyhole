@@ -16,9 +16,10 @@ The installer creates an unprivileged Debian 12 container on a **Proxmox VE**
 host, installs a signed release, and ends by printing a setup URL. It must run
 as root on the Proxmox node.
 
-> **Not published yet.** No `v1.0.0` tag exists in this repository, so both
-> commands below will 404 today. They are written against the tag
-> `scripts/install.sh` already pins, and will work once that tag is pushed.
+> **`v1.0.0` is published.** Both commands below fetch the tag
+> `scripts/install.sh` pins, and the installer verifies the binary's minisign
+> signature against the key in [The signing key](#the-signing-key) before it
+> installs anything.
 
 ### Download, inspect, run
 
