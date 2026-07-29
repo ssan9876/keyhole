@@ -90,7 +90,7 @@ describe("parseBitwardenJson, against the sample export", () => {
           urls: ["https://mail.example.com"],
           notes: NOTICE,
           favorite: true,
-          folderName: "Personal",
+          folderPath: ["Personal"],
           extra: [],
           sourceRow: 1,
         },
@@ -102,7 +102,7 @@ describe("parseBitwardenJson, against the sample export", () => {
           urls: [],
           notes: "first line\nsecond line",
           favorite: false,
-          folderName: null,
+          folderPath: [],
           extra: [],
           sourceRow: 2,
         },
@@ -118,13 +118,13 @@ describe("parseBitwardenJson, against the sample export", () => {
           ],
           notes: "",
           favorite: false,
-          folderName: "Work/Servers",
+          folderPath: ["Work", "Servers"],
           // In the order the export carried them, which is the order `extra` is
           // a list to preserve.
           extra: [
-            { name: "totp", value: TOTP },
-            { name: "Security question", value: "first pet" },
-            { name: "reprompt", value: "1" },
+            { name: "totp", value: TOTP, kind: "totp" },
+            { name: "Security question", value: "first pet", kind: "custom" },
+            { name: "reprompt", value: "1", kind: "metadata" },
           ],
           sourceRow: 3,
         },
@@ -186,10 +186,18 @@ describe("parseBitwardenJson, on the item kinds Keyhole has", () => {
     ]);
   });
 
-  it("keeps a nested folder as the one slash-separated name Bitwarden stores", () => {
-    // Bitwarden has no folder tree: "Work/Servers" is a single folder whose
-    // name contains a slash. Splitting it here would invent a hierarchy the
-    // export does not have, and the mapper would create two folders.
+  it("splits Bitwarden's slash-nested folder name into path segments", () => {
+    // Bitwarden stores a nested folder as one folder whose *name* contains a
+    // slash: `Work/Servers` is the documented way to make a subfolder and how
+    // its own clients render the tree. So the slash is the nesting, and a folder
+    // whose name genuinely contains one is indistinguishable from a nested
+    // folder in Bitwarden's model too -- splitting matches what Bitwarden itself
+    // shows the user.
+    //
+    // This reverses the reading Task 4 wrote here. `folderPath` is segments
+    // precisely so the answer is given once, by the parser that knows what its
+    // format meant, rather than by `map.ts` guessing at a separator it was never
+    // told about -- LastPass's `grouping` nests with a backslash.
     const json = asExport({
       folders: [{ id: "44444444-4444-4444-8444-444444444444", name: "Work/Servers" }],
       items: [
@@ -202,12 +210,12 @@ describe("parseBitwardenJson, on the item kinds Keyhole has", () => {
       ],
     });
 
-    expect(only(parseBitwardenJson(json)).folderName).toBe("Work/Servers");
+    expect(only(parseBitwardenJson(json)).folderPath).toEqual(["Work", "Servers"]);
   });
 
   it("places an item with no folderId at the root rather than in a folder named empty", () => {
-    // `null` is the root; `""` would be a folder actually named "", which
-    // `types.ts` keeps as a distinct answer.
+    // No segments is the root. A single empty segment would be a folder with no
+    // name, which `map.ts` would dutifully create.
     const json = asExport({
       items: [
         {
@@ -219,7 +227,7 @@ describe("parseBitwardenJson, on the item kinds Keyhole has", () => {
       ],
     });
 
-    expect(only(parseBitwardenJson(json)).folderName).toBeNull();
+    expect(only(parseBitwardenJson(json)).folderPath).toEqual([]);
   });
 });
 
@@ -242,9 +250,9 @@ describe("parseBitwardenJson, on what Keyhole has no field for", () => {
     });
 
     expect(only(parseBitwardenJson(json)).extra).toEqual([
-      { name: "totp", value: TOTP },
-      { name: "Security question", value: "first pet" },
-      { name: "reprompt", value: "1" },
+      { name: "totp", value: TOTP, kind: "totp" },
+      { name: "Security question", value: "first pet", kind: "custom" },
+      { name: "reprompt", value: "1", kind: "metadata" },
     ]);
   });
 
@@ -287,8 +295,32 @@ describe("parseBitwardenJson, on what Keyhole has no field for", () => {
     });
 
     expect(only(parseBitwardenJson(json)).extra).toEqual([
-      { name: "Recovery code", value: "first" },
-      { name: "Recovery code", value: "second" },
+      { name: "Recovery code", value: "first", kind: "custom" },
+      { name: "Recovery code", value: "second", kind: "custom" },
+    ]);
+  });
+
+  it("does not call a custom field named totp a second factor", () => {
+    // The reason `kind` comes from where the value sat in the file and never
+    // from what it is called. Bitwarden puts the real seed at `login.totp` and
+    // separately lets a user create a custom field they happen to name "totp".
+    // Matching on the name makes those one thing, and the preview screen then
+    // tells the user their note is a second factor and their second factor is a
+    // note.
+    const json = asExport({
+      items: [
+        {
+          type: 1,
+          name: "Example Forum",
+          fields: [{ name: "totp", value: "just what I called this field", type: 0 }],
+          login: { uris: [], username: "ada", password: "fixture-pw-8Hq2vN", totp: TOTP },
+        },
+      ],
+    });
+
+    expect(only(parseBitwardenJson(json)).extra).toEqual([
+      { name: "totp", value: TOTP, kind: "totp" },
+      { name: "totp", value: "just what I called this field", kind: "custom" },
     ]);
   });
 
@@ -318,8 +350,12 @@ describe("parseBitwardenJson, on what Keyhole has no field for", () => {
 
     const item = only(parseBitwardenJson(json));
 
-    expect(item.folderName).toBeNull();
-    expect(item.extra).toEqual([{ name: "collections", value: "Shared/Infra, Shared/Billing" }]);
+    expect(item.folderPath).toEqual([]);
+    // A collection name is carried as text, not split: `Shared/Infra` is one
+    // collection's name, and this is not the item's folder in the first place.
+    expect(item.extra).toEqual([
+      { name: "collections", value: "Shared/Infra, Shared/Billing", kind: "metadata" },
+    ]);
   });
 });
 
@@ -532,7 +568,7 @@ describe("parseBitwardenCsv, against the sample export", () => {
           urls: ["https://mail.example.com"],
           notes: NOTICE,
           favorite: true,
-          folderName: "Personal",
+          folderPath: ["Personal"],
           extra: [],
           sourceRow: 2,
         },
@@ -544,7 +580,7 @@ describe("parseBitwardenCsv, against the sample export", () => {
           urls: ["https://forum.example.org"],
           notes: "",
           favorite: false,
-          folderName: null,
+          folderPath: [],
           extra: [],
           sourceRow: 3,
         },
@@ -556,7 +592,7 @@ describe("parseBitwardenCsv, against the sample export", () => {
           urls: [],
           notes: "first line\nsecond line",
           favorite: false,
-          folderName: "Work",
+          folderPath: ["Work"],
           extra: [],
           sourceRow: 4,
         },
@@ -572,15 +608,15 @@ describe("parseBitwardenCsv, against the sample export", () => {
           ],
           notes: "",
           favorite: false,
-          folderName: "Work/Servers",
+          folderPath: ["Work", "Servers"],
           // The `fields` column is one blob of the user's custom fields, one
           // `name: value` per line. It is carried whole rather than split back
           // apart, because a value containing ": " would split wrongly and
           // silently.
           extra: [
-            { name: "totp", value: TOTP },
-            { name: "fields", value: "Security question: first pet" },
-            { name: "reprompt", value: "1" },
+            { name: "totp", value: TOTP, kind: "totp" },
+            { name: "fields", value: "Security question: first pet", kind: "custom" },
+            { name: "reprompt", value: "1", kind: "metadata" },
           ],
           sourceRow: 6,
         },
@@ -632,12 +668,16 @@ describe("parseBitwardenCsv, on the columns that are not the browser CSVs'", () 
     ]);
   });
 
-  it("keeps a nested folder column as the one slash-separated name Bitwarden wrote", () => {
+  it("splits the folder column at the slash, as the JSON export's folder names are split", () => {
+    // The same rule on both of Bitwarden's exports, because it is the same
+    // product's same nesting convention written into two file formats. Answering
+    // differently in the two parsers is how one vendor ends up with two folder
+    // trees in the imported vault.
     const csv = withRows(
       "Work/Servers,0,login,Example Wiki,,,0,https://wiki.example.org,ada,fixture-pw-8Hq2vN,",
     );
 
-    expect(only(parseBitwardenCsv(csv)).folderName).toBe("Work/Servers");
+    expect(only(parseBitwardenCsv(csv)).folderPath).toEqual(["Work", "Servers"]);
   });
 
   it("reads favorite 1 as favourite and 0 as not, rather than any non-empty value", () => {
@@ -724,6 +764,25 @@ describe("parseBitwardenCsv, on rows it must refuse", () => {
       },
     ]);
     expect(result.items.map((item) => item.name)).toEqual(["Example Mail"]);
+  });
+
+  it("says a row with a trailing comma has empty surplus fields, not a value split apart", () => {
+    // Same distinction as `browser.test.ts` draws, because both parsers write
+    // the same sentence: an empty surplus field is a trailing comma, not a
+    // column shift, and saying otherwise sends the user looking for damage that
+    // is not in their file.
+    const csv = withRows(
+      "Personal,0,login,Example Mail,,,0,https://mail.example.com,ada,fixture-pw-8Hq2vN,,",
+    );
+
+    expect(parseBitwardenCsv(csv).errors).toEqual([
+      {
+        row: 2,
+        message:
+          "This row has 12 fields where the header has 11, though every surplus field is empty, " +
+          "so a trailing comma is the likely cause",
+      },
+    ]);
   });
 
   it("refuses a row the CSV reader flagged, rather than importing its swallowed tail", () => {

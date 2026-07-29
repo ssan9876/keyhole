@@ -78,7 +78,7 @@ const CHROMIUM_ITEMS: readonly ImportItem[] = [
     urls: ["https://mail.example.com/"],
     notes: NOTICE,
     favorite: false,
-    folderName: null,
+    folderPath: [],
     extra: [],
     sourceRow: 2,
   },
@@ -90,7 +90,7 @@ const CHROMIUM_ITEMS: readonly ImportItem[] = [
     urls: ["https://forum.example.org/"],
     notes: "",
     favorite: false,
-    folderName: null,
+    folderPath: [],
     extra: [],
     sourceRow: 3,
   },
@@ -125,8 +125,8 @@ describe("parseBrowserCsv, against one sample export per browser", () => {
           urls: ["https://mail.example.com"],
           notes: "",
           favorite: false,
-          folderName: null,
-          extra: [{ name: "httpRealm", value: NOTICE }],
+          folderPath: [],
+          extra: [{ name: "httpRealm", value: NOTICE, kind: "metadata" }],
           sourceRow: 2,
         },
         {
@@ -137,7 +137,7 @@ describe("parseBrowserCsv, against one sample export per browser", () => {
           urls: ["https://forum.example.org"],
           notes: "",
           favorite: false,
-          folderName: null,
+          folderPath: [],
           extra: [],
           sourceRow: 3,
         },
@@ -159,7 +159,7 @@ describe("parseBrowserCsv, against one sample export per browser", () => {
           urls: ["https://mail.example.com"],
           notes: NOTICE,
           favorite: false,
-          folderName: null,
+          folderPath: [],
           extra: [],
           sourceRow: 2,
         },
@@ -171,7 +171,7 @@ describe("parseBrowserCsv, against one sample export per browser", () => {
           urls: ["https://forum.example.org"],
           notes: "",
           favorite: false,
-          folderName: null,
+          folderPath: [],
           extra: [],
           sourceRow: 3,
         },
@@ -316,7 +316,7 @@ describe("parseBrowserCsv, on rows a browser exports that Keyhole has no field f
 
     const item = only(parseBrowserCsv(csv));
 
-    expect(item.extra).toEqual([{ name: "OTPAuth", value: otpauth }]);
+    expect(item.extra).toEqual([{ name: "OTPAuth", value: otpauth, kind: "totp" }]);
     expect(item.notes).toBe("a note the user typed");
   });
 
@@ -430,6 +430,28 @@ describe("parseBrowserCsv, on rows it must refuse", () => {
       { row: 3, message: "This row opens a quoted field that is never closed" },
     ]);
     expect(result.items.map((item) => item.name)).toEqual(["good.example.com"]);
+  });
+
+  it("says a row with a trailing comma has empty surplus fields, not a value split apart", () => {
+    // The row has one field more than the header and that field is empty:
+    // nothing has shifted, and every column still holds what its name says. It
+    // is still refused -- a last column whose value ended in a comma produces
+    // the same bytes -- but telling the user a value "has been split across
+    // columns" is a claim about their file that is false, and it sends them
+    // hunting for damage that is not there.
+    const csv = withRows(
+      "chrome-passwords.csv",
+      "good.example.com,https://good.example.com/,ada,fixture-pw-8Hq2vN,a note,",
+    );
+
+    expect(parseBrowserCsv(csv).errors).toEqual([
+      {
+        row: 2,
+        message:
+          "This row has 6 fields where the header has 5, though every surplus field is empty, " +
+          "so a trailing comma is the likely cause",
+      },
+    ]);
   });
 
   it("refuses a row whose quoted password holds an undoubled quote, and keeps its neighbours", () => {

@@ -1,6 +1,8 @@
 import { parseCsv, type CsvRow } from "../csv.js";
 import {
   blankImportItem,
+  folderSegments,
+  type ImportFieldKind,
   type ImportItem,
   type ImportItemType,
   type ImportResult,
@@ -120,10 +122,22 @@ const CSV_COLUMNS = {
  * arrive with an empty `totp` and the preview screen would warn about the loss
  * of nothing on every row of the import.
  */
-function carry(item: ImportItem, name: string, value: string): void {
+function carry(item: ImportItem, name: string, value: string, kind: ImportFieldKind): void {
   if (value === "") return;
-  item.extra.push({ name, value });
+  item.extra.push({ name, value, kind });
 }
+
+/**
+ * What Bitwarden nests folders with.
+ *
+ * Bitwarden has no folder tree in its data: a nested folder is one folder whose
+ * *name* contains a `/`, which is the documented way to make one and how its own
+ * clients render the tree. So `Work/Servers` is two segments, and a folder whose
+ * name genuinely contains a slash is indistinguishable from a nested one in
+ * Bitwarden's own model too — splitting here matches what Bitwarden itself shows
+ * the user, which is the closest thing to a right answer available.
+ */
+const FOLDER_SEPARATOR = "/";
 
 /**
  * The reprompt flag as text, or `""` for the ordinary case of it being off.
@@ -222,7 +236,12 @@ function carryFields(item: ImportItem, value: unknown): void {
     // A field Bitwarden let the user leave unnamed still holds a value, and a
     // hidden field's value is a secret. Keying it by position in the item would
     // be meaningless to read, so it is named for what it is.
-    carry(item, name === "" ? "(unnamed field)" : name, scalarText(field["value"]));
+    //
+    // `custom` whatever it is called — including a field the user named "totp",
+    // which is not the login's TOTP seed and must not be reported as one. That
+    // is the whole reason `kind` comes from the position in the file rather than
+    // from the name.
+    carry(item, name === "" ? "(unnamed field)" : name, scalarText(field["value"]), "custom");
   }
 }
 
@@ -247,7 +266,7 @@ function carryCollections(
     if (typeof id !== "string" || id === "") continue;
     named.push(collections.get(id) ?? id);
   }
-  carry(item, "collections", named.join(", "));
+  carry(item, "collections", named.join(", "), "metadata");
 }
 
 /** One item of the `items` array, as an item or as the reason it is not one. */
@@ -323,7 +342,10 @@ function jsonItem(
     // Keyhole has no TOTP field in v1 (spec section 1, non-goals). Dropping the
     // seed silently would lose a second factor the user believes they moved,
     // and they would find out when they could no longer sign in.
-    carry(item, "totp", stringOf(login["totp"]));
+    //
+    // `totp` is the kind because of where this sits in the file — under the
+    // item's `login` object — and not because of what it is called.
+    carry(item, "totp", stringOf(login["totp"]), "totp");
   }
 
   const folderId = source["folderId"];
@@ -335,15 +357,15 @@ function jsonItem(
       // root, and the id it claimed is recorded rather than dropped, so the
       // fact that a folder was named and could not be resolved is visible
       // instead of being indistinguishable from an item that had no folder.
-      carry(item, "folderId", folderId);
+      carry(item, "folderId", folderId, "metadata");
     } else {
-      item.folderName = folderName;
+      item.folderPath = folderSegments(folderName, FOLDER_SEPARATOR);
     }
   }
 
   carryCollections(item, source["collectionIds"], collections);
   carryFields(item, source["fields"]);
-  carry(item, "reprompt", repromptText(source["reprompt"]));
+  carry(item, "reprompt", repromptText(source["reprompt"]), "metadata");
 
   return item;
 }
@@ -463,11 +485,18 @@ function csvItem(row: CsvRow, columns: Columns, width: number): ImportItem | Imp
     // a password containing a comma produces exactly this, and from here on the
     // values no longer line up with the columns naming them — so the field this
     // row calls a password is part of one, and the rest is in `row.extra`.
+    //
+    // All-empty surplus is the trailing-comma shape rather than a column shift,
+    // and says so; `browser.ts` carries the same distinction and the same
+    // reason for still refusing the row.
+    const allSurplusEmpty = row.extra.every((value) => value === "");
     return {
       row: row.line,
-      message:
-        `This row has ${row.values.length} fields where the header has ${width}, ` +
-        `so a value has been split across columns`,
+      message: allSurplusEmpty
+        ? `This row has ${row.values.length} fields where the header has ${width}, ` +
+          `though every surplus field is empty, so a trailing comma is the likely cause`
+        : `This row has ${row.values.length} fields where the header has ${width}, ` +
+          `so a value has been split across columns`,
     };
   }
 
@@ -491,10 +520,9 @@ function csvItem(row: CsvRow, columns: Columns, width: number): ImportItem | Imp
   item.notes = columns.value(row, CSV_COLUMNS.notes) ?? "";
   item.favorite = isFavorite(columns.value(row, CSV_COLUMNS.favorite));
 
-  const folder = columns.value(row, CSV_COLUMNS.folder);
-  // `null` is the root. `""` would be a folder actually named "", which
-  // `types.ts` keeps as a distinct answer, and an empty cell is not that.
-  item.folderName = folder === undefined || folder === "" ? null : folder;
+  // An absent or empty cell splits to no segments, which is the root — the same
+  // answer the JSON export's absent `folderId` gives.
+  item.folderPath = folderSegments(columns.value(row, CSV_COLUMNS.folder) ?? "", FOLDER_SEPARATOR);
 
   if (kind === "login") {
     const password = columns.value(row, CSV_COLUMNS.password);
@@ -508,7 +536,7 @@ function csvItem(row: CsvRow, columns: Columns, width: number): ImportItem | Imp
     // Byte for byte: the value as the reader unescaped it, and nothing else.
     item.password = password;
     item.urls = splitUris(columns.value(row, CSV_COLUMNS.uri) ?? "");
-    carry(item, "totp", columns.value(row, CSV_COLUMNS.totp) ?? "");
+    carry(item, "totp", columns.value(row, CSV_COLUMNS.totp) ?? "", "totp");
   }
 
   // The `fields` column is the user's custom fields flattened by Bitwarden into
@@ -516,8 +544,11 @@ function csvItem(row: CsvRow, columns: Columns, width: number): ImportItem | Imp
   // back apart on ": ", because a value containing that sequence would split
   // wrongly and there would be nothing to say it had happened. The JSON export
   // keeps the fields separate and this parser keeps them separate there.
-  carry(item, "fields", columns.value(row, CSV_COLUMNS.fields) ?? "");
-  carry(item, "reprompt", repromptText(columns.value(row, CSV_COLUMNS.reprompt)));
+  // `custom` even though it arrives as one blob: it is the user's own fields,
+  // and what the preview screen says about losing them should read the same way
+  // it does for the JSON export, where they arrive one at a time.
+  carry(item, "fields", columns.value(row, CSV_COLUMNS.fields) ?? "", "custom");
+  carry(item, "reprompt", repromptText(columns.value(row, CSV_COLUMNS.reprompt)), "metadata");
 
   return item;
 }

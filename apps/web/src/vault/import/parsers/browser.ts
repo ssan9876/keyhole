@@ -1,6 +1,7 @@
 import { parseCsv, type CsvRow } from "../csv.js";
 import {
   blankImportItem,
+  type ImportFieldKind,
   type ImportItem,
   type ImportResult,
   type ImportRowError,
@@ -91,8 +92,13 @@ interface BrowserLayout {
    * screen lists "what will not survive" *from*. Writing them into `notes` here
    * would produce the same note and destroy the second use: nothing downstream
    * could tell a TOTP secret from a sentence the user typed.
+   *
+   * The `kind` is declared here, per column, rather than derived from the name
+   * at the point of carrying — which is what `types.ts` asks of every parser: a
+   * field is what its position in the file says it is, and this layout table is
+   * where this parser records what it knows about its own columns.
    */
-  readonly carry: readonly string[];
+  readonly carry: readonly { readonly column: string; readonly kind: ImportFieldKind }[];
 }
 
 /**
@@ -125,8 +131,12 @@ const LAYOUTS: readonly BrowserLayout[] = [
      * three timestamps mean nothing outside Firefox's own database. Carrying
      * them would put five lines of noise in the note of every imported item,
      * which is not preservation.
+     *
+     * `metadata`, not `custom`: it is Firefox's record of the HTTP-auth realm,
+     * not something the user typed, and the preview screen should not warn about
+     * losing it in the same words it warns about losing their own fields.
      */
-    carry: ["httprealm"],
+    carry: [{ column: "httprealm", kind: "metadata" }],
   },
   {
     id: "safari",
@@ -141,8 +151,12 @@ const LAYOUTS: readonly BrowserLayout[] = [
      * field in v1 (spec section 1, non-goals). Dropping it silently would lose
      * a second factor the user believes they moved, and they would find out
      * when they could no longer sign in.
+     *
+     * `totp` is the kind whatever the column happens to be spelled: Safari
+     * writes `OTPAuth`, Bitwarden writes `totp`, Dashlane writes `otpSecret`,
+     * and the point of the kind is that nothing downstream has to know that.
      */
-    carry: ["otpauth"],
+    carry: [{ column: "otpauth", kind: "totp" }],
   },
   {
     id: "chromium",
@@ -243,11 +257,22 @@ function toItem(
     // a password containing a comma produces exactly this, and from here on the
     // values no longer line up with the columns naming them — so the field this
     // row calls a password is part of one, and the rest is in `row.extra`.
+    //
+    // Surplus fields that are **all empty** are a different shape and get a
+    // different sentence: nothing has shifted, and a trailing comma is the
+    // ordinary cause. The row is still refused, because the other way to get an
+    // empty surplus field is a last column whose value ended in a comma, and
+    // the two are the same bytes. But "a value has been split across columns" is
+    // a claim about this row that is simply false, and it sends the user looking
+    // through their export for damage that is not there.
+    const allSurplusEmpty = row.extra.every((value) => value === "");
     return {
       row: row.line,
-      message:
-        `This row has ${row.values.length} fields where the header has ${width}, ` +
-        `so a value has been split across columns`,
+      message: allSurplusEmpty
+        ? `This row has ${row.values.length} fields where the header has ${width}, ` +
+          `though every surplus field is empty, so a trailing comma is the likely cause`
+        : `This row has ${row.values.length} fields where the header has ${width}, ` +
+          `so a value has been split across columns`,
     };
   }
 
@@ -269,13 +294,13 @@ function toItem(
   item.urls = url === "" ? [] : [url];
   item.notes = columns.value(row, layout.notes) ?? "";
 
-  for (const column of layout.carry) {
+  for (const { column, kind } of layout.carry) {
     const carried = columns.value(row, column);
     // Only when the column actually holds something: otherwise every Safari
     // item without a TOTP seed would carry an empty `OTPAuth`, and the preview
     // screen would warn about the loss of nothing on every row of the import.
     if (carried !== undefined && carried !== "") {
-      item.extra.push({ name: columns.sourceName(column), value: carried });
+      item.extra.push({ name: columns.sourceName(column), value: carried, kind });
     }
   }
 
