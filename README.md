@@ -93,53 +93,23 @@ minisign -Vm SHA256SUMS -P 'RWQaHZz2jLPpRLK2aEj7/A/Rp0QtvRtJj/H8fjePukf3JMGPiyt9
 sha256sum -c SHA256SUMS --ignore-missing
 ```
 
-### This key is a placeholder
+### Cutting a release
 
-**No keypair exists yet.** `RWQ...replace-with-the-real-key...` is a literal
-placeholder, not a truncated real key, and nothing will verify against it.
+The keypair is in place: the public key above and in `scripts/install.sh` is
+real, and the secret half lives only in the repository secrets, never in the
+tree. Before pushing a `v*` tag:
 
-The repository owner must generate the keypair with `minisign -G` and then put
-the halves in four places:
+- **Both `MINISIGN_SECRET_KEY` and `MINISIGN_PASSWORD` must exist as repository
+  secrets.** `.github/workflows/release.yml` checks for them before it builds
+  anything and fails the run immediately if either is missing.
+- **`scripts/install.sh` must pin the tag being released.** The workflow
+  refuses to publish while `VERSION` names a different version, so a `v1.1.0`
+  release also means updating `VERSION` in that script, the `curl` URLs in its
+  header comment, and the two install commands at the top of this file.
 
-| Half | Goes to |
-|---|---|
-| secret key (contents of `minisign.key`) | GitHub repository secret `MINISIGN_SECRET_KEY` |
-| its passphrase | GitHub repository secret `MINISIGN_PASSWORD` |
-| public key (the single base64 line, beginning `RW`) | `MINISIGN_PUBKEY` in `scripts/install.sh` |
-| the same public key | the `minisign -Vm` line above |
-
-Those four are not the whole job. Two more things in the repository know about
-the placeholder, and both go red on the commit that replaces it — so skipping
-either turns CI red on the release commit itself:
-
-1. **Re-record both goldens.** `scripts/testdata/dry-run-tunnel.golden` and
-   `dry-run-lan.golden` contain the key — it appears in the plan's
-   `minisign -Vm ... -P '<key>'` line — and the warning block `print_plan`
-   emits while it is a placeholder. Regenerate them by rerunning the two
-   commands at the top of `scripts/install_test.sh` with their output
-   redirected over the `.golden` files, and read the diff before committing:
-   the only changes should be the key and the disappearance of that warning.
-2. **Drop the placeholder-refusal assertion.** `scripts/install_test.sh`
-   asserts that a run without `--dry-run` refuses to start on a placeholder
-   key. It is the one assertion there that runs the installer for real, and a
-   real key makes it untestable — there is no longer a refusal to reach. It
-   goes away with the placeholder.
-
-Both repository secrets must exist before the first `v*` tag is pushed:
-`.github/workflows/release.yml` checks for them before it builds anything and
-fails the run immediately if either is missing.
-
-The same workflow refuses to publish while `scripts/install.sh` pins a version
-other than the tag being released, so pushing `v1.1.0` also means updating
-`VERSION` in that script, the `curl` URLs in its header comment, and the two
-install commands at the top of this file.
-
-The release workflow derives the public key from the secret key with
-`minisign -R` and prints it to the job summary, so after the first release you
-can copy it from there and compare it against what is in this file and in
-`scripts/install.sh`. All three must match. Until the placeholder is replaced,
-`scripts/install.sh` refuses to install anything: an installer that quietly
-skips verification is worse than one that does not run at all.
+The workflow re-derives the public key from the secret with `minisign -R` and
+prints it to the job summary. After a release, compare that value against the
+key in this file and in `scripts/install.sh` — all three must match.
 
 ---
 

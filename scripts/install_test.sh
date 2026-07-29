@@ -123,26 +123,13 @@ else
   echo "ok: unknown flag rejected"
 fi
 
-# An installer that silently skips verification because nobody filled in the
-# signing key is the worst outcome this file has, and it is the one thing here
-# that a real run must refuse outright rather than warn about.
-#
-# This is the only assertion in the suite that runs install.sh *without*
-# --dry-run, and it is only testable on a machine with no Proxmox on it because
-# of the ordering main() already chose: check_signing_key runs before
-# require_pve, precisely so the operator hears about a placeholder key wherever
-# they are reading the script. Reorder those two and this invocation dies of
-# "this must run on a Proxmox VE host" instead — non-zero, but for the wrong
-# reason, which is why the message is asserted and not just the exit status.
-placeholder_output="$(bash scripts/install.sh --yes --ctid 200 --network tls \
-  --admin-email me@example.com 2>&1)" && placeholder_rc=0 || placeholder_rc=$?
-if [ "$placeholder_rc" -eq 0 ]; then
-  echo "FAIL: the installer ran to completion with a placeholder signing key"; fail=1
-elif ! printf '%s\n' "$placeholder_output" | grep -q 'placeholder'; then
-  echo "FAIL: it refused, but not because of the placeholder key (no 'placeholder' in the message)"; fail=1
-else
-  echo "ok: a real run refuses a placeholder signing key"
-fi
+# The runtime placeholder-refusal assertion lived here until the real signing
+# key was filled in (2026-07-29). It ran install.sh without --dry-run and
+# checked that check_signing_key aborts on a placeholder key. With a real key
+# there is no refusal left to reach, so it became untestable and was removed;
+# check_signing_key itself still guards a fork that forgets the key, and the
+# static "not a placeholder" check at the bottom of this file keeps this repo's
+# own key from silently reverting.
 
 # Both halves of the supply-chain check must be in the plan, and the signature
 # must be checked before the checksums are. sha256sum -c on its own proves only
@@ -288,5 +275,15 @@ fi
 grep -q 'OWNER="ssan9876"' scripts/install.sh || { echo "FAIL: OWNER"; fail=1; }
 grep -qE '^VERSION="v[0-9]+\.[0-9]+\.[0-9]+"' scripts/install.sh || { echo "FAIL: VERSION not a pinned tag"; fail=1; }
 grep -q 'raw.githubusercontent.com/ssan9876/keyhole/main' scripts/install.sh && { echo "FAIL: a URL points at main"; fail=1; }
+# Scoped to the key line itself: the word "replace-with-the-real-key" also
+# lives in the file's comment and in is_placeholder_key's pattern, so an
+# unscoped grep would flag a real key as a placeholder.
+if grep -qE '^readonly MINISIGN_PUBKEY="RW[A-Za-z0-9+/]{54}"$' scripts/install.sh; then
+  echo "ok: MINISIGN_PUBKEY is a real minisign public key"
+elif grep -qE '^readonly MINISIGN_PUBKEY=".*replace-with-the-real-key' scripts/install.sh; then
+  echo "FAIL: MINISIGN_PUBKEY is still the placeholder"; fail=1
+else
+  echo "FAIL: MINISIGN_PUBKEY is neither the placeholder nor a well-formed key"; fail=1
+fi
 
 exit "$fail"
