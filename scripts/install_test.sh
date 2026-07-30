@@ -27,6 +27,10 @@ check "tls mode plan" scripts/testdata/dry-run-lan.golden \
   bash scripts/install.sh --dry-run --yes --ctid 200 --network tls \
     --admin-email me@example.com
 
+check "tunnel-remote mode plan" scripts/testdata/dry-run-tunnel-remote.golden \
+  bash scripts/install.sh --dry-run --yes --ctid 200 --network tunnel-remote \
+    --hostname-external vault.example.com --admin-email me@example.com
+
 # The plan must never contain a secret, whatever mode produced it.
 #
 # The plan is captured into a variable and matched with a bash `case` rather
@@ -50,6 +54,41 @@ case "$leak_plan" in
     echo "ok: no token in the plan" ;;
 esac
 rm -f "$token_file"
+
+# tunnel-remote: Keyhole sits behind a Cloudflare Tunnel that is already running
+# on another container, so this mode installs no cloudflared of its own. It has
+# to bind the LAN rather than loopback — the connector reaches it over the
+# bridge, not through 127.0.0.1 — and it must not pull cloudflared in the way
+# `tunnel` mode does. Both are asserted here directly, not only through the
+# golden, so a careless golden regeneration cannot quietly turn this mode back
+# into a second local tunnel or a loopback bind nothing off-box can reach.
+remote_plan=""
+if ! remote_plan="$(bash scripts/install.sh --dry-run --yes --ctid 200 \
+                      --network tunnel-remote --hostname-external vault.example.com \
+                      --admin-email me@example.com 2>&1)"; then
+  echo "FAIL: the tunnel-remote dry run did not exit 0"; fail=1
+fi
+case "$remote_plan" in
+  *"addr: 0.0.0.0:8477"*)
+    echo "ok: tunnel-remote binds the LAN, not loopback" ;;
+  *)
+    echo "FAIL: tunnel-remote does not bind 0.0.0.0:8477 (an off-box connector cannot reach loopback)"; fail=1 ;;
+esac
+# The install action is what this mode must not do, not the word: the closing
+# help is free to name cloudflared. `tunnel` mode's two telltales are the apt
+# install and `cloudflared service install`; neither may appear here.
+case "$remote_plan" in
+  *"cloudflared service install"* | *"--no-install-recommends cloudflared"*)
+    echo "FAIL: tunnel-remote installs cloudflared (it must reuse the existing off-box tunnel)"; fail=1 ;;
+  *)
+    echo "ok: tunnel-remote installs no cloudflared of its own" ;;
+esac
+case "$remote_plan" in
+  *"Public Hostname"*)
+    echo "ok: tunnel-remote tells the operator which Public Hostname to add" ;;
+  *)
+    echo "FAIL: tunnel-remote's closing instructions never mention adding a Public Hostname"; fail=1 ;;
+esac
 
 # ...but that assertion only inspects the plan, and the plan is produced by a
 # hand-written printf in push_tunnel_token rather than by the code that moves
