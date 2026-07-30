@@ -16,7 +16,7 @@ The installer creates an unprivileged Debian 12 container on a **Proxmox VE**
 host, installs a signed release, and ends by printing a setup URL. It must run
 as root on the Proxmox node.
 
-> **`v1.1.0` is published.** Both commands below fetch the tag
+> **`v1.1.1` is published.** Both commands below fetch the tag
 > `scripts/install.sh` pins, and the installer verifies the binary's minisign
 > signature against the key in [The signing key](#the-signing-key) before it
 > installs anything.
@@ -24,7 +24,7 @@ as root on the Proxmox node.
 ### Download, inspect, run
 
 ```bash
-curl -fsSLO https://raw.githubusercontent.com/ssan9876/keyhole/v1.1.0/scripts/install.sh
+curl -fsSLO https://raw.githubusercontent.com/ssan9876/keyhole/v1.1.1/scripts/install.sh
 less install.sh          # read it
 bash install.sh
 ```
@@ -32,7 +32,7 @@ bash install.sh
 ### One line
 
 ```bash
-bash -c "$(curl -fsSL https://raw.githubusercontent.com/ssan9876/keyhole/v1.1.0/scripts/install.sh)"
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/ssan9876/keyhole/v1.1.1/scripts/install.sh)"
 ```
 
 Piping a script to a shell is the exact risk a password manager exists to defend

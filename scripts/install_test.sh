@@ -90,6 +90,41 @@ case "$remote_plan" in
     echo "FAIL: tunnel-remote's closing instructions never mention adding a Public Hostname"; fail=1 ;;
 esac
 
+# keyhole is run inside the container by absolute path, never bare.
+#
+# `pct exec CT -- keyhole ...` resolves the name through lxc-attach's PATH,
+# which does not include /usr/local/bin — so a bare `keyhole` dies on a real
+# host with 'No such file or directory - Failed to exec "keyhole"' the instant
+# the binary lands there, while every dry-run golden still looks perfect
+# (--dry-run execs nothing). The systemd unit and the update shim already use
+# the absolute path; the two bootstrap steps must too.
+plan_paths="$(bash scripts/install.sh --dry-run --yes --ctid 200 --network tls \
+  --admin-email me@example.com 2>&1)"
+case "$plan_paths" in
+  *"pct exec 200 -- keyhole "*)
+    echo "FAIL: migrate/other step runs keyhole by bare name (pct exec PATH omits /usr/local/bin)"; fail=1 ;;
+  *"/usr/local/bin/keyhole migrate"*)
+    echo "ok: migrate runs keyhole by absolute path" ;;
+  *)
+    echo "FAIL: no keyhole migrate step found in the plan"; fail=1 ;;
+esac
+case "$plan_paths" in
+  *"runuser -u keyhole -- /usr/local/bin/keyhole admin create"*)
+    echo "ok: admin create runs keyhole by absolute path" ;;
+  *)
+    echo "FAIL: admin create does not run /usr/local/bin/keyhole (bare name fails under pct exec)"; fail=1 ;;
+esac
+# The update shim lives in /usr/local/bin too, and the closing help tells the
+# operator to run it via pct exec — so it has the same bare-name problem.
+case "$plan_paths" in
+  *"pct exec 200 -- update"*)
+    echo "FAIL: the documented update command is a bare name (fails under pct exec PATH)"; fail=1 ;;
+  *"pct exec 200 -- /usr/local/bin/update"*)
+    echo "ok: the documented update command uses an absolute path" ;;
+  *)
+    echo "FAIL: the closing help no longer documents the update command"; fail=1 ;;
+esac
+
 # ...but that assertion only inspects the plan, and the plan is produced by a
 # hand-written printf in push_tunnel_token rather than by the code that moves
 # the secret. The two branches are separate code, so the check above is blind to

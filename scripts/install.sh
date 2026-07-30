@@ -13,7 +13,7 @@
 #
 # The way to run it that lets you check all of that first:
 #
-#   curl -fsSLO https://raw.githubusercontent.com/ssan9876/keyhole/v1.1.0/scripts/install.sh
+#   curl -fsSLO https://raw.githubusercontent.com/ssan9876/keyhole/v1.1.1/scripts/install.sh
 #   less install.sh          # read it
 #   bash install.sh
 #
@@ -23,7 +23,7 @@ set -euo pipefail
 
 OWNER="ssan9876"
 REPO="keyhole"
-VERSION="v1.1.0"
+VERSION="v1.1.1"
 readonly OWNER REPO VERSION
 
 # The release signing key. Compare it against the README before trusting this
@@ -799,7 +799,13 @@ enable_backup_timer() {
 bootstrap_admin() {
   # Migrate as root before the service ever runs, so the first thing the
   # unprivileged unit does is not a schema change.
-  in_ct keyhole migrate --config "${CONFIG_DIR}/config.yml"
+  #
+  # Absolute path, not bare `keyhole`: `pct exec` resolves the command through
+  # lxc-attach's PATH, which does not include /usr/local/bin. A bare name dies
+  # with 'No such file or directory - Failed to exec "keyhole"' the moment the
+  # binary is installed there — which is exactly where install_binary puts it,
+  # and where the systemd unit and the update shim already call it from.
+  in_ct /usr/local/bin/keyhole migrate --config "${CONFIG_DIR}/config.yml"
   in_ct chown -R "${SERVICE_USER}:${SERVICE_USER}" "$DATA_DIR"
   in_ct systemctl enable --now keyhole
 
@@ -811,7 +817,7 @@ bootstrap_admin() {
   # point of this step and it only exists in this command's output. The dry-run
   # branch prints the identical command line, so the plan stays complete.
   local -a create=(pct exec "$CTID" -- runuser -u "$SERVICE_USER" -- \
-    keyhole admin create --email "$ADMIN_EMAIL" --config "${CONFIG_DIR}/config.yml")
+    /usr/local/bin/keyhole admin create --email "$ADMIN_EMAIL" --config "${CONFIG_DIR}/config.yml")
   if [ "$DRY_RUN" = "yes" ]; then
     printf 'RUN: %s\n' "${create[*]}"
     return 0
@@ -884,10 +890,10 @@ Worth knowing:
                 ${DATA_DIR}/backups; the ${BACKUP_KEEP} most recent snapshots
                 are kept and older ones pruned
                 pct exec ${CTID} -- systemctl list-timers keyhole-backup.timer
-                pct exec ${CTID} -- keyhole backup   (one now, off schedule)
+                pct exec ${CTID} -- /usr/local/bin/keyhole backup   (one now, off schedule)
                 (a snapshot is entirely ciphertext, so copying it somewhere
                 less trusted than this host is a reasonable thing to do)
-  Update        pct exec ${CTID} -- update
+  Update        pct exec ${CTID} -- /usr/local/bin/update
                 (verifies the signature the same way this install did, and
                 rolls back if the new binary will not answer /healthz)
   Logs          pct exec ${CTID} -- journalctl -u keyhole -f
