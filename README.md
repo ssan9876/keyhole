@@ -53,19 +53,28 @@ Every prompt has a flag, so the script is usable non-interactively.
 | `--disk GB` | `8` |
 | `--storage NAME` | `local-lvm` |
 | `--bridge NAME` | `vmbr0` |
-| `--network tunnel\|tls\|proxy` | prompt |
+| `--network tunnel\|tunnel-remote\|tls\|proxy` | prompt |
 | `--tunnel-token-file PATH` | prompted for in tunnel mode, never echoed |
-| `--hostname-external NAME` | required by tunnel and proxy modes |
+| `--hostname-external NAME` | required by tunnel, tunnel-remote and proxy modes |
 | `--admin-email ADDR` | prompt |
 | `--backup-keep N` | `14` snapshots kept by the nightly backup timer |
 | `--dry-run` | print the plan, change nothing |
 | `--yes` | skip the confirmation |
 
-### The three network modes
+### The four network modes
 
 - **tunnel** — binds `127.0.0.1:8477`; Cloudflare terminates TLS. Installs
-  `cloudflared` and registers it from a token file that is never passed as an
-  argument.
+  `cloudflared` and registers a *new* tunnel from a token file that is never
+  passed as an argument.
+- **tunnel-remote** — for a Cloudflare Tunnel you *already* run on another
+  container. Installs no `cloudflared` here: it binds `0.0.0.0:8477` and
+  terminates no TLS, so the existing `cloudflared` reaches this vault over the
+  LAN. You add one Public Hostname in the Zero Trust dashboard pointing at
+  `http://<this container's address>:8477`. Because the port is served in the
+  clear on the LAN, any host on that segment can reach the vault directly,
+  around Cloudflare — the stored data is ciphertext regardless, but a login
+  crosses the LAN in the clear, so firewall `8477` to your `cloudflared` host if
+  that matters.
 - **tls** — binds `0.0.0.0:8477` and terminates TLS itself with a self-signed
   certificate generated on the spot. Prints the certificate's SHA-256
   fingerprint, so the browser warning can be checked against something.

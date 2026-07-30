@@ -1,0 +1,210 @@
+
+Keyhole v1.0.0 will be installed as follows.
+
+  Container    200 (keyhole), unprivileged Debian 12
+  Resources    2 cores, 1024 MB RAM, 8 GB on local-lvm, bridge vmbr0
+  Reached by   tunnel-remote
+  Reached at   https://vault.example.com
+  Binary       https://github.com/ssan9876/keyhole/releases/download/v1.0.0/keyhole-linux-${arch}
+               verified against SHA256SUMS and its minisign signature
+  Data         /var/lib/keyhole (SQLite; entirely ciphertext)
+  Config       /etc/keyhole/config.yml
+  Service      systemd unit "keyhole", running as keyhole
+  Backups      nightly, by systemd timer "keyhole-backup", keeping the
+               14 most recent snapshots in /var/lib/keyhole/backups
+  Admin        me@example.com
+
+Nothing has been changed yet.
+RUN: pveam update
+RUN: sh -c pveam available --section system | awk '{print $2}' | grep '^debian-12-standard' | sort -V | tail -n 1
+  the newest debian-12-standard in that list is the template; it is downloaded if absent
+RUN: pveam download local <newest debian-12-standard>
+RUN: pct create 200 local:vztmpl/<newest debian-12-standard> --hostname keyhole --cores 2 --memory 1024 --swap 0 --rootfs local-lvm:8 --net0 name=eth0,bridge=vmbr0,ip=dhcp --unprivileged 1 --features nesting=0 --onboot 1
+RUN: pct start 200
+RUN: sh -c i=0; while [ $i -lt 60 ]; do pct exec 200 -- true >/dev/null 2>&1 && exit 0; i=$((i+1)); sleep 1; done; exit 1
+RUN: pct exec 200 -- sh -c set -eu
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y --no-install-recommends ca-certificates curl minisign
+RUN: pct exec 200 -- sh -c set -eu
+rm -rf '/tmp/keyhole-install'
+mkdir -p '/tmp/keyhole-install'
+cd '/tmp/keyhole-install'
+arch=$(dpkg --print-architecture)
+curl -fsSL --proto '=https' --tlsv1.2 -o "keyhole-linux-$arch" "https://github.com/ssan9876/keyhole/releases/download/v1.0.0/keyhole-linux-$arch"
+curl -fsSL --proto '=https' --tlsv1.2 -o SHA256SUMS "https://github.com/ssan9876/keyhole/releases/download/v1.0.0/SHA256SUMS"
+curl -fsSL --proto '=https' --tlsv1.2 -o SHA256SUMS.minisig "https://github.com/ssan9876/keyhole/releases/download/v1.0.0/SHA256SUMS.minisig"
+RUN: pct exec 200 -- sh -c set -eu
+cd '/tmp/keyhole-install'
+minisign -Vm SHA256SUMS -P 'RWQaHZz2jLPpRLK2aEj7/A/Rp0QtvRtJj/H8fjePukf3JMGPiyt91Ts6'
+RUN: pct exec 200 -- sh -c set -eu
+cd '/tmp/keyhole-install'
+sha256sum -c SHA256SUMS --ignore-missing
+RUN: pct exec 200 -- sh -c set -eu
+cd '/tmp/keyhole-install'
+arch=$(dpkg --print-architecture)
+install -o root -g root -m 0755 "keyhole-linux-$arch" /usr/local/bin/keyhole
+rm -rf '/tmp/keyhole-install'
+RUN: pct exec 200 -- sh -c set -eu
+umask 077
+cat > '/usr/local/bin/update' <<'KEYHOLE_EOF'
+#!/bin/sh
+exec /usr/local/bin/keyhole update "$@"
+KEYHOLE_EOF
+chown 'root:root' '/usr/local/bin/update'
+chmod '0755' '/usr/local/bin/update'
+RUN: pct exec 200 -- sh -c set -eu
+id -u 'keyhole' >/dev/null 2>&1 || useradd --system --home-dir '/var/lib/keyhole' --shell /usr/sbin/nologin 'keyhole'
+RUN: pct exec 200 -- install -d -o keyhole -g keyhole -m 0700 /var/lib/keyhole
+RUN: pct exec 200 -- install -d -o keyhole -g keyhole -m 0700 /var/lib/keyhole/backups
+RUN: pct exec 200 -- install -d -o root -g root -m 0755 /etc/keyhole
+  tunnel-remote installs nothing here; the tunnel you already run reaches this vault over the LAN
+RUN: pct exec 200 -- sh -c set -eu
+umask 077
+cat > '/etc/keyhole/config.yml' <<'KEYHOLE_EOF'
+# Written by scripts/install.sh (Keyhole v1.0.0).
+addr: 0.0.0.0:8477
+data_dir: /var/lib/keyhole
+base_url: https://vault.example.com
+log_level: info
+KEYHOLE_EOF
+chown 'root:keyhole' '/etc/keyhole/config.yml'
+chmod '0640' '/etc/keyhole/config.yml'
+RUN: pct exec 200 -- sh -c set -eu
+umask 077
+cat > '/etc/systemd/system/keyhole.service' <<'KEYHOLE_EOF'
+[Unit]
+Description=Keyhole password manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=keyhole
+Group=keyhole
+ExecStart=/usr/local/bin/keyhole serve --config /etc/keyhole/config.yml
+Restart=on-failure
+RestartSec=2
+
+# The process needs one writable directory and nothing else. Everything below
+# is what keeps a compromise of the HTTP handler from becoming a compromise of
+# the container.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+# Safe here, and worth keeping: the binary is CGO_ENABLED=0 static Go with no
+# JIT and no plugins, so nothing it does needs a page that is both writable and
+# executable. If something later appears to break under it, that is a reason to
+# find out what is allocating W+X memory, not a reason to delete this line.
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/keyhole
+
+[Install]
+WantedBy=multi-user.target
+KEYHOLE_EOF
+chown 'root:root' '/etc/systemd/system/keyhole.service'
+chmod '0644' '/etc/systemd/system/keyhole.service'
+RUN: pct exec 200 -- systemctl daemon-reload
+RUN: pct exec 200 -- sh -c set -eu
+umask 077
+cat > '/etc/systemd/system/keyhole-backup.service' <<'KEYHOLE_EOF'
+[Unit]
+Description=Keyhole nightly backup
+After=keyhole.service
+
+[Service]
+Type=oneshot
+User=keyhole
+Group=keyhole
+ExecStart=/usr/local/bin/keyhole backup --config /etc/keyhole/config.yml --keep 14
+
+# The same hardening as keyhole.service. It is the same binary reading the same
+# database and writing into the same one directory, so there is no reason for
+# the backup job to run with more of the container available to it than the
+# server does — and the job that reads every row is a poor place to relax it.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallFilter=@system-service
+SystemCallArchitectures=native
+ReadWritePaths=/var/lib/keyhole
+KEYHOLE_EOF
+chown 'root:root' '/etc/systemd/system/keyhole-backup.service'
+chmod '0644' '/etc/systemd/system/keyhole-backup.service'
+RUN: pct exec 200 -- sh -c set -eu
+umask 077
+cat > '/etc/systemd/system/keyhole-backup.timer' <<'KEYHOLE_EOF'
+[Unit]
+Description=Nightly Keyhole backup
+
+[Timer]
+OnCalendar=daily
+# A container that was powered off overnight has missed its run. Without this
+# the next backup is simply tomorrow's, and the gap is invisible until someone
+# needs a snapshot from a day that has none.
+Persistent=true
+# Several containers on one host would otherwise all VACUUM INTO at exactly
+# 00:00 and contend for the same disk.
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target
+KEYHOLE_EOF
+chown 'root:root' '/etc/systemd/system/keyhole-backup.timer'
+chmod '0644' '/etc/systemd/system/keyhole-backup.timer'
+RUN: pct exec 200 -- systemctl daemon-reload
+RUN: pct exec 200 -- keyhole migrate --config /etc/keyhole/config.yml
+RUN: pct exec 200 -- chown -R keyhole:keyhole /var/lib/keyhole
+RUN: pct exec 200 -- systemctl enable --now keyhole
+RUN: sh -c i=0; while [ $i -lt 30 ]; do pct exec 200 -- curl -fsS -o /dev/null 'http://127.0.0.1:8477/healthz' >/dev/null 2>&1 && exit 0; i=$((i+1)); sleep 1; done; exit 1
+RUN: pct exec 200 -- runuser -u keyhole -- keyhole admin create --email me@example.com --config /etc/keyhole/config.yml
+RUN: pct exec 200 -- systemctl enable --now keyhole-backup.timer
+
+That is the entire plan for Keyhole v1.0.0 in container 200. Nothing was changed.
+The setup link is printed by "keyhole admin create" at the end of a real run.
+
+Nothing was installed here for the tunnel. Add a Public Hostname to the
+Cloudflare Tunnel you already run, in the Zero Trust dashboard, pointing the
+cloudflared on your other container at this one over your LAN:
+
+  vault.example.com  ->  http://<this container's address>:8477
+
+One caveat this mode cannot avoid: 8477 is served in the clear and bound to
+every interface, so any host on this LAN can reach the vault directly, around
+Cloudflare. Stored data is ciphertext either way, but a login crosses the LAN
+in the clear. If that matters, firewall 8477 to your cloudflared host.
+
+Worth knowing:
+
+  Data          /var/lib/keyhole inside container 200 — item bodies, names and
+                URLs are ciphertext the server has never held a key for
+  Back up       nightly, shortly after 00:00 in the container's timezone, into
+                /var/lib/keyhole/backups; the 14 most recent snapshots
+                are kept and older ones pruned
+                pct exec 200 -- systemctl list-timers keyhole-backup.timer
+                pct exec 200 -- keyhole backup   (one now, off schedule)
+                (a snapshot is entirely ciphertext, so copying it somewhere
+                less trusted than this host is a reasonable thing to do)
+  Update        pct exec 200 -- update
+                (verifies the signature the same way this install did, and
+                rolls back if the new binary will not answer /healthz)
+  Logs          pct exec 200 -- journalctl -u keyhole -f

@@ -546,11 +546,20 @@ vault is reached → run `keyhole admin create` → print the setup URL and next
 secure context, so on a plain-HTTP origin that is not `localhost`,
 `globalThis.crypto.subtle` is `undefined` and every AES-GCM call in
 `packages/crypto` throws. A plain-HTTP install is therefore not a degraded
-deployment but a vault that cannot open a single item. The installer offers three
-modes and no fourth:
+deployment but a vault that cannot open a single item. The installer offers four
+modes, none of them plain HTTP:
 
 - **`tunnel`** — bind `127.0.0.1`, install `cloudflared`, register the token as a
-  service. Cloudflare terminates TLS. Requires a token in hand.
+  service for a *new* tunnel. Cloudflare terminates TLS. Requires a token in hand.
+- **`tunnel-remote`** — bind `0.0.0.0`, install nothing, terminate no TLS. For a
+  Cloudflare Tunnel that is already running on another container: its `cloudflared`
+  reaches this vault over the LAN, and the operator adds one Public Hostname in the
+  Zero Trust dashboard. This is `proxy` with an off-box fronting layer rather than a
+  same-host one, so it binds the bridge address instead of loopback. The tradeoff it
+  cannot avoid: the port is served in the clear on the LAN and reachable around
+  Cloudflare, so a login crosses the LAN unencrypted (the stored data is ciphertext
+  regardless). The closing output says so and suggests firewalling the port to the
+  `cloudflared` host.
 - **`tls`** — bind the container address and terminate TLS in-process from a
   self-signed certificate the installer generates, printing its SHA-256 fingerprint
   so the browser warning can be checked rather than clicked through.

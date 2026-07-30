@@ -39,10 +39,10 @@ readonly OWNER REPO VERSION
 # Filling in the real key is not only an edit to the line below. The tests know
 # about the placeholder in two ways, and both go red the moment it is replaced:
 #
-#   - both goldens in scripts/testdata/ record this key and the warning block
-#     print_plan emits for it, so regenerate them by rerunning the two commands
-#     at the top of scripts/install_test.sh with their output redirected over
-#     the .golden files, and read the diff before committing it;
+#   - the goldens in scripts/testdata/ record this key and the warning block
+#     print_plan emits for it, so regenerate them by rerunning the mode-plan
+#     check commands at the top of scripts/install_test.sh with their output
+#     redirected over the .golden files, and read the diff before committing it;
 #   - scripts/install_test.sh asserts that a real run refuses to start on a
 #     placeholder key, which a real key makes untestable here — that assertion
 #     goes away with the placeholder.
@@ -156,11 +156,12 @@ Usage: bash install.sh [options]
   --disk GB                 root disk in GB                  (default: 8)
   --storage NAME            Proxmox storage for the disk     (default: local-lvm)
   --bridge NAME             network bridge                   (default: vmbr0)
-  --network tunnel|tls|proxy  how the vault is reached       (default: prompt)
+  --network tunnel|tunnel-remote|tls|proxy
+                            how the vault is reached          (default: prompt)
   --tunnel-token-file PATH  read the Cloudflare token from a file
                             (tunnel mode; otherwise prompted for, never echoed)
   --hostname-external NAME  the public hostname, for base_url
-                            (required by tunnel and proxy modes)
+                            (required by tunnel, tunnel-remote and proxy modes)
   --admin-email ADDR        the first administrator          (default: prompt)
   --backup-keep N           snapshots the nightly backup timer
                             keeps; 0 keeps every one          (default: 14)
@@ -168,10 +169,16 @@ Usage: bash install.sh [options]
   --yes                     skip the confirmation
   -h, --help                this text
 
-The three network modes:
+The four network modes:
 
   tunnel  binds 127.0.0.1:8477; Cloudflare terminates TLS; installs cloudflared
-          and registers it from a token file that is never passed as an argument
+          and registers a new tunnel from a token file that is never passed as
+          an argument
+  tunnel-remote
+          binds 0.0.0.0:8477 and terminates no TLS; installs no cloudflared. For
+          a Cloudflare Tunnel you already run on another container, whose
+          cloudflared reaches this vault over the LAN; add a Public Hostname in
+          the Zero Trust dashboard pointing at http://<this container>:8477
   tls     binds 0.0.0.0:8477 and terminates TLS itself with a self-signed
           certificate generated here; prints the certificate's SHA-256
           fingerprint so the browser warning can be checked against something
@@ -255,14 +262,20 @@ prompt_network() {
 
 How will this vault be reached?
 
-  1) tunnel   Cloudflare Tunnel. Nothing is exposed on your router; Cloudflare
-              terminates TLS. Needs a tunnel token from the Zero Trust
-              dashboard.
+  1) tunnel   A new Cloudflare Tunnel, created here. Installs cloudflared in
+              this container and registers it. Nothing is exposed on your
+              router; Cloudflare terminates TLS. Needs a tunnel token from the
+              Zero Trust dashboard.
   2) tls      LAN only, on the container's own address, with a self-signed
               certificate generated here. The browser warns once; the
               fingerprint is printed so you can check it.
   3) proxy    You already have a reverse proxy terminating TLS. This writes no
               certificates and binds loopback only.
+  4) tunnel-remote
+              A Cloudflare Tunnel you already run on another container. Installs
+              no cloudflared here; you add a Public Hostname in the Zero Trust
+              dashboard pointing at this container over your LAN. Serves plain
+              HTTP on the LAN — see the caveat printed when the install ends.
 
 There is no plain-HTTP option: window.crypto.subtle does not exist outside a
 secure context, so an http:// origin gives you a vault that cannot decrypt a
@@ -270,13 +283,14 @@ single item.
 
 EOF
   local choice
-  printf 'Choose [1-3]: '
+  printf 'Choose [1-4]: '
   read -r choice || die "aborted"
   case "$choice" in
     1|tunnel) NETWORK="tunnel" ;;
     2|tls) NETWORK="tls" ;;
     3|proxy) NETWORK="proxy" ;;
-    *) die "not one of 1, 2 or 3: $choice" ;;
+    4|tunnel-remote) NETWORK="tunnel-remote" ;;
+    *) die "not one of 1, 2, 3 or 4: $choice" ;;
   esac
 }
 
@@ -285,8 +299,8 @@ prompt_for_missing() {
     prompt_network
   fi
   case "$NETWORK" in
-    tunnel|tls|proxy) ;;
-    *) die "--network must be one of tunnel, tls or proxy (got: $NETWORK)" ;;
+    tunnel|tunnel-remote|tls|proxy) ;;
+    *) die "--network must be one of tunnel, tunnel-remote, tls or proxy (got: $NETWORK)" ;;
   esac
 
   if [ "$NETWORK" != "tls" ] && [ -z "$HOSTNAME_EXTERNAL" ]; then
@@ -342,6 +356,19 @@ resolve_settings() {
   case "$NETWORK" in
     tunnel)
       ADDR="127.0.0.1:${PORT}"
+      BASE_URL="https://${HOSTNAME_EXTERNAL}"
+      BASE_URL_HUMAN="$BASE_URL"
+      HEALTH_URL="http://127.0.0.1:${PORT}/healthz"
+      HEALTH_CURL_FLAGS="-fsS"
+      ;;
+    tunnel-remote)
+      # A Cloudflare Tunnel that already exists, terminated by a cloudflared on
+      # some other container. Nothing is installed here: that connector reaches
+      # this vault over the LAN, so bind the bridge address rather than loopback
+      # — loopback is exactly what an off-box connector cannot reach. Plain HTTP,
+      # because Cloudflare terminates TLS at its edge just as in tunnel mode, and
+      # base_url is still the public hostname the tunnel answers on.
+      ADDR="0.0.0.0:${PORT}"
       BASE_URL="https://${HOSTNAME_EXTERNAL}"
       BASE_URL_HUMAN="$BASE_URL"
       HEALTH_URL="http://127.0.0.1:${PORT}/healthz"
@@ -632,6 +659,9 @@ chmod 0640 '${CONFIG_DIR}/tls.key' '${CONFIG_DIR}/tls.crt'"
     proxy)
       note "proxy mode writes no TLS material; your reverse proxy holds the certificate"
       ;;
+    tunnel-remote)
+      note "tunnel-remote installs nothing here; the tunnel you already run reaches this vault over the LAN"
+      ;;
   esac
 }
 
@@ -825,6 +855,21 @@ EOF
 The tunnel is registered. Point the Cloudflare public hostname
 ${HOSTNAME_EXTERNAL} at http://localhost:${PORT} in the Zero Trust dashboard if
 you have not already.
+
+EOF
+      ;;
+    tunnel-remote)
+      cat <<EOF
+Nothing was installed here for the tunnel. Add a Public Hostname to the
+Cloudflare Tunnel you already run, in the Zero Trust dashboard, pointing the
+cloudflared on your other container at this one over your LAN:
+
+  ${HOSTNAME_EXTERNAL}  ->  http://<this container's address>:${PORT}
+
+One caveat this mode cannot avoid: ${PORT} is served in the clear and bound to
+every interface, so any host on this LAN can reach the vault directly, around
+Cloudflare. Stored data is ciphertext either way, but a login crosses the LAN
+in the clear. If that matters, firewall ${PORT} to your cloudflared host.
 
 EOF
       ;;
