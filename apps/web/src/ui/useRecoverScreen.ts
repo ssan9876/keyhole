@@ -27,6 +27,7 @@ export function useRecoverScreen({
   store,
   deviceLabel,
   rememberedEmail,
+  rememberEmail,
   onExit,
 }: {
   api: ApiClient;
@@ -34,6 +35,9 @@ export function useRecoverScreen({
   store: VaultStore;
   deviceLabel: string;
   rememberedEmail: string | null;
+  /** Passed straight through to unlock() below, so this hook stays free of a
+   *  storage singleton the same way unlock() itself is. */
+  rememberEmail(email: string): void;
   /** Leave the recovery screen. The caller decides what replaces it — the
    *  vault when the sign-in below succeeded, the unlock screen otherwise. */
   onExit(): void;
@@ -93,7 +97,10 @@ export function useRecoverScreen({
         // full prelogin/login round trip and another Argon2id pass, which is
         // the price of not sending someone who has just set a password back to
         // a form asking for it.
-        await unlock({ api, session }, { email, masterPassword: newMasterPassword, deviceLabel });
+        await unlock(
+          { api, session, rememberEmail },
+          { email, masterPassword: newMasterPassword, deviceLabel },
+        );
         await store.load({ api, session });
         signedIn = true;
       } catch {
@@ -114,7 +121,7 @@ export function useRecoverScreen({
 
       return { ...outcome, signedIn };
     },
-    [api, deviceLabel, discard, session, store],
+    [api, deviceLabel, discard, rememberEmail, session, store],
   );
 
   // Finishing and abandoning are the same operation from here: drop anything

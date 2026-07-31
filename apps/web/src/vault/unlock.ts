@@ -5,7 +5,7 @@ import {
   type KdfParams,
 } from "@keyhole/crypto";
 import { ApiError, type ApiClient } from "./api.js";
-import { rememberEmail, type Session, type SessionUser } from "./session.js";
+import type { Session, SessionUser } from "./session.js";
 
 /**
  * The password did not open the vault.
@@ -44,7 +44,7 @@ interface LoginResponse {
  * waiting.
  */
 export async function unlock(
-  deps: { api: ApiClient; session: Session },
+  deps: { api: ApiClient; session: Session; rememberEmail: (email: string) => void },
   input: { email: string; masterPassword: string; deviceLabel: string },
 ): Promise<void> {
   const prelogin = await deps.api.post<PreloginResponse>("/api/auth/prelogin", {
@@ -91,7 +91,7 @@ export async function unlock(
       privateKey: keys.privateKey,
     });
     // Only after success: a failed attempt must not pin a typo into the screen.
-    rememberEmail(input.email);
+    deps.rememberEmail(input.email);
   } finally {
     // Zeroizes the derived master and wrapping keys whichever way this went.
     unlockSession.destroy();

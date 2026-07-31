@@ -8,7 +8,7 @@ import {
   zeroize,
 } from "@keyhole/crypto";
 import type { ApiClient } from "./api.js";
-import { rememberEmail, type Session, type SessionUser } from "./session.js";
+import type { Session, SessionUser } from "./session.js";
 
 export interface EnrolmentOutcome {
   /** Shown exactly once. It cannot be recovered afterwards — not by an admin,
@@ -46,7 +46,7 @@ interface LoginResponse {
  * derivation.
  */
 export async function enroll(
-  deps: { api: ApiClient; session: Session },
+  deps: { api: ApiClient; session: Session; rememberEmail: (email: string) => void },
   input: {
     inviteToken: string;
     email: string;
@@ -105,7 +105,7 @@ export async function enroll(
   // it. Remembering the email is safe regardless of what happens next: it is
   // the one value this application persists, and the user typed it whether
   // or not the login below succeeds.
-  rememberEmail(input.email);
+  deps.rememberEmail(input.email);
 
   try {
     const login = await deps.api.post<LoginResponse>("/api/auth/login", {

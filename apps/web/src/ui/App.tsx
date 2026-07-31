@@ -1,16 +1,20 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createApiClient } from "../vault/api.js";
-import { createSession, rememberedEmail } from "../vault/session.js";
+import { createSession } from "../vault/session.js";
 import { createVaultStore } from "../vault/store.js";
 import { enroll } from "../vault/enroll.js";
 import { unlock } from "../vault/unlock.js";
-import { readAutoLock, startAutoLock } from "../vault/autolock.js";
+import { startAutoLock } from "../vault/autolock.js";
+import { createPreferences } from "../vault/preferences.js";
+import { localStoragePreferences } from "../platform/localStoragePreferences.js";
 import { EnrolScreen } from "./screens/EnrolScreen.js";
 import { RecoverScreen } from "./screens/RecoverScreen.js";
 import { UnlockScreen } from "./screens/UnlockScreen.js";
 import { VaultScreen } from "./screens/VaultScreen.js";
 import { useRecoverScreen } from "./useRecoverScreen.js";
 import { useSession } from "./useVault.js";
+
+const prefs = createPreferences(localStoragePreferences());
 
 /**
  * Reads the one URL this application cares about.
@@ -70,7 +74,7 @@ export function App() {
   const inviteToken = useMemo(() => inviteTokenFromPath(window.location.pathname), []);
   const [enrolled, setEnrolled] = useState(false);
   const [recovering, setRecovering] = useState(false);
-  const [autoLock, setAutoLock] = useState(readAutoLock);
+  const [autoLock, setAutoLock] = useState(prefs.readAutoLock);
 
   const stopRecovering = useCallback(() => setRecovering(false), []);
   const recover = useRecoverScreen({
@@ -78,7 +82,8 @@ export function App() {
     session,
     store,
     deviceLabel: DEVICE_LABEL,
-    rememberedEmail: rememberedEmail(),
+    rememberedEmail: prefs.rememberedEmail(),
+    rememberEmail: prefs.rememberEmail,
     onExit: stopRecovering,
   });
 
@@ -102,7 +107,10 @@ export function App() {
   const handleUnlock = useCallback(
     async (input: { email: string; masterPassword: string }) => {
       setRefreshFailed(false);
-      await unlock({ api, session }, { ...input, deviceLabel: DEVICE_LABEL });
+      await unlock(
+        { api, session, rememberEmail: prefs.rememberEmail },
+        { ...input, deviceLabel: DEVICE_LABEL },
+      );
       await store.load({ api, session });
     },
     [api, session, store],
@@ -110,7 +118,10 @@ export function App() {
 
   const handleEnrol = useCallback(
     async (input: { inviteToken: string; email: string; masterPassword: string }) => {
-      const outcome = await enroll({ api, session }, { ...input, deviceLabel: DEVICE_LABEL });
+      const outcome = await enroll(
+        { api, session, rememberEmail: prefs.rememberEmail },
+        { ...input, deviceLabel: DEVICE_LABEL },
+      );
       // enroll() already resolved, which means POST /api/enroll/:token
       // returned 200 and outcome.recoveryCode must reach the caller no matter
       // what happens below. Only sync if login actually opened the session —
@@ -189,7 +200,7 @@ export function App() {
           </p>
         )}
         <UnlockScreen
-          rememberedEmail={rememberedEmail()}
+          rememberedEmail={prefs.rememberedEmail()}
           onUnlock={handleUnlock}
           onForgotPassword={() => setRecovering(true)}
         />
@@ -204,6 +215,7 @@ export function App() {
       store={store}
       autoLock={autoLock}
       onAutoLockChange={setAutoLock}
+      writeAutoLock={prefs.writeAutoLock}
     />
   );
 }

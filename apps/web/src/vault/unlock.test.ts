@@ -1,8 +1,20 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_KDF_PARAMS_JSON, enrollUser, toBase64 } from "@keyhole/crypto";
 import { ApiError, type ApiClient } from "./api.js";
-import { createSession, rememberedEmail } from "./session.js";
+import { createSession } from "./session.js";
 import { WrongMasterPasswordError, unlock } from "./unlock.js";
+
+/** A minimal stand-in for Preferences.rememberEmail, so these tests do not
+ *  need to know about PreferenceStore or localStorage at all. */
+function fakeRememberEmail(): { rememberEmail: (email: string) => void; remembered: () => string | null } {
+  let remembered: string | null = null;
+  return {
+    rememberEmail: (email) => {
+      remembered = email;
+    },
+    remembered: () => remembered,
+  };
+}
 
 // 16 bytes, the length assertKdfSalt requires.
 const SALT_B64 = toBase64(new Uint8Array(16).fill(7));
@@ -73,9 +85,10 @@ describe("unlock", () => {
       kdfParams: JSON.stringify(enrolled.params),
     });
     const session = createSession();
+    const { rememberEmail } = fakeRememberEmail();
 
     await unlock(
-      { api, session },
+      { api, session, rememberEmail },
       {
         email: "a@b.c",
         masterPassword: "correct horse battery staple",
@@ -103,7 +116,7 @@ describe("unlock", () => {
     });
 
     await unlock(
-      { api, session: createSession() },
+      { api, session: createSession(), rememberEmail: fakeRememberEmail().rememberEmail },
       { email: "a@b.c", masterPassword: "pw", deviceLabel: "test" },
     );
 
@@ -126,7 +139,7 @@ describe("unlock", () => {
     // both are the same thing to the person typing.
     await expect(
       unlock(
-        { api, session: createSession() },
+        { api, session: createSession(), rememberEmail: fakeRememberEmail().rememberEmail },
         { email: "a@b.c", masterPassword: "wrong", deviceLabel: "test" },
       ),
     ).rejects.toBeInstanceOf(WrongMasterPasswordError);
@@ -137,15 +150,16 @@ describe("unlock", () => {
       loginThrows: new ApiError("unauthorized", 401, "nope", {}),
     });
     const session = createSession();
+    const { rememberEmail, remembered } = fakeRememberEmail();
 
     await unlock(
-      { api, session },
+      { api, session, rememberEmail },
       { email: "typo@example.com", masterPassword: "wrong", deviceLabel: "test" },
     ).catch(() => undefined);
 
     expect(session.isUnlocked).toBe(false);
     // A failed attempt must not pin a mistyped address into the unlock screen.
-    expect(rememberedEmail()).toBeNull();
+    expect(remembered()).toBeNull();
   }, 60_000);
 
   it("remembers the email after a successful unlock", async () => {
@@ -156,12 +170,13 @@ describe("unlock", () => {
       kdfSalt: toBase64(enrolled.kdfSalt),
       kdfParams: JSON.stringify(enrolled.params),
     });
+    const { rememberEmail, remembered } = fakeRememberEmail();
 
     await unlock(
-      { api, session: createSession() },
+      { api, session: createSession(), rememberEmail },
       { email: "a@b.c", masterPassword: "pw", deviceLabel: "test" },
     );
 
-    expect(rememberedEmail()).toBe("a@b.c");
+    expect(remembered()).toBe("a@b.c");
   }, 60_000);
 });

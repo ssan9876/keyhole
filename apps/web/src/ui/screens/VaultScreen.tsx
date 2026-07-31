@@ -14,7 +14,8 @@ import {
   type ItemRecord,
 } from "../../vault/items.js";
 import type { CollectionSummary } from "../../vault/collections.js";
-import { DEFAULT_AUTO_LOCK, type AutoLockSetting } from "../../vault/autolock.js";
+import type { AutoLockSetting } from "../../vault/autolock.js";
+import { DEFAULT_AUTO_LOCK } from "../../vault/preferences.js";
 import { Button } from "../components/Button.js";
 import { Field } from "../components/Field.js";
 import { TabNav } from "../components/TabNav.js";
@@ -249,6 +250,7 @@ export function VaultScreen({
   store,
   autoLock = DEFAULT_AUTO_LOCK,
   onAutoLockChange = () => undefined,
+  writeAutoLock = () => undefined,
 }: {
   api: ApiClient;
   session: Session;
@@ -258,6 +260,9 @@ export function VaultScreen({
    *  default above. App.tsx is the only real caller that supplies these. */
   autoLock?: AutoLockSetting;
   onAutoLockChange?(setting: AutoLockSetting): void;
+  /** Passed straight through to useSettingsPanel, which persists a changed
+   *  setting immediately. Same optional-with-no-op pattern as the two above. */
+  writeAutoLock?(setting: AutoLockSetting): void;
 }) {
   const state = useVaultState(store);
   const [editing, setEditing] = useState<ItemRecord | "new" | null>(null);
@@ -308,6 +313,7 @@ export function VaultScreen({
     active: activeTab === "settings",
     autoLock,
     onAutoLockChange,
+    writeAutoLock,
   });
 
   // isAdmin folded into `active` itself, not just into whether the tab is

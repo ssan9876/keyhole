@@ -65,6 +65,7 @@ function setup(overrides: { session?: Session; store?: VaultStore; onExit?: () =
       store,
       deviceLabel: "Web",
       rememberedEmail: null,
+      rememberEmail: vi.fn(),
       onExit,
     }),
   );
@@ -268,6 +269,7 @@ describe("useRecoverScreen", () => {
         store,
         deviceLabel: "Web",
         rememberedEmail: null,
+        rememberEmail: vi.fn(),
         onExit: vi.fn(),
       }),
     );

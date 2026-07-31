@@ -1,42 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  AUTO_LOCK_STORAGE_KEY,
-  DEFAULT_AUTO_LOCK,
-  readAutoLock,
-  startAutoLock,
-  writeAutoLock,
-} from "./autolock.js";
+import { startAutoLock } from "./autolock.js";
 
-describe("the auto-lock preference", () => {
-  beforeEach(() => localStorage.clear());
-
-  it("defaults to 15 minutes when nothing is stored", () => {
-    expect(readAutoLock()).toBe(15);
-    expect(DEFAULT_AUTO_LOCK).toBe(15);
-  });
-
-  it("round-trips every documented setting", () => {
-    for (const setting of [1, 5, 15, 30, 60, "on-close", "never"] as const) {
-      writeAutoLock(setting);
-      expect(readAutoLock()).toBe(setting);
-    }
-  });
-
-  it("falls back to the default when the stored value is not a documented setting", () => {
-    // Anything else — a hand-edited value, a setting from a future version —
-    // must not leave the vault unlocked forever.
-    localStorage.setItem(AUTO_LOCK_STORAGE_KEY, "0");
-    expect(readAutoLock()).toBe(15);
-    localStorage.setItem(AUTO_LOCK_STORAGE_KEY, "forever");
-    expect(readAutoLock()).toBe(15);
-  });
-
-  it("stores nothing but the setting under its own key", () => {
-    writeAutoLock(30);
-    expect(Object.keys(localStorage)).toEqual([AUTO_LOCK_STORAGE_KEY]);
-  });
-});
-
+// The auto-lock *setting* -- reading it, writing it, its default, its
+// fallback for a bad stored value -- moved to preferences.ts and is covered
+// by preferences.test.ts now. What is left here is the DOM half: the timers
+// and event listeners startAutoLock itself owns, none of which preferences.ts
+// touches.
 describe("startAutoLock", () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());

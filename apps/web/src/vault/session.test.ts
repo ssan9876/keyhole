@@ -1,12 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { toBase64 } from "@keyhole/crypto";
-import {
-  EMAIL_STORAGE_KEY,
-  createSession,
-  forgetEmail,
-  rememberEmail,
-  rememberedEmail,
-} from "./session.js";
+import { EMAIL_STORAGE_KEY } from "./preferences.js";
+import { createSession } from "./session.js";
 import { openSession } from "./test-helpers.js";
 
 const USER = { id: "u1", email: "a@b.c", name: "A", role: "user" };
@@ -71,7 +66,12 @@ describe("session", () => {
 
   it("writes nothing but the email to storage, ever", () => {
     const session = openBasicSession();
-    rememberEmail("a@b.c");
+    // session.ts itself no longer touches storage at all -- rememberEmail
+    // moved to preferences.ts (Task 1 of the extraction). Seeding the one
+    // legitimate key directly here keeps this test's real subject intact:
+    // that open()/lock() and the rest of this module's own operations never
+    // write key material anywhere, regardless of who wrote the email.
+    localStorage.setItem(EMAIL_STORAGE_KEY, "a@b.c");
 
     // Build the dump from the raw stored strings rather than re-encoding
     // them. localStorage/sessionStorage values are already strings, so
@@ -127,13 +127,6 @@ describe("session", () => {
     expect(Object.keys(localStorage)).toEqual([EMAIL_STORAGE_KEY]);
     expect(Object.keys(sessionStorage)).toHaveLength(0);
     session.lock();
-  });
-
-  it("survives a remembered email across a fresh session", () => {
-    rememberEmail("person@example.com");
-    expect(rememberedEmail()).toBe("person@example.com");
-    forgetEmail();
-    expect(rememberedEmail()).toBeNull();
   });
 
   it("notifies subscribers on open and lock, and stops after unsubscribe", () => {

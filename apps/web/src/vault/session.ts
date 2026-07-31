@@ -59,30 +59,6 @@ export interface Session {
   subscribe(listener: () => void): () => void;
 }
 
-/**
- * The single permitted persisted value in this entire application.
- *
- * An email address is not a secret to the server — it is the account identity,
- * already known to anyone holding the device. Persisting it buys a password-only
- * unlock screen. Persisting the refresh token would buy nothing beyond that,
- * because the wrapped keys come back only from POST /api/auth/login
- * (internal/httpapi/auth.go:184) and never from refresh — so an unlock is a full
- * login regardless — while handing a device thief working API access.
- */
-export const EMAIL_STORAGE_KEY = "keyhole.email";
-
-export function rememberEmail(email: string): void {
-  localStorage.setItem(EMAIL_STORAGE_KEY, email);
-}
-
-export function rememberedEmail(): string | null {
-  return localStorage.getItem(EMAIL_STORAGE_KEY);
-}
-
-export function forgetEmail(): void {
-  localStorage.removeItem(EMAIL_STORAGE_KEY);
-}
-
 export function createSession(): Session {
   let tokens: SessionTokens | null = null;
   let user: SessionUser | null = null;

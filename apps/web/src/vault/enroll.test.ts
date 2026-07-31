@@ -103,7 +103,7 @@ describe("enroll", () => {
   it("sends params as the pinned constant, byte for byte", async () => {
     const { api, bodies } = recordingApi();
 
-    await enroll({ api, session: createSession() }, INPUT);
+    await enroll({ api, session: createSession(), rememberEmail: () => undefined }, INPUT);
 
     const body = bodies.get("/api/enroll") as EnrolBody;
     // The server rejects anything not byte-equal (Plan 2b Task 6). A
@@ -123,7 +123,7 @@ describe("enroll", () => {
     const { api, bodies } = recordingApi();
     const session = createSession();
 
-    const { recoveryCode } = await enroll({ api, session }, INPUT);
+    const { recoveryCode } = await enroll({ api, session, rememberEmail: () => undefined }, INPUT);
     const body = bodies.get("/api/enroll") as EnrolBody;
 
     // The recovery code matters on exactly one day: the day the master password
@@ -143,7 +143,7 @@ describe("enroll", () => {
   it("uploads the auth hash a redeeming client recomputes from the code and salt", async () => {
     const { api, bodies } = recordingApi();
 
-    const { recoveryCode } = await enroll({ api, session: createSession() }, INPUT);
+    const { recoveryCode } = await enroll({ api, session: createSession(), rememberEmail: () => undefined }, INPUT);
     const body = bodies.get("/api/enroll") as EnrolBody;
 
     // Recomputed here from the code and the two values the server keeps —
@@ -162,7 +162,7 @@ describe("enroll", () => {
   it("clears the auth hash buffer once it has been encoded, not before", async () => {
     const { api, bodies } = recordingApi();
 
-    await enroll({ api, session: createSession() }, INPUT);
+    await enroll({ api, session: createSession(), rememberEmail: () => undefined }, INPUT);
     const body = bodies.get("/api/enroll") as EnrolBody;
 
     // Order is the whole assertion. Zeroizing before toBase64 would upload a
@@ -176,7 +176,7 @@ describe("enroll", () => {
   it("never sends the recovery code to any endpoint, grouped or stripped", async () => {
     const { api, bodies } = recordingApi();
 
-    const { recoveryCode } = await enroll({ api, session: createSession() }, INPUT);
+    const { recoveryCode } = await enroll({ api, session: createSession(), rememberEmail: () => undefined }, INPUT);
 
     // Array.from, not the Map: JSON.stringify of a Map is "{}", so the two
     // not.toContain assertions below would hold against literally anything.
@@ -196,7 +196,7 @@ describe("enroll", () => {
     const { api, bodies } = recordingApi();
     const session = createSession();
 
-    await enroll({ api, session }, INPUT);
+    await enroll({ api, session, rememberEmail: () => undefined }, INPUT);
 
     const dump = JSON.stringify(bodies.get("/api/enroll"));
     const keys = session.getKeys();
@@ -219,7 +219,7 @@ describe("enroll", () => {
     const { api } = recordingApi();
     const session = createSession();
 
-    await enroll({ api, session }, INPUT);
+    await enroll({ api, session, rememberEmail: () => undefined }, INPUT);
 
     // enrollUser already returned the authHash, so the follow-up login needs no
     // prelogin and no second Argon2id pass. Asking someone to log in again
@@ -248,7 +248,7 @@ describe("enroll", () => {
     };
     const session = createSession();
 
-    const outcome = await enroll({ api, session }, INPUT);
+    const outcome = await enroll({ api, session, rememberEmail: () => undefined }, INPUT);
 
     expect(outcome.recoveryCode).toBeTruthy();
     expect(outcome.loggedIn).toBe(false);
