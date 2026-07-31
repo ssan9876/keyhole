@@ -236,7 +236,7 @@ describe("VaultScreen", () => {
     const store = createVaultStore();
     await store.load({ api, session });
 
-    render(<VaultScreen api={api} session={session} store={store} />);
+    render(<VaultScreen api={api} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByText("Example"));
     await userEvent.clear(screen.getByLabelText(/^name/i));
@@ -298,7 +298,7 @@ describe("VaultScreen collections", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     expect(await screen.findByText("Household login")).toBeInTheDocument();
     // Anchored to the start: the badge text is "Shared · Household", and
@@ -328,7 +328,7 @@ describe("VaultScreen collections", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     expect(screen.getByText("Household login")).toBeInTheDocument();
     expect(screen.getByText("Personal login")).toBeInTheDocument();
@@ -343,7 +343,7 @@ describe("VaultScreen collections", () => {
     const session = openSession(); // role "user", per test-helpers.ts
     const store = fakeStore({ revision: 0, items: [], folders: [], collections: [], status: "ready", error: null });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     expect(screen.queryByRole("button", { name: "Admin" })).not.toBeInTheDocument();
   });
@@ -390,7 +390,7 @@ describe("VaultScreen collections", () => {
       },
     };
 
-    render(<VaultScreen api={api} session={session} store={store} />);
+    render(<VaultScreen api={api} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByRole("button", { name: /add.*item/i }));
     await userEvent.type(screen.getByLabelText(/^name/i), "New login");
@@ -421,7 +421,7 @@ describe("VaultScreen collections", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByText(LOGIN.name));
     // Nothing shown yet: the picker still matches the item's own collection.
@@ -457,7 +457,7 @@ describe("VaultScreen undecryptable items", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByText(/couldn.t decrypt/i));
 
@@ -482,7 +482,7 @@ describe("VaultScreen undecryptable items", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByText("Example"));
 
@@ -523,7 +523,7 @@ describe("VaultScreen folder assignment (editor)", () => {
       },
     });
 
-    render(<VaultScreen api={api} session={session} store={store} />);
+    render(<VaultScreen api={api} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByRole("button", { name: /add.*item/i }));
     await userEvent.type(screen.getByLabelText(/^name/i), "New login");
@@ -580,7 +580,7 @@ describe("VaultScreen folder assignment (editor)", () => {
       },
     });
 
-    render(<VaultScreen api={api} session={session} store={store} />);
+    render(<VaultScreen api={api} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByText("Example"));
     // The current assignment is shown, but as an un-selectable option.
@@ -611,7 +611,7 @@ describe("VaultScreen folder assignment (editor)", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByText("Example"));
 
@@ -664,7 +664,7 @@ describe("VaultScreen folder sidebar", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     expect(screen.getByText("Work login")).toBeInTheDocument();
     expect(screen.getByText("Loose login")).toBeInTheDocument();
@@ -693,7 +693,7 @@ describe("VaultScreen folder sidebar", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     // Never hidden: All items shows it.
     expect(screen.getByText("Orphan login")).toBeInTheDocument();
@@ -720,7 +720,7 @@ describe("VaultScreen folder sidebar", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByRole("button", { name: "Personal" }));
     expect(screen.getByText("Loose login")).toBeInTheDocument();
@@ -746,7 +746,7 @@ describe("VaultScreen folder sidebar", () => {
       post: async () => ({ id: "f9", encryptedName: "opaque", revision: 1, deletedAt: null }),
     });
 
-    render(<VaultScreen api={api} session={session} store={store} />);
+    render(<VaultScreen api={api} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.type(screen.getByLabelText("New folder name"), "Travel");
     await userEvent.click(screen.getByRole("button", { name: "Add folder" }));

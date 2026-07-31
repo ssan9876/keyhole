@@ -250,7 +250,7 @@ export function VaultScreen({
   store,
   autoLock = DEFAULT_AUTO_LOCK,
   onAutoLockChange = () => undefined,
-  writeAutoLock = () => undefined,
+  writeAutoLock,
 }: {
   api: ApiClient;
   session: Session;
@@ -260,9 +260,14 @@ export function VaultScreen({
    *  default above. App.tsx is the only real caller that supplies these. */
   autoLock?: AutoLockSetting;
   onAutoLockChange?(setting: AutoLockSetting): void;
-  /** Passed straight through to useSettingsPanel, which persists a changed
-   *  setting immediately. Same optional-with-no-op pattern as the two above. */
-  writeAutoLock?(setting: AutoLockSetting): void;
+  /**
+   * Required, unlike the two props above: a silent no-op default here would
+   * mean any future caller that forgets this prop compiles cleanly while
+   * every auto-lock change a user makes is quietly dropped on the floor
+   * instead of persisted. useSettingsPanel.ts's own `writeAutoLock` is
+   * required for the same reason -- this prop only forwards to it.
+   */
+  writeAutoLock(setting: AutoLockSetting): void;
 }) {
   const state = useVaultState(store);
   const [editing, setEditing] = useState<ItemRecord | "new" | null>(null);

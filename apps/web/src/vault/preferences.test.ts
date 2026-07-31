@@ -57,6 +57,17 @@ describe("auto-lock", () => {
     expect(prefs.readAutoLock()).toBe(15);
   });
 
+  // A distinct branch from the "0" case above: "0" is digit-shaped and takes
+  // readAutoLock's Number(raw) branch, failing the SETTINGS check as a
+  // number. A non-numeric string like "forever" never reaches Number(raw) at
+  // all -- it takes the other side of the ternary and fails the same check
+  // as a string. Both must fall back, but a bug in only one branch would
+  // pass a suite that exercised just one of them.
+  it("falls back to the default for a non-numeric unrecognised value", () => {
+    const prefs = createPreferences(fakeStore({ [AUTO_LOCK_STORAGE_KEY]: "forever" }));
+    expect(prefs.readAutoLock()).toBe(15);
+  });
+
   it("writes a setting as a string", () => {
     const store = fakeStore();
     createPreferences(store).writeAutoLock("never");
