@@ -1,11 +1,11 @@
 
-Keyhole v1.1.2 will be installed as follows.
+Keyhole v1.2.0 will be installed as follows.
 
   Container    200 (keyhole), unprivileged Debian 12
   Resources    2 cores, 1024 MB RAM, 8 GB on local-lvm, bridge vmbr0
   Reached by   tunnel-remote
   Reached at   https://vault.example.com
-  Binary       https://github.com/ssan9876/keyhole/releases/download/v1.1.2/keyhole-linux-${arch}
+  Binary       https://github.com/ssan9876/keyhole/releases/download/v1.2.0/keyhole-linux-${arch}
                verified against SHA256SUMS and its minisign signature
   Data         /var/lib/keyhole (SQLite; entirely ciphertext)
   Config       /etc/keyhole/config.yml
@@ -32,9 +32,9 @@ rm -rf '/tmp/keyhole-install'
 mkdir -p '/tmp/keyhole-install'
 cd '/tmp/keyhole-install'
 arch=$(dpkg --print-architecture)
-curl -fsSL --proto '=https' --tlsv1.2 -o "keyhole-linux-$arch" "https://github.com/ssan9876/keyhole/releases/download/v1.1.2/keyhole-linux-$arch"
-curl -fsSL --proto '=https' --tlsv1.2 -o SHA256SUMS "https://github.com/ssan9876/keyhole/releases/download/v1.1.2/SHA256SUMS"
-curl -fsSL --proto '=https' --tlsv1.2 -o SHA256SUMS.minisig "https://github.com/ssan9876/keyhole/releases/download/v1.1.2/SHA256SUMS.minisig"
+curl -fsSL --proto '=https' --tlsv1.2 -o "keyhole-linux-$arch" "https://github.com/ssan9876/keyhole/releases/download/v1.2.0/keyhole-linux-$arch"
+curl -fsSL --proto '=https' --tlsv1.2 -o SHA256SUMS "https://github.com/ssan9876/keyhole/releases/download/v1.2.0/SHA256SUMS"
+curl -fsSL --proto '=https' --tlsv1.2 -o SHA256SUMS.minisig "https://github.com/ssan9876/keyhole/releases/download/v1.2.0/SHA256SUMS.minisig"
 RUN: pct exec 200 -- sh -c set -eu
 cd '/tmp/keyhole-install'
 minisign -Vm SHA256SUMS -P 'RWQaHZz2jLPpRLK2aEj7/A/Rp0QtvRtJj/H8fjePukf3JMGPiyt91Ts6'
@@ -63,7 +63,7 @@ RUN: pct exec 200 -- install -d -o root -g root -m 0755 /etc/keyhole
 RUN: pct exec 200 -- sh -c set -eu
 umask 077
 cat > '/etc/keyhole/config.yml' <<'KEYHOLE_EOF'
-# Written by scripts/install.sh (Keyhole v1.1.2).
+# Written by scripts/install.sh (Keyhole v1.2.0).
 addr: 0.0.0.0:8477
 data_dir: /var/lib/keyhole
 base_url: https://vault.example.com
@@ -180,7 +180,7 @@ RUN: sh -c i=0; while [ $i -lt 30 ]; do pct exec 200 -- curl -fsS -o /dev/null '
 RUN: pct exec 200 -- runuser -u keyhole -- /usr/local/bin/keyhole admin create --email me@example.com --config /etc/keyhole/config.yml
 RUN: pct exec 200 -- systemctl enable --now keyhole-backup.timer
 
-That is the entire plan for Keyhole v1.1.2 in container 200. Nothing was changed.
+That is the entire plan for Keyhole v1.2.0 in container 200. Nothing was changed.
 The setup link is printed by "keyhole admin create" at the end of a real run.
 
 Nothing was installed here for the tunnel. Add a Public Hostname to the

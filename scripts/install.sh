@@ -13,7 +13,7 @@
 #
 # The way to run it that lets you check all of that first:
 #
-#   curl -fsSLO https://raw.githubusercontent.com/ssan9876/keyhole/v1.1.2/scripts/install.sh
+#   curl -fsSLO https://raw.githubusercontent.com/ssan9876/keyhole/v1.2.0/scripts/install.sh
 #   less install.sh          # read it
 #   bash install.sh
 #
@@ -23,7 +23,7 @@ set -euo pipefail
 
 OWNER="ssan9876"
 REPO="keyhole"
-VERSION="v1.1.2"
+VERSION="v1.2.0"
 readonly OWNER REPO VERSION
 
 # The release signing key. Compare it against the README before trusting this
