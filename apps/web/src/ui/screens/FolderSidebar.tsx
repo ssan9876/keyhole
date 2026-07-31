@@ -36,18 +36,9 @@ function FilterButton({
   return (
     <button
       type="button"
+      className="kh-filter"
       aria-pressed={isSelected}
       onClick={() => onSelect(value)}
-      style={{
-        font: "inherit",
-        background: "transparent",
-        border: "none",
-        color: isSelected ? "var(--ink)" : "var(--ink-muted)",
-        fontWeight: isSelected ? 600 : 400,
-        cursor: "pointer",
-        textAlign: "left",
-        padding: 0,
-      }}
     >
       {label}
     </button>
@@ -92,20 +83,29 @@ function FolderRow({
   }
 
   return (
-    <li style={{ borderTop: "1px solid var(--rule)", padding: "var(--space-2) 0" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "var(--space-2)" }}>
+    <li>
+      <div className="kh-rail-row">
         <FilterButton label={label} value={folder.id} selected={selected} onSelect={onSelect} />
-        <div style={{ display: "flex", gap: "var(--space-2)" }}>
-          <Button type="button" variant="quiet" onClick={() => setRenaming((open) => !open)}>
+        {/* Always visible rather than revealed on hover: a phone has no hover,
+            and a control you can only find with a pointer is a control half the
+            users do not have. */}
+        <div className="kh-rail-row-actions">
+          <Button
+            type="button"
+            variant="quiet"
+            size="sm"
+            aria-expanded={renaming}
+            onClick={() => setRenaming((open) => !open)}
+          >
             Rename
           </Button>
-          <Button type="button" variant="quiet" onClick={() => onDelete(folder)}>
+          <Button type="button" variant="quiet" size="sm" onClick={() => onDelete(folder)}>
             Delete
           </Button>
         </div>
       </div>
       {renaming && (
-        <form onSubmit={submitRename} style={{ marginTop: "var(--space-2)" }}>
+        <form onSubmit={submitRename} className="kh-rail-form">
           <Field
             label="Rename folder"
             value={name}
@@ -113,11 +113,11 @@ function FolderRow({
             required
           />
           {error !== null && (
-            <p role="alert" style={{ color: "var(--danger)" }}>
+            <p role="alert" className="kh-alert">
               {error}
             </p>
           )}
-          <Button type="submit" disabled={busy}>
+          <Button type="submit" size="sm" disabled={busy}>
             {busy ? "Saving…" : "Save name"}
           </Button>
         </form>
@@ -164,14 +164,14 @@ export function FolderSidebar({
   }
 
   return (
-    <section style={{ marginBottom: "var(--space-4)" }}>
-      <h2 style={{ fontSize: "1rem", fontWeight: 600, margin: "0 0 var(--space-2)" }}>Folders</h2>
+    <section className="kh-rail-section">
+      <h2 className="kh-section-title">Folders</h2>
 
-      <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
-        <li style={{ padding: "var(--space-2) 0" }}>
+      <ul className="kh-rail-list">
+        <li>
           <FilterButton label="All items" value="" selected={selected} onSelect={onSelect} />
         </li>
-        <li style={{ borderTop: "1px solid var(--rule)", padding: "var(--space-2) 0" }}>
+        <li>
           <FilterButton label="Personal" value="personal" selected={selected} onSelect={onSelect} />
         </li>
         {folders.map((folder) => (
@@ -189,7 +189,7 @@ export function FolderSidebar({
         ))}
       </ul>
 
-      <form onSubmit={submitCreate} style={{ marginTop: "var(--space-3)" }}>
+      <form onSubmit={submitCreate} className="kh-rail-form">
         <Field
           label="New folder name"
           value={newName}
@@ -197,17 +197,19 @@ export function FolderSidebar({
           required
         />
         {createError !== null && (
-          <p role="alert" style={{ color: "var(--danger)" }}>
+          <p role="alert" className="kh-alert">
             {createError}
           </p>
         )}
-        <Button type="submit" disabled={createBusy}>
+        {/* Quiet, not primary: the primary action on this screen is "Add an
+            item", one pane over. */}
+        <Button type="submit" variant="quiet" size="sm" block disabled={createBusy}>
           {createBusy ? "Adding…" : "Add folder"}
         </Button>
       </form>
 
       {deleteError !== null && (
-        <p role="alert" style={{ color: "var(--danger)" }}>
+        <p role="alert" className="kh-alert">
           {deleteError}
         </p>
       )}

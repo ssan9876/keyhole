@@ -259,23 +259,23 @@ export function ImportScreen({ formats, collections, onInspect, onPreview, onImp
 
   return (
     <div>
-      <h2 style={{ fontSize: "1rem", fontWeight: 600 }}>Import a password export</h2>
+      <h2 className="kh-subhead">Import a password export</h2>
 
       {error !== null && (
-        <p role="alert" style={{ color: "var(--danger)", marginBottom: "var(--space-4)" }}>
+        <p role="alert" className="kh-alert">
           {error}
         </p>
       )}
 
       {step === "upload" && (
         <section>
-          <p style={{ color: "var(--ink-muted)" }}>
+          <p className="kh-muted">
             Export your vault from your current password manager, then choose that file here. It is
             read and encrypted entirely in this browser; nothing in it is sent anywhere until you
             have reviewed exactly what will be imported.
           </p>
-          <div style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-4)" }}>
-            <label htmlFor={fileInputId} style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
+          <div className="kh-field">
+            <label htmlFor={fileInputId} className="kh-label">
               Choose an export file
             </label>
             <input
@@ -296,14 +296,14 @@ export function ImportScreen({ formats, collections, onInspect, onPreview, onImp
 
       {step === "map" && inspect !== null && (
         <section>
-          <p style={{ color: "var(--ink-muted)" }}>
+          <p className="kh-muted">
             {inspect.vendors.length > 0
               ? `This looks like a ${vendorList(inspect.vendors)} export. Change it if that is wrong.`
               : "We could not recognise this file, so tell us the format, or map the columns yourself below."}
           </p>
 
-          <div style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-4)" }}>
-            <label htmlFor={formatSelectId} style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
+          <div className="kh-field">
+            <label htmlFor={formatSelectId} className="kh-label">
               Export format
             </label>
             <select
@@ -323,7 +323,7 @@ export function ImportScreen({ formats, collections, onInspect, onPreview, onImp
             // Keeper's header-less CSV is the one format whose columns cannot be
             // checked against anything but the preview, so its own warning has
             // to be read before the user gets there.
-            <p style={{ color: "var(--danger)", marginBottom: "var(--space-4)" }}>{chosenFormat.caution}</p>
+            <p className="kh-alert">{chosenFormat.caution}</p>
           )}
 
           {format === "generic-csv" && mapping !== null && (
@@ -336,8 +336,8 @@ export function ImportScreen({ formats, collections, onInspect, onPreview, onImp
           )}
 
           {collections.length > 0 && (
-            <div style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-4)" }}>
-              <label htmlFor={targetSelectId} style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
+            <div className="kh-field">
+              <label htmlFor={targetSelectId} className="kh-label">
                 Import into
               </label>
               <select
@@ -355,7 +355,7 @@ export function ImportScreen({ formats, collections, onInspect, onPreview, onImp
             </div>
           )}
 
-          <div style={{ display: "flex", gap: "var(--space-2)" }}>
+          <div className="kh-actions">
             <Button type="button" disabled={busy} onClick={() => void runPreview()}>
               {busy ? "Reading…" : "Preview the import"}
             </Button>
@@ -384,7 +384,7 @@ export function ImportScreen({ formats, collections, onInspect, onPreview, onImp
             // Rendered on purpose: a row with no web address was not compared to
             // anything, which is a different answer from "checked and clean" and
             // the user is owed the distinction.
-            <p style={{ color: "var(--ink-muted)", marginTop: "var(--space-4)" }}>
+            <p className="kh-muted kh-mt">
               {preview.duplicates.unchecked.length}{" "}
               {preview.duplicates.unchecked.length === 1 ? "row has" : "rows have"} no web address,
               so {preview.duplicates.unchecked.length === 1 ? "it was" : "they were"} not checked for
@@ -395,12 +395,12 @@ export function ImportScreen({ formats, collections, onInspect, onPreview, onImp
           {preview.errors.length > 0 && <ErrorList title="These rows could not be read" errors={preview.errors} />}
 
           {progress !== null && (
-            <p role="status" style={{ color: "var(--ink-muted)", marginTop: "var(--space-4)" }}>
+            <p role="status" className="kh-muted kh-mt">
               Uploading… {progress.uploaded} of {progress.total} saved so far.
             </p>
           )}
 
-          <div style={{ display: "flex", gap: "var(--space-2)", marginTop: "var(--space-4)" }}>
+          <div className="kh-actions kh-mt">
             <Button type="button" disabled={busy || counts.toImport === 0} onClick={() => setConfirming(true)}>
               {counts.toImport === 1 ? "Import 1 item" : `Import ${counts.toImport} items`}
             </Button>
@@ -453,13 +453,13 @@ function ColumnMapping({
 }) {
   const ids = useId();
   return (
-    <fieldset style={{ border: "1px solid var(--rule)", padding: "var(--space-4)", marginBottom: "var(--space-4)" }}>
-      <legend style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>Which column holds what</legend>
+    <fieldset className="kh-panel">
+      <legend className="kh-meta">Which column holds what</legend>
       {MAPPING_FIELDS.map((field) => {
         const id = `${ids}-${field.key}`;
         return (
-          <div key={field.key} style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-2)" }}>
-            <label htmlFor={id} style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
+          <div key={field.key} className="kh-field kh-field-sm">
+            <label htmlFor={id} className="kh-label">
               {field.label}
             </label>
             <select
@@ -477,8 +477,8 @@ function ColumnMapping({
           </div>
         );
       })}
-      <div style={{ display: "grid", gap: "var(--space-1)" }}>
-        <label htmlFor={separatorId} style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
+      <div className="kh-field kh-field-flush">
+        <label htmlFor={separatorId} className="kh-label">
           Folder separator
         </label>
         <input
@@ -486,7 +486,6 @@ function ColumnMapping({
           type="text"
           value={mapping.folderSeparator}
           onChange={(e) => onChange({ ...mapping, folderSeparator: e.target.value })}
-          style={{ font: "inherit", padding: "var(--space-2)", border: "1px solid var(--rule)", background: "transparent", color: "var(--ink)" }}
         />
       </div>
     </fieldset>
@@ -503,11 +502,11 @@ function PreviewSummary({ counts }: { counts: { total: number; toImport: number;
   // single "imported N", so a number that does not add up says which part is
   // which instead of hiding a dropped row inside a total.
   return (
-    <div style={{ marginBottom: "var(--space-4)" }}>
-      <p style={{ margin: 0 }}>
+    <div className="kh-mb">
+      <p className="kh-m-0">
         {counts.total} {counts.total === 1 ? "row" : "rows"} read from your file.
       </p>
-      <ul style={{ margin: "var(--space-2) 0 0", paddingLeft: "var(--space-4)" }}>
+      <ul className="kh-bullets">
         <li>{counts.toImport} will be imported</li>
         <li>{counts.skipped} skipped as duplicates</li>
         <li>{counts.errors} could not be read</li>
@@ -518,14 +517,13 @@ function PreviewSummary({ counts }: { counts: { total: number; toImport: number;
 
 function PreviewTable({ rows }: { rows: readonly PreviewRow[] }) {
   return (
-    <div style={{ overflowX: "auto", marginBottom: "var(--space-4)" }}>
-      <table style={{ borderCollapse: "collapse", width: "100%", fontSize: "0.875rem" }}>
+    <div className="kh-scroll-x">
+      <table className="kh-table">
         <thead>
           <tr>
             {["Row", "Name", "Username", "Password", "Kind"].map((heading) => (
               <th
                 key={heading}
-                style={{ textAlign: "left", borderBottom: "1px solid var(--rule-strong)", padding: "var(--space-1) var(--space-2)" }}
               >
                 {heading}
               </th>
@@ -534,17 +532,17 @@ function PreviewTable({ rows }: { rows: readonly PreviewRow[] }) {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.index} style={{ borderBottom: "1px solid var(--rule)" }}>
-              <td style={{ padding: "var(--space-1) var(--space-2)", color: "var(--ink-muted)" }}>{row.sourceRow}</td>
-              <td style={{ padding: "var(--space-1) var(--space-2)" }}>{row.name || <em style={{ color: "var(--ink-muted)" }}>(no name)</em>}</td>
-              <td style={{ padding: "var(--space-1) var(--space-2)" }}>{row.username}</td>
-              <td style={{ padding: "var(--space-1) var(--space-2)", fontFamily: "var(--font-mono)" }}>
+            <tr key={row.index} className="kh-row-item">
+              <td className="kh-muted">{row.sourceRow}</td>
+              <td>{row.name || <em className="kh-muted">(no name)</em>}</td>
+              <td>{row.username}</td>
+              <td className="kh-mono">
                 {/* The start of the password only. A URL shifted into this
                     column reads as "ht…", which is the whole point of showing
                     it — Keeper's header-less CSV has no other check. */}
-                {row.type === "note" ? <span style={{ color: "var(--ink-muted)" }}>—</span> : row.passwordPreview}
+                {row.type === "note" ? <span className="kh-muted">—</span> : row.passwordPreview}
               </td>
-              <td style={{ padding: "var(--space-1) var(--space-2)", color: "var(--ink-muted)" }}>
+              <td className="kh-muted">
                 {row.type === "note" ? "Note" : "Login"}
                 {row.carriedCount > 0 ? ` (+${row.carriedCount} in notes)` : ""}
               </td>
@@ -566,29 +564,29 @@ function DuplicatesSection({
   onToggle(index: number, skip: boolean): void;
 }) {
   return (
-    <section style={{ marginTop: "var(--space-4)" }}>
-      <h3 style={{ fontSize: "0.9375rem", fontWeight: 600 }}>
+    <section className="kh-mt">
+      <h3 className="kh-subhead-sm">
         Possible duplicates ({groups.length})
       </h3>
-      <p style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
+      <p className="kh-meta">
         Same website and username as something you already have, or as another row in this file.
         Choose whether to skip each one; nothing is merged for you.
       </p>
-      <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+      <ul className="kh-plain-list">
         {groups.map((group, index) => (
-          <li key={`${group.key.host}\n${group.key.username}`} style={{ borderTop: "1px solid var(--rule)", padding: "var(--space-2) 0" }}>
-            <label style={{ display: "flex", gap: "var(--space-2)", alignItems: "baseline" }}>
+          <li key={`${group.key.host}\n${group.key.username}`} className="kh-row-item">
+            <label className="kh-actions kh-actions-baseline">
               <input
                 type="checkbox"
                 checked={skipGroups[index] ?? false}
                 onChange={(e) => onToggle(index, e.target.checked)}
               />
               <span>
-                <span style={{ display: "block" }}>
+                <span className="kh-block">
                   {group.key.host}
                   {group.key.username !== "" ? ` · ${group.key.username}` : ""}
                 </span>
-                <span style={{ color: "var(--ink-muted)", fontSize: "0.8125rem" }}>
+                <span className="kh-meta-xs">
                   {group.existing.length > 0
                     ? `Already in your vault${group.rows.length > 1 ? `, and ${group.rows.length} rows in this file` : ""}`
                     : `Appears on ${group.rows.length} rows in this file`}
@@ -606,20 +604,19 @@ function DuplicatesSection({
 
 function ErrorList({ title, errors }: { title: string; errors: readonly ImportRowError[] }) {
   return (
-    <section style={{ marginTop: "var(--space-4)" }}>
-      <h3 style={{ fontSize: "0.9375rem", fontWeight: 600 }}>
+    <section className="kh-mt">
+      <h3 className="kh-subhead-sm">
         {title} ({errors.length})
       </h3>
-      <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+      <ul className="kh-plain-list">
         {errors.map((rowError) => (
           <li
-            key={`${rowError.row}:${rowError.message}`}
-            style={{ borderTop: "1px solid var(--rule)", padding: "var(--space-2) 0", fontSize: "0.875rem" }}
+            key={`${rowError.row}:${rowError.message}`} className="kh-row-item kh-text-sm"
           >
             {/* Row number plus the format's own message: a user who imports 400
                 of 414 can see which 14 and why, rather than trusting a bare
                 "imported 400". */}
-            <span style={{ color: "var(--ink-muted)" }}>Row {rowError.row}:</span> {rowError.message}
+            <span className="kh-muted">Row {rowError.row}:</span> {rowError.message}
           </li>
         ))}
       </ul>
@@ -643,18 +640,18 @@ function CompletionScreen({ completed, onImportAnother }: { completed: Completed
 
   return (
     <section>
-      <h3 style={{ fontSize: "1rem", fontWeight: 600 }}>
+      <h3 className="kh-subhead">
         Imported {landed} {landed === 1 ? "item" : "items"} into {targetName}.
       </h3>
 
       {/* The full accounting, so "imported N" is a number the user can check. */}
-      <ul style={{ margin: "var(--space-2) 0", paddingLeft: "var(--space-4)", color: "var(--ink-muted)" }}>
+      <ul className="kh-bullets kh-muted">
         {skipped > 0 && <li>{skipped} skipped as duplicates</li>}
         {errors.length > 0 && <li>{errors.length} could not be read (listed below)</li>}
       </ul>
 
       {outcome.error !== null && notLanded > 0 && (
-        <p role="alert" style={{ color: "var(--danger)" }}>
+        <p role="alert" className="kh-alert">
           {notLanded} {notLanded === 1 ? "item" : "items"} did not upload, so {landed} of{" "}
           {attempted} landed. You can import the file again — the {landed} already saved will show as
           duplicates you can skip.
@@ -665,7 +662,7 @@ function CompletionScreen({ completed, onImportAnother }: { completed: Completed
         // Genuinely unknown, not merely failed: a lost connection or a 5xx can
         // arrive after the write committed, so these items may or may not be in
         // the vault. Saying which is the only honest answer.
-        <p role="status" style={{ color: "var(--ink-muted)" }}>
+        <p role="status" className="kh-muted">
           {outcome.inDoubt} of those {outcome.inDoubt === 1 ? "item is" : "items are"} in doubt: the
           server did not confirm them, so they may or may not have been saved. Check for them before
           importing again.
@@ -677,7 +674,7 @@ function CompletionScreen({ completed, onImportAnother }: { completed: Completed
       {/* The next action sits above the delete instruction on purpose, so that
           instruction is the last thing on the screen rather than something the
           eye slides past on its way to a button. */}
-      <div style={{ marginTop: "var(--space-4)" }}>
+      <div className="kh-mt">
         <Button type="button" variant="quiet" onClick={onImportAnother}>
           Import another file
         </Button>
@@ -686,17 +683,12 @@ function CompletionScreen({ completed, onImportAnother }: { completed: Completed
       {/* The last thing on the screen, and deliberately so. Spec §7: an
           unencrypted CSV of every password sitting in Downloads is the most
           likely real-world compromise of this system. This is not a footnote. */}
-      <div
-        style={{
-          marginTop: "var(--space-6)",
-          padding: "var(--space-4)",
-          border: "1px solid var(--rule-strong)",
-        }}
+      <div className="kh-panel kh-panel-strong kh-mt-lg"
       >
-        <h3 style={{ fontSize: "1rem", fontWeight: 600, marginTop: 0, color: "var(--danger)" }}>
+        <h3 className="kh-subhead kh-danger kh-mt-0">
           Now delete the export file
         </h3>
-        <p style={{ margin: 0 }}>
+        <p className="kh-m-0">
           It is an unencrypted copy of every password you just imported. A file like that left in
           your Downloads folder is the most likely way this vault is ever compromised — delete it,
           and empty your trash.

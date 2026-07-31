@@ -61,50 +61,36 @@ function InviteReveal({ reveal, onDismiss }: { reveal: RevealedInvite; onDismiss
   return (
     <div
       role="group"
-      aria-label="One-time invite link"
-      style={{
-        border: "1px solid var(--rule-strong)",
-        padding: "var(--space-4)",
-        marginBottom: "var(--space-6)",
-      }}
+      aria-label="One-time invite link" className="kh-panel kh-panel-strong"
     >
-      <p style={{ marginTop: 0 }}>
+      <p className="kh-mt-0">
         Hand this over out of band. It cannot be shown again &mdash; reissue a new one if it is
         lost.
       </p>
       {reveal.message !== undefined && (
-        <p style={{ color: "var(--ink-muted)" }}>{reveal.message}</p>
+        <p className="kh-muted">{reveal.message}</p>
       )}
-      <div style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-2)" }}>
-        <label htmlFor={fieldId} style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
+      <div className="kh-field kh-field-sm">
+        <label htmlFor={fieldId} className="kh-label">
           Invite link for {reveal.email}
         </label>
         <input
           id={fieldId}
           readOnly
           value={reveal.invite.inviteUrl}
-          onFocus={(e) => e.currentTarget.select()}
-          style={{
-            font: "inherit",
-            fontFamily: "var(--font-mono)",
-            padding: "var(--space-2)",
-            border: "1px solid var(--rule)",
-            background: "transparent",
-            color: "var(--ink)",
-            width: "100%",
-          }}
+          onFocus={(e) => e.currentTarget.select()} className="kh-mono"
         />
       </div>
-      <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "center" }}>
+      <div className="kh-actions">
         <Button type="button" variant="quiet" onClick={() => void handleCopy()}>
           Copy link
         </Button>
         <Button type="button" variant="quiet" onClick={onDismiss}>
           Done
         </Button>
-        {copyState === "copied" && <span style={{ color: "var(--ink-muted)" }}>Copied.</span>}
+        {copyState === "copied" && <span className="kh-muted">Copied.</span>}
         {copyState === "unavailable" && (
-          <span style={{ color: "var(--ink-muted)" }}>
+          <span className="kh-muted">
             Copy isn&rsquo;t available here &mdash; select the text above and copy it by hand.
           </span>
         )}
@@ -148,7 +134,7 @@ function CreateUserForm({
   }
 
   return (
-    <form onSubmit={(e) => void submit(e)} style={{ marginBottom: "var(--space-4)" }}>
+    <form onSubmit={(e) => void submit(e)} className="kh-mb">
       <Field label="Name" value={name} onChange={(e) => setName(e.target.value)} required />
       <Field
         label="Email"
@@ -157,8 +143,8 @@ function CreateUserForm({
         onChange={(e) => setEmail(e.target.value)}
         required
       />
-      <div style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-4)" }}>
-        <label htmlFor={roleId} style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
+      <div className="kh-field">
+        <label htmlFor={roleId} className="kh-label">
           Role
         </label>
         <select
@@ -171,7 +157,7 @@ function CreateUserForm({
         </select>
       </div>
       {error !== null && (
-        <p role="alert" style={{ color: "var(--danger)", marginBottom: "var(--space-4)" }}>
+        <p role="alert" className="kh-alert">
           {error}
         </p>
       )}
@@ -231,13 +217,13 @@ function UserRow({
   }
 
   return (
-    <tr style={{ borderTop: "1px solid var(--rule)" }}>
-      <td style={{ padding: "var(--space-2) var(--space-2) var(--space-2) 0" }}>{user.name}</td>
+    <tr className="kh-row-item">
+      <td>{user.name}</td>
       <td>{user.email}</td>
       <td>{user.role}</td>
       <td>{user.status}</td>
       <td>
-        <div style={{ display: "flex", gap: "var(--space-2)", flexWrap: "wrap" }}>
+        <div className="kh-actions">
           {user.hasPendingInvite && (
             <Button
               type="button"
@@ -264,12 +250,12 @@ function UserRow({
           </Button>
         </div>
         {reissueError !== null && (
-          <p role="alert" style={{ color: "var(--danger)" }}>
+          <p role="alert" className="kh-alert">
             {reissueError}
           </p>
         )}
         {statusError !== null && (
-          <p role="alert" style={{ color: "var(--danger)" }}>
+          <p role="alert" className="kh-alert">
             {statusError}
           </p>
         )}
@@ -307,17 +293,15 @@ function UsersSection({
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   return (
-    <section style={{ marginBottom: "var(--space-6)" }}>
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
-          marginBottom: "var(--space-4)",
-        }}
-      >
-        <h2 style={{ fontSize: "1rem", fontWeight: 600, margin: 0 }}>Users</h2>
-        <Button type="button" variant="quiet" onClick={() => setCreating((open) => !open)}>
+    <section className="kh-mb-lg">
+      <header className="kh-split kh-mb">
+        <h2 className="kh-subhead kh-m-0">Users</h2>
+        <Button
+          type="button"
+          variant="quiet"
+          aria-expanded={creating}
+          onClick={() => setCreating((open) => !open)}
+        >
           Add user
         </Button>
       </header>
@@ -333,16 +317,16 @@ function UsersSection({
       )}
 
       {users.length === 0 ? (
-        <p style={{ color: "var(--ink-muted)" }}>No users yet.</p>
+        <p className="kh-muted">No users yet.</p>
       ) : (
-        <table aria-label="Users" style={{ width: "100%", borderCollapse: "collapse" }}>
+        <table aria-label="Users" className="kh-table">
           <thead>
             <tr>
-              <th style={{ textAlign: "left" }}>Name</th>
-              <th style={{ textAlign: "left" }}>Email</th>
-              <th style={{ textAlign: "left" }}>Role</th>
-              <th style={{ textAlign: "left" }}>Status</th>
-              <th style={{ textAlign: "left" }}>Actions</th>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Role</th>
+              <th>Status</th>
+              <th>Actions</th>
             </tr>
           </thead>
           <tbody>
@@ -372,11 +356,11 @@ function UsersSection({
           title={`Reset ${resetTarget.name}'s account?`}
           body={
             <>
-              <p style={{ marginTop: 0 }}>
+              <p className="kh-mt-0">
                 This permanently destroys this account&rsquo;s key material, every personal item,
                 and every collection membership it holds.
               </p>
-              <p style={{ marginBottom: 0 }}>
+              <p className="kh-mb-0">
                 After the account enrols again, collection access must be re-granted from
                 scratch.
               </p>
@@ -404,7 +388,7 @@ function UsersSection({
         />
       )}
       {resetError !== null && (
-        <p role="alert" style={{ color: "var(--danger)" }}>
+        <p role="alert" className="kh-alert">
           {resetError}
         </p>
       )}
@@ -434,7 +418,7 @@ function UsersSection({
         />
       )}
       {deleteError !== null && (
-        <p role="alert" style={{ color: "var(--danger)" }}>
+        <p role="alert" className="kh-alert">
           {deleteError}
         </p>
       )}
@@ -450,26 +434,25 @@ function CollectionsOverviewSection({
   pendingGrants: PendingGrant[];
 }) {
   return (
-    <section style={{ marginBottom: "var(--space-6)" }}>
-      <h2 style={{ fontSize: "1rem", fontWeight: 600 }}>Collections overview</h2>
+    <section className="kh-mb-lg">
+      <h2 className="kh-subhead">Collections overview</h2>
       {collections.length === 0 ? (
-        <p style={{ color: "var(--ink-muted)" }}>No collections yet.</p>
+        <p className="kh-muted">No collections yet.</p>
       ) : (
         <table
-          aria-label="Collections overview"
-          style={{ width: "100%", borderCollapse: "collapse" }}
+          aria-label="Collections overview" className="kh-table"
         >
           <thead>
             <tr>
-              <th style={{ textAlign: "left" }}>Name</th>
-              <th style={{ textAlign: "left" }}>Created by</th>
-              <th style={{ textAlign: "left" }}>Created</th>
-              <th style={{ textAlign: "left" }}>Members</th>
+              <th>Name</th>
+              <th>Created by</th>
+              <th>Created</th>
+              <th>Members</th>
             </tr>
           </thead>
           <tbody>
             {collections.map((collection) => (
-              <tr key={collection.id} style={{ borderTop: "1px solid var(--rule)" }}>
+              <tr key={collection.id} className="kh-row-item">
                 <td>{collection.name}</td>
                 <td>{collection.createdBy}</td>
                 <td>{collection.createdAt}</td>
@@ -480,7 +463,7 @@ function CollectionsOverviewSection({
         </table>
       )}
       {pendingGrants.length > 0 && (
-        <p style={{ color: "var(--ink-muted)" }}>
+        <p className="kh-muted">
           {pendingGrants.length} pending grant{pendingGrants.length === 1 ? "" : "s"} awaiting
           fulfilment.
         </p>
@@ -517,22 +500,22 @@ function AuditLogSection({
 
   return (
     <section>
-      <h2 style={{ fontSize: "1rem", fontWeight: 600 }}>Audit log</h2>
+      <h2 className="kh-subhead">Audit log</h2>
       {auditEntries.length === 0 ? (
-        <p style={{ color: "var(--ink-muted)" }}>No audit entries yet.</p>
+        <p className="kh-muted">No audit entries yet.</p>
       ) : (
-        <table aria-label="Audit log" style={{ width: "100%", borderCollapse: "collapse" }}>
+        <table aria-label="Audit log" className="kh-table">
           <thead>
             <tr>
-              <th style={{ textAlign: "left" }}>Actor</th>
-              <th style={{ textAlign: "left" }}>Action</th>
-              <th style={{ textAlign: "left" }}>Target</th>
-              <th style={{ textAlign: "left" }}>Time</th>
+              <th>Actor</th>
+              <th>Action</th>
+              <th>Target</th>
+              <th>Time</th>
             </tr>
           </thead>
           <tbody>
             {auditEntries.map((entry) => (
-              <tr key={entry.id} style={{ borderTop: "1px solid var(--rule)" }}>
+              <tr key={entry.id} className="kh-row-item">
                 <td>{entry.actorUserId}</td>
                 <td>{entry.action}</td>
                 <td>{entry.target}</td>
@@ -551,7 +534,7 @@ function AuditLogSection({
         {busy ? "Loading…" : "Load older"}
       </Button>
       {error !== null && (
-        <p role="alert" style={{ color: "var(--danger)" }}>
+        <p role="alert" className="kh-alert">
           {error}
         </p>
       )}

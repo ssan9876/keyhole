@@ -3,6 +3,7 @@ import type { FormEvent } from "react";
 import { NetworkError } from "../../vault/api.js";
 import { Button } from "../components/Button.js";
 import { Field } from "../components/Field.js";
+import { Keyhole } from "../components/icons.js";
 
 interface UnlockScreenProps {
   rememberedEmail: string | null;
@@ -77,10 +78,14 @@ export function UnlockScreen({ rememberedEmail, onUnlock, onForgotPassword }: Un
   }
 
   return (
-    <main style={{ maxWidth: "22rem", margin: "0 auto", padding: "var(--space-8) var(--space-4)" }}>
-      <h1 style={{ fontSize: "1.25rem", fontWeight: 600, marginBottom: "var(--space-6)" }}>
-        Unlock your vault
-      </h1>
+    <main className="kh-auth">
+      <p className="kh-auth-mark">
+        <Keyhole size={14} /> Keyhole
+      </p>
+      <h1 className="kh-auth-title">Unlock your vault</h1>
+      <p className="kh-auth-lede">
+        Your master password is the key. It never leaves this device.
+      </p>
       <form onSubmit={submit}>
         {rememberedEmail === null ? (
           <Field
@@ -92,9 +97,7 @@ export function UnlockScreen({ rememberedEmail, onUnlock, onForgotPassword }: Un
             required
           />
         ) : (
-          <p style={{ color: "var(--ink-muted)", marginBottom: "var(--space-4)" }}>
-            {rememberedEmail}
-          </p>
+          <p className="kh-identity kh-muted">{rememberedEmail}</p>
         )}
         <Field
           label="Master password"
@@ -105,7 +108,7 @@ export function UnlockScreen({ rememberedEmail, onUnlock, onForgotPassword }: Un
           required
         />
         {error !== null ? (
-          <p role="alert" style={{ color: "var(--danger)", marginBottom: "var(--space-4)" }}>
+          <p role="alert" className="kh-alert">
             {error}
           </p>
         ) : (
@@ -115,7 +118,7 @@ export function UnlockScreen({ rememberedEmail, onUnlock, onForgotPassword }: Un
             // device. Suppressed once there is an error to show, so the two
             // never stack. role="status", not "alert" — it is standing context,
             // not the result of an action.
-            <p role="status" style={{ color: "var(--ink-muted)", marginBottom: "var(--space-4)" }}>
+            <p role="status" className="kh-note">
               {OFFLINE_MESSAGE}
             </p>
           )
@@ -123,15 +126,15 @@ export function UnlockScreen({ rememberedEmail, onUnlock, onForgotPassword }: Un
         {/* Disabled while working: Argon2id takes about a second, and an
             impatient double-click would otherwise spend two of the five free
             login attempts before the limiter starts adding delay. */}
-        <Button type="submit" disabled={busy}>
+        <Button type="submit" block disabled={busy}>
           {busy ? "Unlocking…" : "Unlock"}
         </Button>
       </form>
       {/* Outside the form: it is a way out of this screen, not a second way to
           submit it, and a <button> inside a form without type="button" would
           submit on Enter. */}
-      <p style={{ marginTop: "var(--space-6)" }}>
-        <Button type="button" variant="quiet" onClick={onForgotPassword}>
+      <p className="kh-auth-footer">
+        <Button type="button" variant="quiet" size="sm" onClick={onForgotPassword}>
           Forgot your master password?
         </Button>
       </p>

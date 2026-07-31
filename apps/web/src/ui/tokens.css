@@ -5,16 +5,38 @@
  * rules versus pure white and black hairlines) is a token change rather than a
  * redesign. Dark is the same layout with inverted values and hairlines at 12%
  * white, not a separate theme.
+ *
+ * The file is ordered: tokens, base elements, then one section per component
+ * class. Components carry `kh-` classes rather than inline style objects so a
+ * hover, press, or focus state — which an inline style cannot express — is
+ * available everywhere, and so a token change reaches every screen at once.
  */
+
 :root {
-  --ground: #fdfdfc;
+  /* Ground is the page; surface is anything that sits on it (rows, panels,
+     dialogs). Two steps of separation is the whole elevation model — Mono
+     leans on rules and spacing, not stacked shadows. */
+  --ground: #fbfbf9;
+  --surface: #ffffff;
+  --surface-sunken: #f3f3f0;
+  --surface-hover: rgba(20, 20, 15, 0.045);
+  --surface-active: rgba(20, 20, 15, 0.08);
+
   --ink: #14140f;
-  --ink-muted: #6b6b63;
-  --rule: rgba(20, 20, 15, 0.14);
-  --rule-strong: rgba(20, 20, 15, 0.28);
+  --ink-muted: #5f5f57;
+  /* Small print still has to clear 4.5:1 against --ground, which rules out the
+     lighter grey this used to be. */
+  --ink-subtle: #6e6e66;
+
+  --rule: rgba(20, 20, 15, 0.13);
+  --rule-strong: rgba(20, 20, 15, 0.26);
+
   --focus: #1f4fd8;
-  /* Colour is reserved for meaning: destructive, strength, shared. */
+  /* Colour is reserved for meaning: destructive, strength, shared, selected. */
+  --accent: #1f4fd8;
+  --accent-wash: rgba(31, 79, 216, 0.09);
   --danger: #a3241c;
+  --danger-wash: rgba(163, 36, 28, 0.08);
   --strength-weak: #a3241c;
   --strength-fair: #8a6a12;
   --strength-strong: #1f6b32;
@@ -22,31 +44,90 @@
   --font-sans: ui-sans-serif, system-ui, "Helvetica Neue", Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
 
+  /* A fixed scale, so a heading is picked from a set rather than typed as a
+     one-off rem value at the call site. */
+  --text-2xs: 0.75rem;
+  --text-xs: 0.8125rem;
+  --text-sm: 0.875rem;
+  --text-base: 1rem;
+  --text-lg: 1.125rem;
+  --text-xl: 1.25rem;
+  --text-2xl: 1.5rem;
+
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
+  --space-5: 1.25rem;
   --space-6: 1.5rem;
   --space-8: 2rem;
+  --space-10: 2.5rem;
+  --space-12: 3rem;
+
+  --radius-sm: 3px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-full: 999px;
+
+  --shadow-sm: 0 1px 2px rgba(20, 20, 15, 0.06);
+  --shadow-md: 0 4px 14px rgba(20, 20, 15, 0.08);
+  --shadow-lg: 0 18px 48px rgba(20, 20, 15, 0.18);
+
+  /* 44px: the minimum comfortable touch target, applied to every control
+     rather than to the ones that happened to look small. */
+  --control-h: 2.75rem;
+  --control-h-sm: 2.25rem;
+
+  --dur-fast: 110ms;
+  --dur: 170ms;
+  --dur-slow: 240ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.3, 1);
+  --ease-in: cubic-bezier(0.5, 0, 0.75, 0);
+
+  --z-header: 20;
+  --z-modal: 100;
+
+  --rail-width: 15rem;
+  --measure: 42rem;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --ground: #111110;
+    --ground: #0f0f0e;
+    --surface: #181816;
+    --surface-sunken: #131312;
+    --surface-hover: rgba(255, 255, 255, 0.055);
+    --surface-active: rgba(255, 255, 255, 0.095);
+
     --ink: #f2f2ef;
-    --ink-muted: #9a9a92;
+    --ink-muted: #a5a59c;
+    --ink-subtle: #91918a;
+
     --rule: rgba(255, 255, 255, 0.12);
     --rule-strong: rgba(255, 255, 255, 0.24);
-    --focus: #7aa2ff;
+
+    --focus: #8fb0ff;
+    --accent: #8fb0ff;
+    --accent-wash: rgba(143, 176, 255, 0.14);
     --danger: #ef6b62;
+    --danger-wash: rgba(239, 107, 98, 0.12);
     --strength-weak: #ef6b62;
     --strength-fair: #d9b23a;
     --strength-strong: #63c07f;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.45);
+    --shadow-lg: 0 18px 48px rgba(0, 0, 0, 0.6);
   }
 }
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  /* Keeps a focused row from landing flush against the sticky header. */
+  scroll-padding-top: 5rem;
 }
 
 body {
@@ -58,9 +139,976 @@ body {
      layout, so there is no separate mobile design to maintain. */
   font-size: 16px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: var(--accent-wash);
 }
 
 :focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+h1,
+h2,
+h3 {
+  /* Tight headings against generous body leading is the whole Swiss move. */
+  line-height: 1.25;
+  letter-spacing: -0.011em;
+  font-weight: 600;
+  margin: 0;
+}
+
+p {
+  margin: 0 0 var(--space-4);
+}
+
+p:last-child {
+  margin-bottom: 0;
+}
+
+code,
+kbd,
+samp {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+/* Digits that do not reflow as they change: revisions, counts, dates, codes. */
+.kh-num,
+time,
+.kh-code {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------- controls */
+
+/*
+ * Element selectors, not classes: the screens that build a <select> or a raw
+ * <input> inline (collection pickers, import mapping, admin filters) pick these
+ * up without being rewritten, which is the point of styling by element here.
+ */
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+  min-height: var(--control-h);
+  width: 100%;
+  transition:
+    border-color var(--dur) var(--ease-out),
+    box-shadow var(--dur) var(--ease-out),
+    background-color var(--dur) var(--ease-out);
+}
+
+textarea {
+  padding: var(--space-2) var(--space-3);
+  line-height: 1.5;
+  resize: vertical;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  /* Bigger than the 13px default, and still below the 44px rule on its own —
+     the label pairs with it to make the target, see .kh-check. */
+  width: 1.15rem;
+  height: 1.15rem;
+  min-height: 0;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+input[type="file"] {
+  padding: var(--space-2);
+  background: var(--surface-sunken);
+}
+
+select {
+  /* Room for the native chevron on every platform. */
+  padding-right: var(--space-8);
+}
+
+input:hover:not(:disabled),
+select:hover:not(:disabled),
+textarea:hover:not(:disabled) {
+  border-color: var(--rule-strong);
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+
+input:disabled,
+select:disabled,
+textarea:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--surface-sunken);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--ink-subtle);
+}
+
+/* A checkbox and its label as one target, rather than a 16px box to hit. */
+.kh-check {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  cursor: pointer;
+}
+
+/* ----------------------------------------------------------------- buttons */
+
+.kh-btn {
+  font: inherit;
+  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--control-h);
+  padding: 0 var(--space-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+  transition:
+    background-color var(--dur) var(--ease-out),
+    border-color var(--dur) var(--ease-out),
+    color var(--dur) var(--ease-out),
+    box-shadow var(--dur) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+/* One primary per screen: the only control that fills. */
+.kh-btn[data-variant="primary"] {
+  background: var(--ink);
+  color: var(--ground);
+  box-shadow: var(--shadow-sm);
+}
+
+.kh-btn[data-variant="primary"]:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 86%, var(--ground));
+}
+
+.kh-btn[data-variant="quiet"] {
+  border-color: var(--rule);
+  color: var(--ink-muted);
+}
+
+.kh-btn[data-variant="quiet"]:hover:not(:disabled) {
+  background: var(--surface-hover);
+  border-color: var(--rule-strong);
+  color: var(--ink);
+}
+
+.kh-btn[data-variant="danger"] {
+  border-color: color-mix(in srgb, var(--danger) 40%, transparent);
+  color: var(--danger);
+}
+
+.kh-btn[data-variant="danger"]:hover:not(:disabled) {
+  background: var(--danger-wash);
+  border-color: var(--danger);
+}
+
+/* Presses depress rather than reflow: transform only, so nothing around the
+   button moves. */
+.kh-btn:active:not(:disabled) {
+  transform: translateY(1px);
+  background: var(--surface-active);
+}
+
+.kh-btn[data-variant="primary"]:active:not(:disabled) {
+  background: var(--ink);
+}
+
+.kh-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.kh-btn[data-size="sm"] {
+  min-height: var(--control-h-sm);
+  padding: 0 var(--space-3);
+  font-size: var(--text-sm);
+}
+
+.kh-btn[data-block="true"] {
+  width: 100%;
+}
+
+/* A row of buttons that wraps rather than overflowing on a narrow phone. */
+.kh-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+/* ------------------------------------------------------------------ fields */
+
+.kh-field {
+  display: grid;
+  gap: var(--space-1);
+  margin-bottom: var(--space-4);
+}
+
+.kh-label {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.kh-hint {
+  color: var(--ink-subtle);
+  font-size: var(--text-xs);
+  margin: 0;
+}
+
+/* ------------------------------------------------------------- app shell */
+
+.kh-app {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/*
+ * Solid, deliberately, rather than translucent-with-backdrop-filter: a
+ * backdrop-filtered sticky header and a backdrop-filtered modal scrim end up in
+ * different backdrop roots in Chromium, and the header paints straight through
+ * the scrim — the dialog dims the page but not the bar above it. A flat ground
+ * colour cannot have that bug.
+ */
+.kh-header {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-header);
+  background: var(--ground);
+  border-bottom: 1px solid var(--rule);
+  padding-top: env(safe-area-inset-top);
+}
+
+.kh-header-inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 3.5rem;
+  padding: 0 var(--space-4);
+  max-width: 76rem;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.kh-wordmark {
+  font-size: var(--text-base);
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin: 0;
+}
+
+.kh-shell {
+  flex: 1;
+  width: 100%;
+  max-width: 76rem;
+  margin: 0 auto;
+  padding: var(--space-5) var(--space-4) var(--space-12);
+  padding-bottom: calc(var(--space-12) + env(safe-area-inset-bottom));
+}
+
+/* Everything except the vault tab is a single readable column; only the vault
+   earns the two-pane treatment, and only where there is room for it. */
+.kh-column {
+  max-width: var(--measure);
+}
+
+.kh-panes {
+  display: grid;
+  gap: var(--space-6);
+}
+
+/* On a phone the items are what you came for, so they come first and the folder
+   filter follows them. The rail is written first in the markup because that is
+   its reading order beside the list on a wide screen; `order` is the one thing
+   that should differ, not the DOM. */
+.kh-panes > .kh-rail {
+  order: 2;
+  border-top: 1px solid var(--rule);
+  padding-top: var(--space-5);
+}
+
+@media (min-width: 60rem) {
+  .kh-panes {
+    grid-template-columns: var(--rail-width) minmax(0, 1fr);
+    gap: var(--space-8);
+    align-items: start;
+  }
+
+  .kh-panes > .kh-rail {
+    order: 0;
+    border-top: none;
+    padding-top: 0;
+    position: sticky;
+    top: 5rem;
+  }
+}
+
+.kh-section-title {
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-subtle);
+  margin: 0 0 var(--space-2);
+}
+
+.kh-screen-title {
+  font-size: var(--text-xl);
+  margin: 0 0 var(--space-1);
+}
+
+.kh-screen-lede {
+  color: var(--ink-muted);
+  margin: 0 0 var(--space-6);
+}
+
+/* -------------------------------------------------------------------- tabs */
+
+.kh-tabs {
+  display: flex;
+  gap: var(--space-1);
+  margin-bottom: var(--space-6);
+  /* Five tabs do not fit a 375px phone; scrolling the strip beats wrapping it
+     into a second row that shifts the page. */
+  overflow-x: auto;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+
+.kh-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.kh-tab {
+  font: inherit;
+  font-weight: 500;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--ink-muted);
+  min-height: var(--control-h-sm);
+  padding: 0 var(--space-3);
+  cursor: pointer;
+  white-space: nowrap;
+  position: relative;
+  transition:
+    color var(--dur) var(--ease-out),
+    background-color var(--dur) var(--ease-out);
+}
+
+.kh-tab:hover {
+  color: var(--ink);
+  background: var(--surface-hover);
+}
+
+.kh-tab[aria-current="page"] {
+  color: var(--ink);
+  background: var(--surface-sunken);
+}
+
+/* ------------------------------------------------------------------- lists */
+
+.kh-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  border-top: 1px solid var(--rule);
+}
+
+.kh-list > li + li {
+  border-top: 1px solid var(--rule);
+}
+
+.kh-row {
+  font: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--control-h);
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--ink);
+  padding: var(--space-3);
+  /* Pulls the row's padding back out to the list edge so the hover wash looks
+     deliberate rather than inset. */
+  margin: 0 calc(var(--space-3) * -1);
+  width: calc(100% + var(--space-6));
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.kh-row:hover {
+  background: var(--surface-hover);
+}
+
+.kh-row:active {
+  background: var(--surface-active);
+}
+
+.kh-row-title {
+  display: block;
+  font-weight: 500;
+}
+
+.kh-row-meta {
+  display: block;
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.kh-row-chevron {
+  color: var(--ink-subtle);
+  flex: none;
+  transition: transform var(--dur) var(--ease-out);
+}
+
+.kh-row:hover .kh-row-chevron {
+  transform: translateX(2px);
+  color: var(--ink-muted);
+}
+
+.kh-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-2xs);
+  font-weight: 500;
+  color: var(--ink-muted);
+  background: var(--surface-sunken);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-full);
+  padding: 1px var(--space-2);
+  margin-top: var(--space-1);
+}
+
+/* --------------------------------------------------------- filter buttons */
+
+.kh-filter {
+  font: inherit;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+  min-height: var(--control-h-sm);
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--ink-muted);
+  padding: 0 var(--space-2);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.kh-filter:hover {
+  background: var(--surface-hover);
+  color: var(--ink);
+}
+
+/* Selected is carried by weight, a rule, and a wash — not colour alone. */
+.kh-filter[aria-pressed="true"] {
+  color: var(--ink);
+  font-weight: 600;
+  background: var(--accent-wash);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+/* ------------------------------------------------------ panels and cards */
+
+.kh-card {
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  box-shadow: var(--shadow-sm);
+}
+
+.kh-panel {
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-lg);
+  padding: var(--space-4);
+  margin-bottom: var(--space-6);
+  background: var(--surface);
+}
+
+.kh-empty {
+  color: var(--ink-muted);
+  text-align: center;
+  padding: var(--space-10) var(--space-4);
+  border: 1px dashed var(--rule);
+  border-radius: var(--radius-lg);
+}
+
+.kh-empty-title {
+  display: block;
+  color: var(--ink);
+  font-weight: 500;
+  margin-bottom: var(--space-1);
+}
+
+/* --------------------------------------------------------------- messages */
+
+.kh-alert,
+.kh-note {
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  margin-bottom: var(--space-4);
+  font-size: var(--text-sm);
+}
+
+.kh-alert {
+  color: var(--danger);
+  background: var(--danger-wash);
+  /* The bar carries the same meaning as the colour, for anyone who cannot see
+     the colour. */
+  box-shadow: inset 2px 0 0 var(--danger);
+}
+
+.kh-note {
+  color: var(--ink-muted);
+  background: var(--surface-sunken);
+  box-shadow: inset 2px 0 0 var(--rule-strong);
+}
+
+.kh-muted {
+  color: var(--ink-muted);
+}
+
+/* A recovery code or an invite URL: shown to be read character by character. */
+.kh-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  word-break: break-all;
+  background: var(--surface-sunken);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  display: block;
+}
+
+/* ------------------------------------------------------------------ auth */
+
+/* Unlock, enrol, recover: one centred card, vertically settled rather than
+   pinned to the top of a tall empty screen. */
+.kh-auth {
+  min-height: 100dvh;
+  display: grid;
+  align-content: center;
+  justify-items: stretch;
+  gap: var(--space-4);
+  max-width: 24rem;
+  margin: 0 auto;
+  padding: var(--space-8) var(--space-4);
+  padding-bottom: calc(var(--space-8) + env(safe-area-inset-bottom));
+}
+
+.kh-auth-mark {
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-subtle);
+  margin: 0;
+}
+
+.kh-auth-title {
+  font-size: var(--text-2xl);
+  margin: 0;
+}
+
+.kh-auth-lede {
+  color: var(--ink-muted);
+  margin: 0;
+}
+
+/* ---------------------------------------------------------------- dialog */
+
+.kh-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  padding: var(--space-4);
+  /* 55% flat black, and no backdrop-filter. A backdrop-filtered scrim gets its
+     own compositing layer in Chromium and the sticky header — also composited —
+     paints straight through it whatever the z-index says, so the page dims and
+     the bar above it does not. Opacity alone dims everything. */
+  background: rgba(10, 10, 8, 0.55);
+  animation: kh-fade var(--dur) var(--ease-out);
+}
+
+.kh-dialog {
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: var(--space-5);
+  max-width: 26rem;
+  width: 100%;
+  animation: kh-pop var(--dur-slow) var(--ease-out);
+}
+
+.kh-dialog-title {
+  font-size: var(--text-lg);
+  margin: 0 0 var(--space-2);
+}
+
+.kh-dialog-body {
+  color: var(--ink-muted);
+  margin-bottom: var(--space-5);
+}
+
+@keyframes kh-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes kh-pop {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+/* ------------------------------------------------------------- vault list */
+
+/* Search, collection filter, and the primary action on one line where there is
+   room, stacked where there is not — and the button stays last in both, so it
+   is always the thing your thumb reaches after the fields. */
+.kh-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  align-items: end;
+  margin-bottom: var(--space-3);
+}
+
+/* Flex, not a fixed grid: the collection filter only exists once you are in a
+   collection, and a grid template would leave its column sitting empty (and the
+   button stretched across it) for everyone who is not. */
+.kh-toolbar .kh-field {
+  margin-bottom: 0;
+  flex: 1 1 12rem;
+}
+
+.kh-toolbar .kh-btn {
+  flex: 1 1 auto;
+}
+
+@media (min-width: 40rem) {
+  .kh-toolbar .kh-btn {
+    flex: 0 0 auto;
+  }
+}
+
+.kh-list-count {
+  color: var(--ink-subtle);
+  font-size: var(--text-xs);
+  margin: 0 0 var(--space-2);
+}
+
+/* Two pickers side by side on anything wider than a phone: they are one
+   decision (where does this item live), not two. */
+.kh-field-row {
+  display: grid;
+  gap: var(--space-4);
+}
+
+@media (min-width: 34rem) {
+  .kh-field-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.kh-danger-zone {
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--rule);
+}
+
+.kh-field-tight > .kh-field {
+  margin-bottom: var(--space-2);
+}
+
+/* A generated password is read character by character; the sans-serif
+   ambiguity between l, I, and 1 is exactly what monospace exists to remove. */
+.kh-mono-input input,
+.kh-mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --------------------------------------------------------------- the rail */
+
+.kh-rail-section {
+  margin-bottom: var(--space-4);
+}
+
+.kh-rail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.kh-rail-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.kh-rail-row-actions {
+  display: flex;
+  gap: var(--space-1);
+  flex: none;
+}
+
+.kh-rail-form {
+  margin-top: var(--space-3);
+}
+
+.kh-rail-form .kh-field {
+  margin-bottom: var(--space-2);
+}
+
+/* --------------------------------------------------------------- utilities */
+
+/*
+ * The small, honest set: text roles, one flex row, one table, and spacing
+ * steps. These replace the inline style objects the rest of the screens used to
+ * repeat — the same six declarations, retyped at 180-odd call sites, none of
+ * which could express a hover state.
+ */
+
+.kh-meta {
+  color: var(--ink-muted);
+  font-size: var(--text-sm);
+}
+
+.kh-meta-xs {
+  color: var(--ink-muted);
+  font-size: var(--text-2xs);
+}
+
+.kh-text-sm {
+  font-size: var(--text-sm);
+}
+
+.kh-danger {
+  color: var(--danger);
+}
+
+.kh-block {
+  display: block;
+}
+
+.kh-align-left {
+  text-align: left;
+}
+
+.kh-subhead {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.kh-subhead-sm {
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.kh-split {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.kh-actions-baseline {
+  align-items: baseline;
+}
+
+.kh-plain-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.kh-row-item {
+  border-top: 1px solid var(--rule);
+  padding: var(--space-2) 0;
+}
+
+.kh-bullets {
+  margin: var(--space-2) 0;
+  padding-left: var(--space-5);
+}
+
+.kh-bullets li + li {
+  margin-top: var(--space-1);
+}
+
+.kh-field-sm {
+  margin-bottom: var(--space-2);
+}
+
+.kh-field-flush {
+  margin-bottom: 0;
+}
+
+.kh-panel-strong {
+  border-color: var(--rule-strong);
+  background: var(--surface-sunken);
+}
+
+/* A wide table on a narrow phone scrolls inside its own box rather than
+   forcing the whole page sideways. */
+.kh-scroll-x {
+  overflow-x: auto;
+  margin-bottom: var(--space-4);
+  -webkit-overflow-scrolling: touch;
+}
+
+.kh-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.kh-table th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--ink-muted);
+  font-size: var(--text-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--rule-strong);
+}
+
+.kh-table th,
+.kh-table td {
+  padding: var(--space-2) var(--space-3) var(--space-2) 0;
+  vertical-align: middle;
+}
+
+.kh-table tbody tr + tr td {
+  border-top: 1px solid var(--rule);
+}
+
+/* The recovery code, at the size you would want it if you were copying it onto
+   paper. */
+.kh-code-hero {
+  font-size: var(--text-lg);
+  letter-spacing: 0.04em;
+  padding: var(--space-4);
+  text-align: center;
+}
+
+.kh-identity {
+  background: var(--surface-sunken);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-sm);
+  margin-bottom: var(--space-4);
+}
+
+.kh-auth-footer {
+  margin: 0;
+  text-align: center;
+}
+
+.kh-auth-wide {
+  max-width: 32rem;
+}
+
+.kh-mt-0 {
+  margin-top: 0;
+}
+
+.kh-mt-xs {
+  margin-top: var(--space-2);
+}
+
+.kh-mt-sm {
+  margin-top: var(--space-3);
+}
+
+.kh-mt {
+  margin-top: var(--space-4);
+}
+
+.kh-mt-lg {
+  margin-top: var(--space-6);
+}
+
+.kh-mb-0 {
+  margin-bottom: 0;
+}
+
+.kh-mb {
+  margin-bottom: var(--space-4);
+}
+
+.kh-mb-lg {
+  margin-bottom: var(--space-6);
+}
+
+.kh-m-0 {
+  margin: 0;
+}
+
+/* Motion here is explanatory, never decorative, so removing it costs nothing
+   but the explanation. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

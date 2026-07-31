@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { FormEvent } from "react";
 import { Button } from "../components/Button.js";
 import { Field } from "../components/Field.js";
+import { Keyhole } from "../components/icons.js";
 
 interface EnrolScreenProps {
   inviteToken: string;
@@ -44,32 +45,28 @@ export function EnrolScreen({ inviteToken, onEnrol, onFinish }: EnrolScreenProps
 
   if (recoveryCode !== null) {
     return (
-      <main style={{ maxWidth: "28rem", margin: "0 auto", padding: "var(--space-8) var(--space-4)" }}>
-        <h1 style={{ fontSize: "1.25rem", fontWeight: 600 }}>Save your recovery code</h1>
-        <p style={{ color: "var(--ink-muted)" }}>
+      <main className="kh-auth kh-auth-wide">
+        <p className="kh-auth-mark">
+          <Keyhole size={14} /> Keyhole
+        </p>
+        <h1 className="kh-auth-title">Save your recovery code</h1>
+        <p className="kh-muted">
           Save this somewhere safe and offline. It is shown once and cannot be
           recovered afterwards &mdash; not by an administrator, and not by
           anyone with the database.
         </p>
-        <p style={{ color: "var(--ink-muted)" }}>
+        <p className="kh-muted">
           If you forget your master password, this code is what gets you back
           in: redeeming it sets a new password, signs out every other device,
           and leaves every item in your vault exactly as it is. Without it, an
           administrator can only reset the account, which deletes your personal
           items and folders and drops you from every collection you are in.
         </p>
-        <p
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "1.125rem",
-            padding: "var(--space-4)",
-            border: "1px solid var(--rule-strong)",
-            margin: "var(--space-6) 0",
-          }}
-        >
-          {recoveryCode}
-        </p>
-        <label style={{ display: "flex", gap: "var(--space-2)", marginBottom: "var(--space-6)" }}>
+        {/* The one piece of text on any screen that has to be copied by hand:
+            monospace, tabular, and given the room to be read a character at a
+            time. */}
+        <p className="kh-code kh-code-hero">{recoveryCode}</p>
+        <label className="kh-check">
           <input
             type="checkbox"
             checked={acknowledged}
@@ -81,6 +78,7 @@ export function EnrolScreen({ inviteToken, onEnrol, onFinish }: EnrolScreenProps
             vault with no second way in, silently. */}
         <Button
           type="button"
+          block
           disabled={!acknowledged}
           onClick={() => {
             // Clear it here, not just rely on the parent unmounting this
@@ -97,10 +95,15 @@ export function EnrolScreen({ inviteToken, onEnrol, onFinish }: EnrolScreenProps
   }
 
   return (
-    <main style={{ maxWidth: "22rem", margin: "0 auto", padding: "var(--space-8) var(--space-4)" }}>
-      <h1 style={{ fontSize: "1.25rem", fontWeight: 600, marginBottom: "var(--space-6)" }}>
-        Set your master password
-      </h1>
+    <main className="kh-auth">
+      <p className="kh-auth-mark">
+        <Keyhole size={14} /> Keyhole
+      </p>
+      <h1 className="kh-auth-title">Set your master password</h1>
+      <p className="kh-auth-lede">
+        This password encrypts your vault. Nobody can reset it for you, so pick
+        something long and memorable.
+      </p>
       <form onSubmit={submit}>
         <Field
           label="Email"
@@ -127,11 +130,11 @@ export function EnrolScreen({ inviteToken, onEnrol, onFinish }: EnrolScreenProps
           required
         />
         {error !== null && (
-          <p role="alert" style={{ color: "var(--danger)", marginBottom: "var(--space-4)" }}>
+          <p role="alert" className="kh-alert">
             {error}
           </p>
         )}
-        <Button type="submit" disabled={busy}>
+        <Button type="submit" block disabled={busy}>
           {busy ? "Setting up…" : "Set master password"}
         </Button>
       </form>

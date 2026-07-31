@@ -40,10 +40,10 @@ function AutoLockSection({
 }: Pick<SettingsScreenProps, "autoLock" | "onAutoLockChange">) {
   const selectId = useId();
   return (
-    <section style={{ marginBottom: "var(--space-6)" }}>
-      <h2 style={{ fontSize: "1rem", fontWeight: 600 }}>Auto-lock</h2>
-      <div style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-2)" }}>
-        <label htmlFor={selectId} style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
+    <section className="kh-mb-lg">
+      <h2 className="kh-subhead">Auto-lock</h2>
+      <div className="kh-field kh-field-sm">
+        <label htmlFor={selectId} className="kh-label">
           Auto-lock
         </label>
         <select
@@ -61,7 +61,7 @@ function AutoLockSection({
       {/* Design spec §3.8 requires "never" to carry a warning, not just be an
           option sitting quietly next to the timed ones. */}
       {autoLock === "never" && (
-        <p style={{ color: "var(--danger)" }}>
+        <p className="kh-alert">
           Never locks automatically: the vault stays unlocked until you close this tab or browser.
         </p>
       )}
@@ -103,8 +103,8 @@ function MasterPasswordSection({ onChangePassword }: Pick<SettingsScreenProps, "
   }
 
   return (
-    <section style={{ marginBottom: "var(--space-6)" }}>
-      <h2 style={{ fontSize: "1rem", fontWeight: 600 }}>Master password</h2>
+    <section className="kh-mb-lg">
+      <h2 className="kh-subhead">Master password</h2>
       <form onSubmit={(e) => void submit(e)}>
         <Field
           label="Current master password"
@@ -131,7 +131,7 @@ function MasterPasswordSection({ onChangePassword }: Pick<SettingsScreenProps, "
           required
         />
         {error !== null && (
-          <p role="alert" style={{ color: "var(--danger)", marginBottom: "var(--space-4)" }}>
+          <p role="alert" className="kh-alert">
             {error}
           </p>
         )}
@@ -140,7 +140,7 @@ function MasterPasswordSection({ onChangePassword }: Pick<SettingsScreenProps, "
           // keeps this one -- a user who is not told that will see nothing
           // wrong here and assume the rest of their devices broke on their
           // own.
-          <p style={{ color: "var(--ink-muted)", marginBottom: "var(--space-4)" }}>
+          <p className="kh-muted">
             Master password changed. Your other devices have been signed out.
           </p>
         )}
@@ -183,30 +183,22 @@ function SessionsSection({
   }
 
   return (
-    <section style={{ marginBottom: "var(--space-6)" }}>
-      <h2 style={{ fontSize: "1rem", fontWeight: 600 }}>Active sessions</h2>
+    <section className="kh-mb-lg">
+      <h2 className="kh-subhead">Active sessions</h2>
       {sessions.length === 0 ? (
-        <p style={{ color: "var(--ink-muted)" }}>No other sessions.</p>
+        <p className="kh-muted">No other sessions.</p>
       ) : (
-        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+        <ul className="kh-plain-list">
           {sessions.map((deviceSession) => (
             <li
-              key={deviceSession.id}
-              style={{
-                borderTop: "1px solid var(--rule)",
-                padding: "var(--space-2) 0",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center",
-                gap: "var(--space-2)",
-              }}
+              key={deviceSession.id} className="kh-row-item kh-split"
             >
               <div>
-                <span style={{ display: "block" }}>
+                <span className="kh-block">
                   {deviceSession.deviceLabel}
                   {deviceSession.current ? " (this device)" : ""}
                 </span>
-                <span style={{ color: "var(--ink-muted)", fontSize: "0.75rem" }}>
+                <span className="kh-meta-xs">
                   Last seen {deviceSession.lastSeenAt}
                 </span>
               </div>
@@ -229,7 +221,7 @@ function SessionsSection({
         </ul>
       )}
       {error !== null && (
-        <p role="alert" style={{ color: "var(--danger)" }}>
+        <p role="alert" className="kh-alert">
           {error}
         </p>
       )}
@@ -278,24 +270,17 @@ function RecoverySection({
 
   if (code !== null) {
     return (
-      <section style={{ marginBottom: "var(--space-6)" }}>
-        <h2 style={{ fontSize: "1rem", fontWeight: 600 }}>Recovery code</h2>
-        <p style={{ color: "var(--ink-muted)" }}>
+      <section className="kh-mb-lg">
+        <h2 className="kh-subhead">Recovery code</h2>
+        <p className="kh-muted">
           Save this somewhere safe and offline. It is shown once and cannot be recovered afterwards
           &mdash; not by an administrator, and not by anyone with the database.
         </p>
-        <p
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "1.125rem",
-            padding: "var(--space-4)",
-            border: "1px solid var(--rule-strong)",
-            margin: "var(--space-4) 0",
-          }}
+        <p className="kh-code kh-code-hero"
         >
           {code}
         </p>
-        <label style={{ display: "flex", gap: "var(--space-2)", marginBottom: "var(--space-4)" }}>
+        <label className="kh-actions kh-mb">
           <input
             type="checkbox"
             checked={acknowledged}
@@ -324,9 +309,9 @@ function RecoverySection({
   }
 
   return (
-    <section style={{ marginBottom: "var(--space-6)" }}>
-      <h2 style={{ fontSize: "1rem", fontWeight: 600 }}>Recovery code</h2>
-      <p style={{ color: "var(--ink-muted)" }}>Generating a new code invalidates the old one.</p>
+    <section className="kh-mb-lg">
+      <h2 className="kh-subhead">Recovery code</h2>
+      <p className="kh-muted">Generating a new code invalidates the old one.</p>
       {!open ? (
         <Button type="button" variant="quiet" onClick={() => setOpen(true)}>
           New recovery code
@@ -342,11 +327,11 @@ function RecoverySection({
             required
           />
           {error !== null && (
-            <p role="alert" style={{ color: "var(--danger)", marginBottom: "var(--space-4)" }}>
+            <p role="alert" className="kh-alert">
               {error}
             </p>
           )}
-          <div style={{ display: "flex", gap: "var(--space-2)" }}>
+          <div className="kh-actions">
             <Button type="submit" disabled={busy}>
               {busy ? "Generating…" : "Generate new code"}
             </Button>
