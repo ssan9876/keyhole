@@ -125,6 +125,38 @@ case "$plan_paths" in
     echo "FAIL: the closing help no longer documents the update command"; fail=1 ;;
 esac
 
+# The container must enable nesting. keyhole.service's hardening (PrivateTmp,
+# ProtectSystem=strict, ProtectHome, PrivateDevices, ProtectKernelTunables,
+# ProtectControlGroups) sets up a private mount namespace, and an unprivileged
+# LXC container cannot do that without nesting=1 — so nesting=0 makes systemd
+# fail at step NAMESPACE (status=226/NAMESPACE) and the service never binds.
+case "$plan_paths" in
+  *"--features nesting=1"*)
+    echo "ok: the container enables nesting, so the hardened unit can set up its mount namespace" ;;
+  *"--features nesting=0"*)
+    echo "FAIL: pct create uses nesting=0; the hardened keyhole.service dies with 226/NAMESPACE"; fail=1 ;;
+  *)
+    echo "FAIL: pct create has no --features nesting flag"; fail=1 ;;
+esac
+
+# The container must wait for working DNS before it provisions. `pct exec true`
+# succeeds the moment init is up — before DHCP has a lease and /etc/resolv.conf
+# — and apt retries nothing, so provision_base's `apt-get update` races the
+# network on a slow first boot. The readiness wait must come *before* the first
+# apt-get update, or the race is still there. --dry-run execs nothing, so only
+# the ordering of the printed plan can be asserted here.
+net_wait_line="$(printf '%s\n' "$plan_paths" | grep -n -m1 'getent hosts' | cut -d: -f1 || true)"
+apt_update_line="$(printf '%s\n' "$plan_paths" | grep -n -m1 -E 'apt-get( -o [^ ]+)* update' | cut -d: -f1 || true)"
+if [ -z "$net_wait_line" ]; then
+  echo "FAIL: no DNS/network-readiness wait before provisioning (apt-get races DHCP on a slow first boot)"; fail=1
+elif [ -z "$apt_update_line" ]; then
+  echo "FAIL: no apt-get update in the plan (unexpected)"; fail=1
+elif [ "$net_wait_line" -lt "$apt_update_line" ]; then
+  echo "ok: the plan waits for working DNS before the first apt-get update"
+else
+  echo "FAIL: apt-get update comes before the network-readiness wait"; fail=1
+fi
+
 # ...but that assertion only inspects the plan, and the plan is produced by a
 # hand-written printf in push_tunnel_token rather than by the code that moves
 # the secret. The two branches are separate code, so the check above is blind to
@@ -260,6 +292,8 @@ done <<'SITES'
 download|abort_stopped "downloading ${VERSION} failed"
 signature verification|abort_stopped "the minisign signature over SHA256SUMS did not verify against the key in this script"
 checksum check|abort_stopped "the downloaded binary does not match its signed checksum"
+base package install|abort_stopped "installing base packages (${packages}) failed"
+cloudflared install|abort_stopped "installing cloudflared failed"
 SITES
 
 # ...and abort_stopped has to actually stop it. A version of that function that

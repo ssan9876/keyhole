@@ -1,11 +1,11 @@
 
-Keyhole v1.1.1 will be installed as follows.
+Keyhole v1.1.2 will be installed as follows.
 
   Container    200 (keyhole), unprivileged Debian 12
   Resources    2 cores, 1024 MB RAM, 8 GB on local-lvm, bridge vmbr0
   Reached by   tls
   Reached at   https://<the container's address>:8477
-  Binary       https://github.com/ssan9876/keyhole/releases/download/v1.1.1/keyhole-linux-${arch}
+  Binary       https://github.com/ssan9876/keyhole/releases/download/v1.1.2/keyhole-linux-${arch}
                verified against SHA256SUMS and its minisign signature
   Data         /var/lib/keyhole (SQLite; entirely ciphertext)
   Config       /etc/keyhole/config.yml
@@ -19,21 +19,22 @@ RUN: pveam update
 RUN: sh -c pveam available --section system | awk '{print $2}' | grep '^debian-12-standard' | sort -V | tail -n 1
   the newest debian-12-standard in that list is the template; it is downloaded if absent
 RUN: pveam download local <newest debian-12-standard>
-RUN: pct create 200 local:vztmpl/<newest debian-12-standard> --hostname keyhole --cores 2 --memory 1024 --swap 0 --rootfs local-lvm:8 --net0 name=eth0,bridge=vmbr0,ip=dhcp --unprivileged 1 --features nesting=0 --onboot 1
+RUN: pct create 200 local:vztmpl/<newest debian-12-standard> --hostname keyhole --cores 2 --memory 1024 --swap 0 --rootfs local-lvm:8 --net0 name=eth0,bridge=vmbr0,ip=dhcp --unprivileged 1 --features nesting=1 --onboot 1
 RUN: pct start 200
 RUN: sh -c i=0; while [ $i -lt 60 ]; do pct exec 200 -- true >/dev/null 2>&1 && exit 0; i=$((i+1)); sleep 1; done; exit 1
+RUN: pct exec 200 -- sh -c i=0; while [ $i -lt 60 ]; do getent hosts deb.debian.org >/dev/null 2>&1 && exit 0; i=$((i+1)); sleep 1; done; exit 1
 RUN: pct exec 200 -- sh -c set -eu
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y --no-install-recommends ca-certificates curl minisign openssl
+apt-get -o Acquire::Retries=3 update -qq
+apt-get -o Acquire::Retries=3 install -y --no-install-recommends ca-certificates curl minisign openssl
 RUN: pct exec 200 -- sh -c set -eu
 rm -rf '/tmp/keyhole-install'
 mkdir -p '/tmp/keyhole-install'
 cd '/tmp/keyhole-install'
 arch=$(dpkg --print-architecture)
-curl -fsSL --proto '=https' --tlsv1.2 -o "keyhole-linux-$arch" "https://github.com/ssan9876/keyhole/releases/download/v1.1.1/keyhole-linux-$arch"
-curl -fsSL --proto '=https' --tlsv1.2 -o SHA256SUMS "https://github.com/ssan9876/keyhole/releases/download/v1.1.1/SHA256SUMS"
-curl -fsSL --proto '=https' --tlsv1.2 -o SHA256SUMS.minisig "https://github.com/ssan9876/keyhole/releases/download/v1.1.1/SHA256SUMS.minisig"
+curl -fsSL --proto '=https' --tlsv1.2 -o "keyhole-linux-$arch" "https://github.com/ssan9876/keyhole/releases/download/v1.1.2/keyhole-linux-$arch"
+curl -fsSL --proto '=https' --tlsv1.2 -o SHA256SUMS "https://github.com/ssan9876/keyhole/releases/download/v1.1.2/SHA256SUMS"
+curl -fsSL --proto '=https' --tlsv1.2 -o SHA256SUMS.minisig "https://github.com/ssan9876/keyhole/releases/download/v1.1.2/SHA256SUMS.minisig"
 RUN: pct exec 200 -- sh -c set -eu
 cd '/tmp/keyhole-install'
 minisign -Vm SHA256SUMS -P 'RWQaHZz2jLPpRLK2aEj7/A/Rp0QtvRtJj/H8fjePukf3JMGPiyt91Ts6'
@@ -68,7 +69,7 @@ RUN: pct exec 200 -- openssl x509 -noout -fingerprint -sha256 -in /etc/keyhole/t
 RUN: pct exec 200 -- sh -c set -eu
 umask 077
 cat > '/etc/keyhole/config.yml' <<'KEYHOLE_EOF'
-# Written by scripts/install.sh (Keyhole v1.1.1).
+# Written by scripts/install.sh (Keyhole v1.1.2).
 addr: 0.0.0.0:8477
 data_dir: /var/lib/keyhole
 base_url: https://<container-ipv4>:8477
@@ -187,7 +188,7 @@ RUN: sh -c i=0; while [ $i -lt 30 ]; do pct exec 200 -- curl -fsSk -o /dev/null 
 RUN: pct exec 200 -- runuser -u keyhole -- /usr/local/bin/keyhole admin create --email me@example.com --config /etc/keyhole/config.yml
 RUN: pct exec 200 -- systemctl enable --now keyhole-backup.timer
 
-That is the entire plan for Keyhole v1.1.1 in container 200. Nothing was changed.
+That is the entire plan for Keyhole v1.1.2 in container 200. Nothing was changed.
 The setup link is printed by "keyhole admin create" at the end of a real run.
 
 The certificate is self-signed, so the browser warns the first time. Check the

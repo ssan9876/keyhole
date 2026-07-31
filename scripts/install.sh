@@ -13,7 +13,7 @@
 #
 # The way to run it that lets you check all of that first:
 #
-#   curl -fsSLO https://raw.githubusercontent.com/ssan9876/keyhole/v1.1.1/scripts/install.sh
+#   curl -fsSLO https://raw.githubusercontent.com/ssan9876/keyhole/v1.1.2/scripts/install.sh
 #   less install.sh          # read it
 #   bash install.sh
 #
@@ -23,7 +23,7 @@ set -euo pipefail
 
 OWNER="ssan9876"
 REPO="keyhole"
-VERSION="v1.1.1"
+VERSION="v1.1.2"
 readonly OWNER REPO VERSION
 
 # The release signing key. Compare it against the README before trusting this
@@ -473,6 +473,13 @@ ensure_template() {
 }
 
 create_container() {
+  # nesting=1 below is not about running containers inside this one:
+  # keyhole.service is hardened with PrivateTmp, ProtectSystem=strict,
+  # ProtectHome, PrivateDevices, ProtectKernelTunables and ProtectControlGroups,
+  # each of which sets up a private mount namespace — which an unprivileged
+  # container cannot do without nesting. With nesting=0 systemd fails at step
+  # NAMESPACE (status=226/NAMESPACE) and the service crash-loops without ever
+  # binding, so keep the hardening by enabling nesting rather than dropping it.
   run pct create "$CTID" "$TEMPLATE" \
     --hostname "$HOSTNAME_CT" \
     --cores "$CORES" \
@@ -481,13 +488,22 @@ create_container() {
     --rootfs "${STORAGE}:${DISK}" \
     --net0 "name=eth0,bridge=${BRIDGE},ip=dhcp" \
     --unprivileged 1 \
-    --features nesting=0 \
+    --features nesting=1 \
     --onboot 1
   run pct start "$CTID"
   # pct start returns as soon as the container is created, not as soon as it can
   # run anything; without this every command below races init.
   if ! run sh -c "i=0; while [ \$i -lt 60 ]; do pct exec ${CTID} -- true >/dev/null 2>&1 && exit 0; i=\$((i+1)); sleep 1; done; exit 1"; then
-    die "container ${CTID} started but never became reachable with pct exec"
+    abort_stopped "container ${CTID} started but never became reachable with pct exec"
+  fi
+  # pct exec works the moment init is up — before DHCP has taken a lease and
+  # written /etc/resolv.conf. provision_base's first act is apt-get update, which
+  # needs a default route and working DNS and retries nothing on its own, so wait
+  # for name resolution to actually succeed before provisioning. Without this a
+  # slow first boot aborts on "Temporary failure resolving deb.debian.org" and
+  # leaves the container created, started and onboot=1 but only half-provisioned.
+  if ! in_ct sh -c "i=0; while [ \$i -lt 60 ]; do getent hosts deb.debian.org >/dev/null 2>&1 && exit 0; i=\$((i+1)); sleep 1; done; exit 1"; then
+    abort_stopped "container ${CTID} has no working DNS after 60s (cannot resolve deb.debian.org)"
   fi
 }
 
@@ -497,10 +513,16 @@ provision_base() {
     tls) packages="${packages} openssl" ;;
     tunnel) packages="${packages} gnupg" ;;
   esac
-  in_ct sh -c "set -eu
+  # abort_stopped, like install_binary: a package install that fails must stop the
+  # container, not leave it created, started and onboot=1 but half-provisioned.
+  # Acquire::Retries survives a single transient DNS/mirror hiccup — apt defaults
+  # to no retries, so one miss is otherwise fatal even once the network is up.
+  if ! in_ct sh -c "set -eu
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y --no-install-recommends ${packages}"
+apt-get -o Acquire::Retries=3 update -qq
+apt-get -o Acquire::Retries=3 install -y --no-install-recommends ${packages}"; then
+    abort_stopped "installing base packages (${packages}) failed"
+  fi
 }
 
 install_binary() {
@@ -618,14 +640,20 @@ resolve_ct_address() {
 configure_network() {
   case "$NETWORK" in
     tunnel)
-      in_ct sh -c "set -eu
+      # abort_stopped + retries, as in provision_base: this apt runs after the
+      # base install, so the network is already proven up and a transient miss is
+      # the only real exposure — but an unguarded failure here would still orphan
+      # a running, half-configured container.
+      if ! in_ct sh -c "set -eu
 install -d -m 0755 /usr/share/keyrings
 curl -fsSL --proto '=https' --tlsv1.2 https://pkg.cloudflare.com/cloudflare-main.gpg -o /usr/share/keyrings/cloudflare-main.gpg
 chmod 0644 /usr/share/keyrings/cloudflare-main.gpg
 echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared bookworm main' > /etc/apt/sources.list.d/cloudflared.list
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
-apt-get install -y --no-install-recommends cloudflared"
+apt-get -o Acquire::Retries=3 update -qq
+apt-get -o Acquire::Retries=3 install -y --no-install-recommends cloudflared"; then
+        abort_stopped "installing cloudflared failed"
+      fi
       push_tunnel_token
       # The token is exported from the file rather than given as an argument.
       # Arguments are readable by every process on the box through /proc and
