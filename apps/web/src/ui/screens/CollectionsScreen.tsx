@@ -45,7 +45,7 @@ function PendingGrantRow({
   const recipient = directory.find((entry) => entry.id === grant.userId) ?? null;
 
   return (
-    <li style={{ borderTop: "1px solid var(--rule)", padding: "var(--space-2) 0" }}>
+    <li className="kh-row-item">
       <div>
         {grant.collectionName} &middot; {recipient?.name ?? grant.userId}
       </div>
@@ -54,12 +54,7 @@ function PendingGrantRow({
           {/* Design spec 3.9.1's mitigation for a substituted public key is two
               people comparing this aloud -- it must be visible here, before the
               seal happens, not only in a confirmation after the fact. */}
-          <div
-            style={{
-              color: "var(--ink-muted)",
-              fontSize: "0.875rem",
-              fontFamily: "var(--font-mono)",
-            }}
+          <div className="kh-meta kh-mono"
           >
             {recipient.fingerprint}
           </div>
@@ -83,12 +78,12 @@ function PendingGrantRow({
           </Button>
         </>
       ) : (
-        <p style={{ color: "var(--ink-muted)" }}>
+        <p className="kh-muted">
           This person is no longer in the directory, so this device cannot seal a key to them.
         </p>
       )}
       {error !== null && (
-        <p role="alert" style={{ color: "var(--danger)" }}>
+        <p role="alert" className="kh-alert">
           {error}
         </p>
       )}
@@ -127,35 +122,24 @@ function MembersPanel({
   const chosenRecipient = directory.find((entry) => entry.id === recipientId) ?? null;
 
   return (
-    <div style={{ marginTop: "var(--space-3)", paddingLeft: "var(--space-4)" }}>
-      <h3 style={{ fontSize: "0.875rem", margin: 0 }}>Members</h3>
+    <div className="kh-bullets kh-mt-sm">
+      <h3 className="kh-text-sm kh-m-0">Members</h3>
       {members.length === 0 ? (
-        <p style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>No members loaded.</p>
+        <p className="kh-meta">No members loaded.</p>
       ) : (
-        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+        <ul className="kh-plain-list">
           {members.map((member) => {
             const entry = directory.find((d) => d.id === member.userId);
             return (
               <li
-                key={member.userId}
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  padding: "var(--space-1) 0",
-                }}
+                key={member.userId} className="kh-split"
               >
                 <div>
-                  <span style={{ display: "block" }}>
+                  <span className="kh-block">
                     {member.name} &middot; {member.role}
                   </span>
                   {entry !== undefined && (
-                    <span
-                      style={{
-                        color: "var(--ink-muted)",
-                        fontSize: "0.75rem",
-                        fontFamily: "var(--font-mono)",
-                      }}
+                    <span className="kh-meta-xs kh-mono"
                     >
                       {entry.fingerprint}
                     </span>
@@ -207,22 +191,21 @@ function MembersPanel({
         />
       )}
       {removeError !== null && (
-        <p role="alert" style={{ color: "var(--danger)" }}>
+        <p role="alert" className="kh-alert">
           {removeError}
         </p>
       )}
 
       {isManager && (
-        <div style={{ marginTop: "var(--space-3)" }}>
+        <div className="kh-mt-sm">
           <Button type="button" variant="quiet" onClick={() => setAddOpen((open) => !open)}>
             Add member
           </Button>
           {addOpen && (
-            <div style={{ marginTop: "var(--space-2)" }}>
-              <div style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-2)" }}>
+            <div className="kh-mt-xs">
+              <div className="kh-field kh-field-sm">
                 <label
-                  htmlFor={recipientSelectId}
-                  style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}
+                  htmlFor={recipientSelectId} className="kh-label"
                 >
                   New member
                 </label>
@@ -242,20 +225,14 @@ function MembersPanel({
                   ))}
                 </select>
                 {chosenRecipient !== null && (
-                  <p
-                    style={{
-                      color: "var(--ink-muted)",
-                      fontSize: "0.75rem",
-                      fontFamily: "var(--font-mono)",
-                      margin: 0,
-                    }}
+                  <p className="kh-meta-xs kh-mono kh-m-0"
                   >
                     {chosenRecipient.fingerprint}
                   </p>
                 )}
               </div>
-              <div style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-2)" }}>
-                <label htmlFor={roleSelectId} style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
+              <div className="kh-field kh-field-sm">
+                <label htmlFor={roleSelectId} className="kh-label">
                   Role
                 </label>
                 <select
@@ -302,9 +279,9 @@ function MembersPanel({
               >
                 Add
               </Button>
-              {addNotice !== null && <p style={{ color: "var(--ink-muted)" }}>{addNotice}</p>}
+              {addNotice !== null && <p className="kh-muted">{addNotice}</p>}
               {addError !== null && (
-                <p role="alert" style={{ color: "var(--danger)" }}>
+                <p role="alert" className="kh-alert">
                   {addError}
                 </p>
               )}
@@ -334,29 +311,19 @@ function CollectionRow({
   onRemoveMember: CollectionsScreenProps["onRemoveMember"];
 }) {
   return (
-    <li style={{ borderTop: "1px solid var(--rule)", padding: "var(--space-3) 0" }}>
+    <li className="kh-row-item">
       <button
         type="button"
         onClick={onSelect}
-        aria-expanded={isSelected}
-        style={{
-          font: "inherit",
-          background: "transparent",
-          border: "none",
-          color: "var(--ink)",
-          cursor: "pointer",
-          textAlign: "left",
-          padding: 0,
-          width: "100%",
-        }}
+        aria-expanded={isSelected} className="kh-row"
       >
-        <span style={{ display: "block" }}>{collection.name}</span>
-        <span style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>{collection.role}</span>
+        <span className="kh-block">{collection.name}</span>
+        <span className="kh-meta">{collection.role}</span>
       </button>
       {!collection.usable && (
         // Never hidden: a user staring at items they cannot read with nothing
         // anywhere explaining why is the worse outcome.
-        <p style={{ color: "var(--danger)" }}>
+        <p className="kh-alert">
           Shared with you, but this device can't open it. Ask a member to grant access again.
         </p>
       )}
@@ -393,17 +360,17 @@ export function CollectionsScreen({
 
   return (
     <section>
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
-          marginBottom: "var(--space-4)",
-        }}
-      >
-        <h2 style={{ fontSize: "1rem", fontWeight: 600, margin: 0 }}>Collections</h2>
+      <header className="kh-split kh-mb">
+        <h2 className="kh-subhead kh-m-0">Collections</h2>
         {role === "admin" && (
-          <Button type="button" variant="quiet" onClick={() => setCreating((open) => !open)}>
+          // aria-expanded, because this button does not navigate anywhere: it
+          // discloses the form below it, and a screen reader should say so.
+          <Button
+            type="button"
+            variant="quiet"
+            aria-expanded={creating}
+            onClick={() => setCreating((open) => !open)}
+          >
             Create collection
           </Button>
         )}
@@ -424,12 +391,11 @@ export function CollectionsScreen({
             } finally {
               setCreateBusy(false);
             }
-          }}
-          style={{ marginBottom: "var(--space-4)" }}
+          }} className="kh-mb"
         >
           <Field label="Name" value={newName} onChange={(e) => setNewName(e.target.value)} required />
           {createError !== null && (
-            <p role="alert" style={{ color: "var(--danger)" }}>
+            <p role="alert" className="kh-alert">
               {createError}
             </p>
           )}
@@ -440,9 +406,9 @@ export function CollectionsScreen({
       )}
 
       {pendingGrants.length > 0 && (
-        <section style={{ marginBottom: "var(--space-6)" }}>
-          <h3 style={{ fontSize: "0.875rem" }}>Pending grants</h3>
-          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+        <section className="kh-mb-lg">
+          <h3 className="kh-text-sm">Pending grants</h3>
+          <ul className="kh-plain-list">
             {pendingGrants.map((grant) => (
               <PendingGrantRow
                 key={`${grant.collectionId}:${grant.userId}`}
@@ -456,9 +422,13 @@ export function CollectionsScreen({
       )}
 
       {collections.length === 0 ? (
-        <p style={{ color: "var(--ink-muted)" }}>No collections yet.</p>
+        <p className="kh-empty">
+          <span className="kh-empty-title">No collections yet.</span>
+          A collection is a set of items shared with other people. Anything not in
+          one stays personal to you.
+        </p>
       ) : (
-        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+        <ul className="kh-plain-list">
           {collections.map((collection) => (
             <CollectionRow
               key={collection.id}

@@ -51,7 +51,7 @@ export function ItemEditor({ initial, conflict = null, onSave, onCancel }: ItemE
   }
 
   return (
-    <form onSubmit={submit} style={{ padding: "var(--space-4)" }}>
+    <form onSubmit={submit}>
       <Field label="Name" value={name} onChange={(e) => setName(e.target.value)} required />
       {isLogin(initial) && (
         <>
@@ -61,38 +61,54 @@ export function ItemEditor({ initial, conflict = null, onSave, onCancel }: ItemE
             value={username}
             onChange={(e) => setUsername(e.target.value)}
           />
-          <Field
-            label="Password"
-            // Masked by default: an editor left open on a desk is the ordinary
-            // case, not the exception.
-            type={revealed ? "text" : "password"}
-            autoComplete="off"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-          <div style={{ display: "flex", gap: "var(--space-2)", marginBottom: "var(--space-4)" }}>
-            <Button type="button" variant="quiet" onClick={() => setRevealed(!revealed)}>
-              {revealed ? "Hide" : "Reveal"}
-            </Button>
-            <Button type="button" variant="quiet" onClick={() => setPassword(generatePassword())}>
-              Generate
-            </Button>
+          {/* The field and the two controls that act on it are one block: the
+              old layout let a 16px gap and a margin split them apart. */}
+          <div className="kh-field kh-field-tight">
+            <Field
+              label="Password"
+              // Masked by default: an editor left open on a desk is the
+              // ordinary case, not the exception.
+              type={revealed ? "text" : "password"}
+              autoComplete="off"
+              className="kh-mono-input"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            <div className="kh-actions">
+              <Button
+                type="button"
+                variant="quiet"
+                size="sm"
+                aria-pressed={revealed}
+                onClick={() => setRevealed(!revealed)}
+              >
+                {revealed ? "Hide" : "Reveal"}
+              </Button>
+              <Button
+                type="button"
+                variant="quiet"
+                size="sm"
+                onClick={() => setPassword(generatePassword())}
+              >
+                Generate
+              </Button>
+            </div>
           </div>
         </>
       )}
       <Field label="Notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
       {error !== null && (
-        <p role="alert" style={{ color: "var(--danger)", marginBottom: "var(--space-4)" }}>
+        <p role="alert" className="kh-alert">
           {error}
         </p>
       )}
       {conflict !== null && (
-        <p style={{ color: "var(--ink-muted)", marginBottom: "var(--space-4)" }}>
+        <p className="kh-note">
           The version currently on the server is named &ldquo;{conflict.name}
           &rdquo;. Save again to apply your edit on top of it.
         </p>
       )}
-      <div style={{ display: "flex", gap: "var(--space-2)" }}>
+      <div className="kh-actions">
         <Button type="submit" disabled={busy}>
           {busy ? "Saving…" : "Save"}
         </Button>

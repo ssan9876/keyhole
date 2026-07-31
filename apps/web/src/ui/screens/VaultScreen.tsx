@@ -18,6 +18,7 @@ import { DEFAULT_AUTO_LOCK, type AutoLockSetting } from "../../vault/autolock.js
 import { Button } from "../components/Button.js";
 import { Field } from "../components/Field.js";
 import { TabNav } from "../components/TabNav.js";
+import { Chevron, Keyhole, Lock } from "../components/icons.js";
 import { useVaultState } from "../useVault.js";
 import { useCollectionsPanel } from "../useCollectionsPanel.js";
 import { useFoldersPanel } from "../useFoldersPanel.js";
@@ -141,85 +142,90 @@ export function VaultList({ items, collections = [], onSelect, onNew }: VaultLis
 
   return (
     <section>
-      <div style={{ display: "flex", gap: "var(--space-2)", alignItems: "end" }}>
-        <div style={{ flex: 1 }}>
-          <Field
-            label="Search"
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
+      <div className="kh-toolbar">
+        <Field
+          label="Search"
+          type="search"
+          placeholder="Name or username"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {collections.length > 0 && (
+          <div className="kh-field">
+            <label htmlFor={filterId} className="kh-label">
+              Filter by collection
+            </label>
+            <select
+              id={filterId}
+              value={collectionFilter}
+              onChange={(e) => setCollectionFilter(e.target.value)}
+            >
+              <option value="">All items</option>
+              <option value="personal">Personal</option>
+              {collections.map((collection) => (
+                <option key={collection.id} value={collection.id}>
+                  {collection.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         <Button type="button" onClick={onNew}>
           Add an item
         </Button>
       </div>
 
-      {collections.length > 0 && (
-        <div style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-4)" }}>
-          <label htmlFor={filterId} style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
-            Filter by collection
-          </label>
-          <select
-            id={filterId}
-            value={collectionFilter}
-            onChange={(e) => setCollectionFilter(e.target.value)}
-          >
-            <option value="">All items</option>
-            <option value="personal">Personal</option>
-            {collections.map((collection) => (
-              <option key={collection.id} value={collection.id}>
-                {collection.name}
-              </option>
-            ))}
-          </select>
-        </div>
+      {/* Deliberately not a live region: this re-renders on every keystroke of
+          the search box, and announcing a new count per character is noise, not
+          help. It is here to be glanced at. */}
+      {filtered.length > 0 && (
+        <p className="kh-list-count kh-num">
+          {filtered.length} {filtered.length === 1 ? "item" : "items"}
+        </p>
       )}
 
       {filtered.length === 0 ? (
-        <p style={{ color: "var(--ink-muted)" }}>
-          {items.length === 0 ? "Your vault is empty." : "Nothing matches that search."}
+        <p className="kh-empty">
+          {items.length === 0 ? (
+            <>
+              <span className="kh-empty-title">Your vault is empty.</span>
+              Add your first login and it will sync to every device you unlock.
+            </>
+          ) : (
+            <>
+              <span className="kh-empty-title">Nothing matches that search.</span>
+              Try a shorter word, or clear the collection filter.
+            </>
+          )}
         </p>
       ) : (
-        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+        <ul className="kh-list">
           {filtered.map((item) => (
-            <li key={item.id} style={{ borderTop: "1px solid var(--rule)" }}>
-              <button
-                type="button"
-                onClick={() => onSelect(item)}
-                style={{
-                  font: "inherit",
-                  width: "100%",
-                  textAlign: "left",
-                  background: "transparent",
-                  border: "none",
-                  color: "var(--ink)",
-                  padding: "var(--space-3) 0",
-                  cursor: "pointer",
-                }}
-              >
-                {/* A row that failed to decrypt is shown, not hidden: the user
-                    would otherwise believe an item they created is gone, with
-                    nothing anywhere saying otherwise. */}
-                {item.plaintext === null ? (
-                  <span style={{ color: "var(--danger)" }}>
-                    Couldn&rsquo;t decrypt this item
-                  </span>
-                ) : (
-                  <>
-                    <span style={{ display: "block" }}>{item.plaintext.name}</span>
-                    {item.plaintext.type === "login" && (
-                      <span style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
-                        {item.plaintext.username}
-                      </span>
-                    )}
-                    {item.collectionId !== null && (
-                      <span style={{ color: "var(--ink-muted)", fontSize: "0.75rem", display: "block" }}>
-                        Shared &middot; {nameById.get(item.collectionId) ?? "Unknown collection"}
-                      </span>
-                    )}
-                  </>
-                )}
+            <li key={item.id}>
+              <button type="button" className="kh-row" onClick={() => onSelect(item)}>
+                <span>
+                  {/* A row that failed to decrypt is shown, not hidden: the
+                      user would otherwise believe an item they created is
+                      gone, with nothing anywhere saying otherwise. */}
+                  {item.plaintext === null ? (
+                    <span className="kh-row-title" style={{ color: "var(--danger)" }}>
+                      Couldn&rsquo;t decrypt this item
+                    </span>
+                  ) : (
+                    <>
+                      <span className="kh-row-title">{item.plaintext.name}</span>
+                      {item.plaintext.type === "login" && (
+                        <span className="kh-row-meta">{item.plaintext.username}</span>
+                      )}
+                      {item.collectionId !== null && (
+                        <span className="kh-badge">
+                          Shared &middot; {nameById.get(item.collectionId) ?? "Unknown collection"}
+                        </span>
+                      )}
+                    </>
+                  )}
+                </span>
+                <Chevron />
               </button>
             </li>
           ))}
@@ -421,166 +427,209 @@ export function VaultScreen({
     editorCollectionId !== editing.collectionId;
 
   return (
-    <main style={{ maxWidth: "40rem", margin: "0 auto", padding: "var(--space-4)" }}>
-      <header
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "baseline",
-          borderBottom: "1px solid var(--rule-strong)",
-          paddingBottom: "var(--space-2)",
-          marginBottom: "var(--space-4)",
-        }}
-      >
-        <h1 style={{ fontSize: "1.125rem", fontWeight: 600, margin: 0 }}>Keyhole</h1>
-        <Button
-          type="button"
-          variant="quiet"
-          onClick={() => {
-            store.clear();
-            session.lock();
-          }}
-        >
-          Lock
-        </Button>
+    <div className="kh-app">
+      <header className="kh-header">
+        <div className="kh-header-inner">
+          <h1 className="kh-wordmark">
+            <Keyhole size={18} />
+            Keyhole
+          </h1>
+          <Button
+            type="button"
+            variant="quiet"
+            size="sm"
+            onClick={() => {
+              store.clear();
+              session.lock();
+            }}
+          >
+            <Lock size={15} />
+            Lock
+          </Button>
+        </div>
       </header>
 
-      {/* Admin is folded into `tabs` via the .filter() above rather than
-          special-cased here, so there is exactly one place a tab button is
-          rendered. It is still a UI courtesy, not the security boundary:
-          requireAdmin on the server is what actually protects admin-only
-          endpoints. Hiding this button only spares a non-admin the dead end
-          of clicking into a screen that would fail every request. */}
-      <TabNav tabs={tabs} active={activeTab} onSelect={(id) => setActiveTab(id)} />
+      <main className="kh-shell">
+        {/* Admin is folded into `tabs` via the .filter() above rather than
+            special-cased here, so there is exactly one place a tab button is
+            rendered. It is still a UI courtesy, not the security boundary:
+            requireAdmin on the server is what actually protects admin-only
+            endpoints. Hiding this button only spares a non-admin the dead end
+            of clicking into a screen that would fail every request. */}
+        <TabNav tabs={tabs} active={activeTab} onSelect={(id) => setActiveTab(id)} />
 
-      {state.status === "error" && (
-        <p role="alert" style={{ color: "var(--danger)" }}>
-          {state.error}
-        </p>
-      )}
+        {state.status === "error" && (
+          <p role="alert" className="kh-alert">
+            {state.error}
+          </p>
+        )}
 
-      {activeTab === "vault" &&
-        (undecryptable !== null ? (
-          <div>
-            <p role="alert" style={{ color: "var(--danger)" }}>
-              This item is in a collection this device can&rsquo;t open. Ask a member of that
-              collection to grant you access again.
-            </p>
-            <Button type="button" variant="quiet" onClick={() => setUndecryptable(null)}>
-              Back
-            </Button>
-          </div>
-        ) : editing === null ? (
-          <>
-            <FolderSidebar
-              folders={state.folders}
-              selected={folderFilter}
-              onSelect={setFolderFilter}
-              onCreateFolder={foldersPanel.onCreateFolder}
-              onRenameFolder={foldersPanel.onRenameFolder}
-              onDeleteFolder={foldersPanel.onDeleteFolder}
-            />
-            <VaultList
-              items={visibleItems}
-              collections={state.collections}
-              onSelect={(record) => {
-                // An undecryptable record must never reach ItemEditor -- see
-                // requirePlaintext's comment. This is the one place that
-                // invariant is enforced: every other read of `editing` in this
-                // component trusts it.
-                if (record.plaintext === null) {
-                  setUndecryptable(record);
-                  return;
-                }
-                setEditing(record);
-                setEditorCollectionId(record.collectionId);
-                // record.plaintext is non-null here (the guard above returned
-                // for the null case), so its folderId seeds the picker.
-                setEditorFolderId(record.plaintext.folderId);
-                setConflict(null);
-              }}
-              onNew={() => {
-                setEditing("new");
-                setEditorCollectionId(null);
-                setEditorFolderId(null);
-                setConflict(null);
-              }}
-            />
-          </>
-        ) : (
-          <>
-            <div style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-4)" }}>
-              <label htmlFor={collectionSelectId} style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
-                Collection
-              </label>
-              <select
-                id={collectionSelectId}
-                value={editorCollectionId ?? ""}
-                onChange={(e) => setEditorCollectionId(e.target.value === "" ? null : e.target.value)}
-              >
-                <option value="">Personal</option>
-                {usableCollections.map((collection) => (
-                  <option key={collection.id} value={collection.id}>
-                    {collection.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div style={{ display: "grid", gap: "var(--space-1)", marginBottom: "var(--space-4)" }}>
-              <label htmlFor={folderSelectId} style={{ color: "var(--ink-muted)", fontSize: "0.875rem" }}>
-                Folder
-              </label>
-              <select
-                id={folderSelectId}
-                value={folderSelectValue}
-                onChange={(e) => setEditorFolderId(e.target.value === "" ? null : e.target.value)}
-              >
-                <option value="">Personal</option>
-                {assignableFolders.map((folder) => (
-                  <option key={folder.id} value={folder.id}>
-                    {folder.name}
-                  </option>
-                ))}
-                {/* The item is already in a folder whose name will not decrypt
-                    here: shown, disabled, so the assignment is visible and kept
-                    rather than silently reset. */}
-                {currentFolderUndecryptable && (
-                  <option value={editorFolderId ?? ""} disabled>
-                    Couldn&rsquo;t decrypt this folder
-                  </option>
-                )}
-              </select>
-            </div>
-            {isMovingOut && (
-              <p style={{ color: "var(--danger)", marginBottom: "var(--space-4)" }}>
-                Moving this out does not take back access. A former member who kept the item key
-                can still read it, including future edits.
+        {activeTab === "vault" &&
+          (undecryptable !== null ? (
+            <div className="kh-column">
+              <p role="alert" className="kh-alert">
+                This item is in a collection this device can&rsquo;t open. Ask a member of that
+                collection to grant you access again.
               </p>
-            )}
-            <ItemEditor
-              initial={editing === "new" ? BLANK_LOGIN : requirePlaintext(editing)}
-              conflict={conflict}
-              onSave={save}
-              onCancel={() => {
-                setEditing(null);
-                setConflict(null);
-              }}
-            />
-            {editing !== "new" && (
-              <Button type="button" variant="danger" onClick={() => void remove()}>
-                Delete this item
+              <Button type="button" variant="quiet" onClick={() => setUndecryptable(null)}>
+                Back
               </Button>
-            )}
-          </>
-        ))}
+            </div>
+          ) : editing === null ? (
+            /* The one screen with enough structure to earn two panes: folders
+               are a persistent filter, not a step you pass through, so on a wide
+               window they stay beside the list instead of pushing it down. Below
+               60rem the same markup stacks. */
+            <div className="kh-panes">
+              <div className="kh-rail">
+                <FolderSidebar
+                  folders={state.folders}
+                  selected={folderFilter}
+                  onSelect={setFolderFilter}
+                  onCreateFolder={foldersPanel.onCreateFolder}
+                  onRenameFolder={foldersPanel.onRenameFolder}
+                  onDeleteFolder={foldersPanel.onDeleteFolder}
+                />
+              </div>
+              <VaultList
+                items={visibleItems}
+                collections={state.collections}
+                onSelect={(record) => {
+                  // An undecryptable record must never reach ItemEditor -- see
+                  // requirePlaintext's comment. This is the one place that
+                  // invariant is enforced: every other read of `editing` in this
+                  // component trusts it.
+                  if (record.plaintext === null) {
+                    setUndecryptable(record);
+                    return;
+                  }
+                  setEditing(record);
+                  setEditorCollectionId(record.collectionId);
+                  // record.plaintext is non-null here (the guard above returned
+                  // for the null case), so its folderId seeds the picker.
+                  setEditorFolderId(record.plaintext.folderId);
+                  setConflict(null);
+                }}
+                onNew={() => {
+                  setEditing("new");
+                  setEditorCollectionId(null);
+                  setEditorFolderId(null);
+                  setConflict(null);
+                }}
+              />
+            </div>
+          ) : (
+            <div className="kh-column">
+              <h2 className="kh-screen-title">
+                {editing === "new" ? "New item" : "Edit item"}
+              </h2>
+              <p className="kh-screen-lede">
+                Everything below is encrypted on this device before it is sent.
+              </p>
+              <div className="kh-card">
+                {/* Where the item lives comes before what is in it: the two
+                    pickers decide who can read the fields underneath them. */}
+                <div className="kh-field-row">
+                  <div className="kh-field">
+                    <label htmlFor={collectionSelectId} className="kh-label">
+                      Collection
+                    </label>
+                    <select
+                      id={collectionSelectId}
+                      value={editorCollectionId ?? ""}
+                      onChange={(e) =>
+                        setEditorCollectionId(e.target.value === "" ? null : e.target.value)
+                      }
+                    >
+                      <option value="">Personal</option>
+                      {usableCollections.map((collection) => (
+                        <option key={collection.id} value={collection.id}>
+                          {collection.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="kh-field">
+                    <label htmlFor={folderSelectId} className="kh-label">
+                      Folder
+                    </label>
+                    <select
+                      id={folderSelectId}
+                      value={folderSelectValue}
+                      onChange={(e) =>
+                        setEditorFolderId(e.target.value === "" ? null : e.target.value)
+                      }
+                    >
+                      <option value="">Personal</option>
+                      {assignableFolders.map((folder) => (
+                        <option key={folder.id} value={folder.id}>
+                          {folder.name}
+                        </option>
+                      ))}
+                      {/* The item is already in a folder whose name will not
+                          decrypt here: shown, disabled, so the assignment is
+                          visible and kept rather than silently reset. */}
+                      {currentFolderUndecryptable && (
+                        <option value={editorFolderId ?? ""} disabled>
+                          Couldn&rsquo;t decrypt this folder
+                        </option>
+                      )}
+                    </select>
+                  </div>
+                </div>
+                {isMovingOut && (
+                  <p className="kh-alert">
+                    Moving this out does not take back access. A former member who kept the item
+                    key can still read it, including future edits.
+                  </p>
+                )}
+                <ItemEditor
+                  initial={editing === "new" ? BLANK_LOGIN : requirePlaintext(editing)}
+                  conflict={conflict}
+                  onSave={save}
+                  onCancel={() => {
+                    setEditing(null);
+                    setConflict(null);
+                  }}
+                />
+              </div>
+              {/* Outside the card, below the save/cancel pair: destructive
+                  actions are separated from the ones you reach for by default,
+                  not lined up beside them. */}
+              {editing !== "new" && (
+                <div className="kh-danger-zone">
+                  <Button type="button" variant="danger" onClick={() => void remove()}>
+                    Delete this item
+                  </Button>
+                </div>
+              )}
+            </div>
+          ))}
 
-      {activeTab === "collections" && <CollectionsScreen {...collectionsPanel} />}
+        {activeTab === "collections" && (
+          <div className="kh-column">
+            <CollectionsScreen {...collectionsPanel} />
+          </div>
+        )}
 
-      {activeTab === "import" && <ImportScreen {...importPanel} />}
+        {activeTab === "import" && (
+          <div className="kh-column">
+            <ImportScreen {...importPanel} />
+          </div>
+        )}
 
-      {activeTab === "settings" && <SettingsScreen {...settingsPanel} />}
+        {activeTab === "settings" && (
+          <div className="kh-column">
+            <SettingsScreen {...settingsPanel} />
+          </div>
+        )}
 
-      {activeTab === "admin" && isAdmin && <AdminScreen {...adminPanel} />}
-    </main>
+        {activeTab === "admin" && isAdmin && (
+          <div className="kh-column">
+            <AdminScreen {...adminPanel} />
+          </div>
+        )}
+      </main>
+    </div>
   );
 }

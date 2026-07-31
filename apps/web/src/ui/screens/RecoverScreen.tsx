@@ -138,14 +138,14 @@ export function RecoverScreen({
 
   if (newCode !== null) {
     return (
-      <main style={{ maxWidth: "28rem", margin: "0 auto", padding: "var(--space-8) var(--space-4)" }}>
-        <h1 style={{ fontSize: "1.25rem", fontWeight: 600 }}>Save your new recovery code</h1>
+      <main className="kh-auth kh-auth-wide">
+        <h1 className="kh-screen-title">Save your new recovery code</h1>
         {/* The unconfirmed case is not an error and must not read as one: the
             rotation may have committed and simply not been acknowledged, in
             which case this code is the account's only second way in. Saying
             "something went wrong" here would invite the user to discard it. */}
         {!confirmed && (
-          <p role="status" style={{ color: "var(--ink-muted)" }}>
+          <p role="status" className="kh-muted">
             We did not hear back from the server, so we cannot tell you whether
             the change went through &mdash; it may already have been applied.
             Save the code below either way, then try unlocking with your new
@@ -162,20 +162,20 @@ export function RecoverScreen({
             thing they see is a password prompt for the password they just set,
             which reads as the recovery not having worked. */}
         {confirmed && !signedIn && (
-          <p role="status" style={{ color: "var(--ink-muted)" }}>
+          <p role="status" className="kh-muted">
             Your recovery worked and your new master password is in place. This
             browser could not sign in afterwards, so it will ask you to unlock
             with the new password once you continue.
           </p>
         )}
-        <p style={{ color: "var(--ink-muted)" }}>
+        <p className="kh-muted">
           {confirmed && "Your old code no longer works. "}
           Save this one somewhere safe and offline: it is shown once and cannot
           be recovered afterwards &mdash; not by an administrator, and not by
           anyone with the database.
         </p>
         <p style={CODE_PANEL_STYLE}>{newCode}</p>
-        <label style={{ display: "flex", gap: "var(--space-2)", marginBottom: "var(--space-6)" }}>
+        <label className="kh-actions kh-mb-lg">
           <input
             type="checkbox"
             checked={acknowledged}
@@ -209,11 +209,11 @@ export function RecoverScreen({
 
   if (redeemed) {
     return (
-      <main style={{ maxWidth: "22rem", margin: "0 auto", padding: "var(--space-8) var(--space-4)" }}>
-        <h1 style={{ fontSize: "1.25rem", fontWeight: 600, marginBottom: "var(--space-4)" }}>
+      <main className="kh-auth">
+        <h1 className="kh-screen-title">
           Set a new master password
         </h1>
-        <p style={{ color: "var(--ink-muted)", marginBottom: "var(--space-4)" }}>
+        <p className="kh-muted">
           Choose it as carefully as the first one. It is turned into a key in
           this browser and never reaches the server, so nobody can recover it
           for you.
@@ -236,7 +236,7 @@ export function RecoverScreen({
             required
           />
           {error !== null && (
-            <p role="alert" style={{ color: "var(--danger)", marginBottom: "var(--space-4)" }}>
+            <p role="alert" className="kh-alert">
               {error}
             </p>
           )}
@@ -249,20 +249,20 @@ export function RecoverScreen({
   }
 
   return (
-    <main style={{ maxWidth: "22rem", margin: "0 auto", padding: "var(--space-8) var(--space-4)" }}>
-      <h1 style={{ fontSize: "1.25rem", fontWeight: 600, marginBottom: "var(--space-4)" }}>
+    <main className="kh-auth">
+      <h1 className="kh-screen-title">
         Recover your vault
       </h1>
       {/* Both consequences stated before the form, not after it: neither is
           guessable from a page that only asks for a code, and both are
           irreversible. The vault contents are untouched because the key inside
           the recovery blob is the same userKey — only its wrapping changes. */}
-      <p style={{ color: "var(--ink-muted)", marginBottom: "var(--space-4)" }}>
+      <p className="kh-muted">
         Redeeming your recovery code replaces your master password with a new
         one and signs out every other device. Everything in your vault stays
         exactly where it is &mdash; nothing is re-encrypted and nothing is lost.
       </p>
-      <p style={{ color: "var(--ink-muted)", marginBottom: "var(--space-4)" }}>
+      <p className="kh-muted">
         A wrong code, an address with no account here, and an account with no
         usable recovery code are all answered identically, on purpose: this page
         cannot be used to find out who has an account on this server. So a
@@ -287,11 +287,11 @@ export function RecoverScreen({
           required
         />
         {error !== null && (
-          <p role="alert" style={{ color: "var(--danger)", marginBottom: "var(--space-4)" }}>
+          <p role="alert" className="kh-alert">
             {error}
           </p>
         )}
-        <div style={{ display: "flex", gap: "var(--space-2)" }}>
+        <div className="kh-actions">
           {/* Disabled while working, same as UnlockScreen: this endpoint shares
               its rate-limit budget with login (a code and a password are two
               guesses at one account), so an impatient double-click spends two
