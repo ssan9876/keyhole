@@ -1,21 +1,22 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
-// Brief defect fix: routed through vault/types.js rather than
+// Brief defect fix: routed through @keyhole/vault rather than
 // "@keyhole/crypto" directly — see the comment in ItemEditor.tsx for why.
-import type { ItemPlaintext, LoginItem } from "../../vault/types.js";
-import type { ApiClient } from "../../vault/api.js";
-import type { Session } from "../../vault/session.js";
-import type { VaultStore } from "../../vault/store.js";
 import {
   ItemConflictError,
   createItem,
   decryptRecords,
   deleteItem,
   updateItem,
+  DEFAULT_AUTO_LOCK,
+  type ItemPlaintext,
+  type LoginItem,
+  type ApiClient,
+  type Session,
+  type VaultStore,
   type ItemRecord,
-} from "../../vault/items.js";
-import type { CollectionSummary } from "../../vault/collections.js";
-import type { AutoLockSetting } from "../../vault/autolock.js";
-import { DEFAULT_AUTO_LOCK } from "../../vault/preferences.js";
+  type CollectionSummary,
+  type AutoLockSetting,
+} from "@keyhole/vault";
 import { Button } from "../components/Button.js";
 import { Field } from "../components/Field.js";
 import { TabNav } from "../components/TabNav.js";

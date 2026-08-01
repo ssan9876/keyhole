@@ -1,6 +1,5 @@
 import { useId, useState } from "react";
-import type { CollectionSummary, Member, PendingGrant } from "../../vault/collections.js";
-import type { DirectoryEntry } from "../../vault/directory.js";
+import type { CollectionSummary, Member, PendingGrant, DirectoryEntry } from "@keyhole/vault";
 import { Button } from "../components/Button.js";
 import { Confirm } from "../components/Confirm.js";
 import { Field } from "../components/Field.js";

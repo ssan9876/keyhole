@@ -1,11 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { createApiClient } from "../vault/api.js";
-import { createSession } from "../vault/session.js";
-import { createVaultStore } from "../vault/store.js";
-import { enroll } from "../vault/enroll.js";
-import { unlock } from "../vault/unlock.js";
+import { createApiClient, createSession, createVaultStore, enroll, unlock, createPreferences } from "@keyhole/vault";
 import { startAutoLock } from "../vault/autolock.js";
-import { createPreferences } from "../vault/preferences.js";
 import { localStoragePreferences } from "../platform/localStoragePreferences.js";
 import { EnrolScreen } from "./screens/EnrolScreen.js";
 import { RecoverScreen } from "./screens/RecoverScreen.js";

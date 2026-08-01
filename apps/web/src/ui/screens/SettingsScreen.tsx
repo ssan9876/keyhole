@@ -1,7 +1,6 @@
 import { useId, useState } from "react";
 import type { FormEvent } from "react";
-import type { DeviceSession } from "../../vault/account.js";
-import type { AutoLockSetting } from "../../vault/autolock.js";
+import type { DeviceSession, AutoLockSetting } from "@keyhole/vault";
 import { Button } from "../components/Button.js";
 import { Confirm } from "../components/Confirm.js";
 import { Field } from "../components/Field.js";

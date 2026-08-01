@@ -1,11 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook } from "@testing-library/react";
-import { ApiError } from "../vault/api.js";
-import { createSession, type Session } from "../vault/session.js";
-import { fakeApi } from "../vault/test-helpers.js";
-import type { VaultState, VaultStore } from "../vault/store.js";
-import { completeRecovery, recoverAccount, type RecoverySession } from "../vault/recover.js";
-import { unlock } from "../vault/unlock.js";
+import {
+  ApiError,
+  createSession,
+  completeRecovery,
+  recoverAccount,
+  unlock,
+  type Session,
+  type VaultState,
+  type VaultStore,
+  type RecoverySession,
+} from "@keyhole/vault";
+import { fakeApi } from "../../../../packages/vault/src/test-helpers.js";
 import { useRecoverScreen } from "./useRecoverScreen.js";
 
 // recoverAccount and completeRecovery each drive real Argon2id passes at 64
@@ -15,12 +21,12 @@ import { useRecoverScreen } from "./useRecoverScreen.js";
 // afterwards, and making sure the recovered keys do not outlive the screen --
 // so the vault layer is stubbed here. unlock() is stubbed for the same reason
 // App.test.tsx stubs it: it is another full prelogin/login round trip.
-vi.mock("../vault/recover.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../vault/recover.js")>()),
+vi.mock("@keyhole/vault", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@keyhole/vault")>()),
   recoverAccount: vi.fn(),
   completeRecovery: vi.fn(),
+  unlock: vi.fn(),
 }));
-vi.mock("../vault/unlock.js", () => ({ unlock: vi.fn() }));
 
 const NEW_CODE = "ABCDE-FGHJK-MNPQR-STVWX-YZ234";
 /** completeRecovery's answer when the server acknowledged the rotation. */

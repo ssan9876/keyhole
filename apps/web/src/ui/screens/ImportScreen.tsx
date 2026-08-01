@@ -1,13 +1,14 @@
 import { useId, useMemo, useRef, useState } from "react";
-import type { ImportVendor } from "../../vault/import/detect.js";
-import type { DuplicateGroup, DuplicateReport } from "../../vault/import/dedupe.js";
 import type {
+  ImportVendor,
+  DuplicateGroup,
+  DuplicateReport,
   CsvColumnMapping,
   ManualFormat,
   ManualFormatChoice,
-} from "../../vault/import/map.js";
-import type { ImportRowError } from "../../vault/import/types.js";
-import type { UploadOutcome } from "../../vault/import/upload.js";
+  ImportRowError,
+  UploadOutcome,
+} from "@keyhole/vault";
 import { Button } from "../components/Button.js";
 import { Confirm } from "../components/Confirm.js";
 import { describeFailure } from "../errors.js";

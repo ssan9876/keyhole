@@ -6,45 +6,47 @@ import userEvent from "@testing-library/user-event";
 // src/ui/** (no-restricted-imports, the mechanised form of design spec 6.3's
 // "decrypted keys stay out of the UI layer" gate) and the rule fires on
 // type-only imports too, so this test file would fail lint exactly like the
-// implementation would. Routing through vault/types.js — a one-line
+// implementation would. Routing through @keyhole/vault — a one-line
 // re-export — satisfies the gate without weakening it.
-import type { LoginItem } from "../../vault/types.js";
-import { ApiError, type ApiClient } from "../../vault/api.js";
-import { createSession, type Session } from "../../vault/session.js";
-import { createVaultStore, type VaultState, type VaultStore } from "../../vault/store.js";
 import {
+  ApiError,
+  createSession,
+  createVaultStore,
   createItem,
   decryptRecords,
   updateItem,
+  createFolder,
+  type LoginItem,
+  type ApiClient,
+  type Session,
+  type VaultState,
+  type VaultStore,
   type ItemRecord,
   type WireItem,
-} from "../../vault/items.js";
-import { createFolder } from "../../vault/folders.js";
-import { fakeApi, openSession } from "../../vault/test-helpers.js";
+} from "@keyhole/vault";
+import { fakeApi, openSession } from "../../../../../packages/vault/src/test-helpers.js";
 import { VaultList, VaultScreen, filterByFolder } from "./VaultScreen.js";
 
-// Wraps the real createItem/updateItem so the tests that care about the exact
-// arguments VaultScreen passed them -- the collectionId, or the folderId now
-// carried on the plaintext -- can assert on those arguments rather than on a
-// control's appearance (a picker that renders and passes null shares nothing).
-// Every other test in this file still gets the real encryption behaviour: the
-// mock delegates to it, it only adds observability.
-vi.mock("../../vault/items.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../vault/items.js")>();
+// Task 3 moved items.js and folders.js into the shared @keyhole/vault package,
+// so the two vi.mock calls that used to target "../../vault/items.js" and
+// "../../vault/folders.js" independently now target the one barrel both
+// import through. Wraps the real createItem/updateItem so the tests that care
+// about the exact arguments VaultScreen passed them -- the collectionId, or
+// the folderId now carried on the plaintext -- can assert on those arguments
+// rather than on a control's appearance (a picker that renders and passes
+// null shares nothing). Same treatment for createFolder, so "creates a folder
+// with the typed name" can assert on the plaintext name reaching it -- the
+// wire body carries only the encrypted name, so the plaintext is observable
+// nowhere else. Every other export (including decryptFolders, which the
+// store depends on) stays real.
+vi.mock("@keyhole/vault", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@keyhole/vault")>();
   return {
     ...actual,
     createItem: vi.fn(actual.createItem),
     updateItem: vi.fn(actual.updateItem),
+    createFolder: vi.fn(actual.createFolder),
   };
-});
-
-// Same treatment for createFolder, so "creates a folder with the typed name"
-// can assert on the plaintext name reaching it -- the wire body carries only
-// the encrypted name, so the plaintext is observable nowhere else. decryptFolders
-// (which the store depends on) is left real.
-vi.mock("../../vault/folders.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../vault/folders.js")>();
-  return { ...actual, createFolder: vi.fn(actual.createFolder) };
 });
 
 // Call history only, not implementation: the spies above keep delegating to the

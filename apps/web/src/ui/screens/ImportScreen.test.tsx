@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MANUAL_FORMATS, type CsvColumnMapping } from "../../vault/import/map.js";
+import { MANUAL_FORMATS, type CsvColumnMapping } from "@keyhole/vault";
 import { ImportScreen, type ImportScreenProps, type PreviewResult } from "./ImportScreen.js";
 
 /**

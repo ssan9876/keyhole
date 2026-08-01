@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useRef } from "react";
-import type { ApiClient } from "../vault/api.js";
-import type { Session } from "../vault/session.js";
-import type { VaultStore } from "../vault/store.js";
-import { completeRecovery, recoverAccount, type RecoverySession } from "../vault/recover.js";
-import { unlock } from "../vault/unlock.js";
+import {
+  completeRecovery,
+  recoverAccount,
+  unlock,
+  type ApiClient,
+  type Session,
+  type VaultStore,
+  type RecoverySession,
+} from "@keyhole/vault";
 import type { RecoverScreenProps, RecoveryHandoff } from "./screens/RecoverScreen.js";
 
 /**

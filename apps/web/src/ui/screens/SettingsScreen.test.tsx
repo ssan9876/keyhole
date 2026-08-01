@@ -2,9 +2,7 @@ import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ApiError, NetworkError } from "../../vault/api.js";
-import type { DeviceSession } from "../../vault/account.js";
-import type { AutoLockSetting } from "../../vault/autolock.js";
+import { ApiError, NetworkError, type DeviceSession, type AutoLockSetting } from "@keyhole/vault";
 import { SettingsScreen, type SettingsScreenProps } from "./SettingsScreen.js";
 
 const SESSIONS: DeviceSession[] = [

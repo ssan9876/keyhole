@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-// Brief defect fix: routed through vault/types.js rather than @keyhole/crypto
+// Brief defect fix: routed through @keyhole/vault rather than @keyhole/crypto
 // directly — see the comment in VaultScreen.test.tsx for why.
-import type { LoginItem } from "../../vault/types.js";
+import type { LoginItem } from "@keyhole/vault";
 import { ItemEditor } from "./ItemEditor.js";
 
 const LOGIN: LoginItem = {

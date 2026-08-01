@@ -1,4 +1,4 @@
-import { ApiError, NetworkError } from "../vault/api.js";
+import { ApiError, NetworkError } from "@keyhole/vault";
 
 /**
  * Turns a thrown failure into copy a user can act on, per design spec §9: a

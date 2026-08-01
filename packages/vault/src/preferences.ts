@@ -1,5 +1,3 @@
-import type { AutoLockSetting } from "./autolock.js";
-
 /**
  * The whole of this application's persistence, behind three methods.
  *
@@ -31,6 +29,8 @@ export interface PreferenceStore {
  */
 export const EMAIL_STORAGE_KEY = "keyhole.email";
 export const AUTO_LOCK_STORAGE_KEY = "keyhole.autolock";
+
+export type AutoLockSetting = 1 | 5 | 15 | 30 | 60 | "on-close" | "never";
 
 export const DEFAULT_AUTO_LOCK: AutoLockSetting = 15;
 

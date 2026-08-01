@@ -1,21 +1,23 @@
 import { useCallback, useMemo } from "react";
-import type { ApiClient } from "../vault/api.js";
-import type { Session } from "../vault/session.js";
-import type { VaultStore } from "../vault/store.js";
-import { parseCsv } from "../vault/import/csv.js";
-import { detect } from "../vault/import/detect.js";
-import { findDuplicates, existingFromRecords } from "../vault/import/dedupe.js";
 import {
+  parseCsv,
+  detect,
+  findDuplicates,
+  existingFromRecords,
   MANUAL_FORMATS,
   parseText,
   suggestMapping,
   toItemPlaintexts,
+  parseOnePassword1pux,
+  uploadItems,
+  type ApiClient,
+  type Session,
+  type VaultStore,
   type CsvColumnMapping,
   type ManualFormat,
-} from "../vault/import/map.js";
-import { parseOnePassword1pux } from "../vault/import/parsers/onepassword.js";
-import type { ImportResult } from "../vault/import/types.js";
-import { uploadItems, type UploadOptions } from "../vault/import/upload.js";
+  type ImportResult,
+  type UploadOptions,
+} from "@keyhole/vault";
 import { useVaultState } from "./useVault.js";
 import type {
   ImportRequest,

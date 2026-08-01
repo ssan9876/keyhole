@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import type { ApiClient } from "../vault/api.js";
-import type { VaultState, VaultStore } from "../vault/store.js";
-import { fakeApi, openSession } from "../vault/test-helpers.js";
-import { DEFAULT_AUTO_LOCK } from "../vault/preferences.js";
-import { changeMasterPassword, regenerateRecoveryCode } from "../vault/account.js";
+import {
+  DEFAULT_AUTO_LOCK,
+  changeMasterPassword,
+  regenerateRecoveryCode,
+  type ApiClient,
+  type VaultState,
+  type VaultStore,
+} from "@keyhole/vault";
+import { fakeApi, openSession } from "../../../../packages/vault/src/test-helpers.js";
 import { useSettingsPanel } from "./useSettingsPanel.js";
 
 // changeMasterPassword and regenerateRecoveryCode each drive a real Argon2id
@@ -13,8 +17,8 @@ import { useSettingsPanel } from "./useSettingsPanel.js";
 // email and returning whatever the vault layer produced -- so those two are
 // stubbed here; listSessions and revokeSession stay real, since they are
 // plain fetch wrappers with nothing to stub.
-vi.mock("../vault/account.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../vault/account.js")>();
+vi.mock("@keyhole/vault", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@keyhole/vault")>();
   return {
     ...actual,
     changeMasterPassword: vi.fn().mockResolvedValue(undefined),

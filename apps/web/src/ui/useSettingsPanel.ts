@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ApiClient } from "../vault/api.js";
-import type { Session } from "../vault/session.js";
-import type { VaultStore } from "../vault/store.js";
 import {
   changeMasterPassword,
   listSessions,
   regenerateRecoveryCode,
   revokeSession,
+  type ApiClient,
+  type Session,
+  type VaultStore,
   type DeviceSession,
-} from "../vault/account.js";
-import type { AutoLockSetting } from "../vault/autolock.js";
+  type AutoLockSetting,
+} from "@keyhole/vault";
 import type { SettingsScreenProps } from "./screens/SettingsScreen.js";
 
 /**

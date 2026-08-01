@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-import { WrongRecoveryCodeError, type RecoveryOutcome } from "../../vault/recover.js";
+import { WrongRecoveryCodeError, type RecoveryOutcome } from "@keyhole/vault";
 import { Button } from "../components/Button.js";
 import { Field } from "../components/Field.js";
 import { describeFailure } from "../errors.js";

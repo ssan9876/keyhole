@@ -1,13 +1,13 @@
 import { useCallback } from "react";
-import type { ApiClient } from "../vault/api.js";
-import type { Session } from "../vault/session.js";
-import type { VaultStore } from "../vault/store.js";
 import {
   createFolder,
   deleteFolder,
   renameFolder,
+  type ApiClient,
+  type Session,
+  type VaultStore,
   type FolderRecord,
-} from "../vault/folders.js";
+} from "@keyhole/vault";
 import { useVaultState } from "./useVault.js";
 
 export interface FoldersPanel {

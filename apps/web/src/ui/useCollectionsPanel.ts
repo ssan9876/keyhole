@@ -1,19 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ApiClient } from "../vault/api.js";
-import type { Session } from "../vault/session.js";
-import type { VaultStore } from "../vault/store.js";
-import { loadAccount } from "../vault/account.js";
 import {
+  loadAccount,
   addMember,
   createCollection,
   fulfilGrant,
   listMembers,
   loadPendingGrants,
   removeMember,
+  loadDirectory,
+  type ApiClient,
+  type Session,
+  type VaultStore,
   type Member,
   type PendingGrant,
-} from "../vault/collections.js";
-import { loadDirectory, type DirectoryEntry } from "../vault/directory.js";
+  type DirectoryEntry,
+} from "@keyhole/vault";
 import type { CollectionsScreenProps } from "./screens/CollectionsScreen.js";
 import { useVaultState } from "./useVault.js";
 

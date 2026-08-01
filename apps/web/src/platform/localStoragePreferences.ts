@@ -1,4 +1,4 @@
-import type { PreferenceStore } from "../vault/preferences.js";
+import type { PreferenceStore } from "@keyhole/vault";
 
 /**
  * The web app's binding of PreferenceStore to the browser.

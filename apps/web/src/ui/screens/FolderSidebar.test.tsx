@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { FolderRecord } from "../../vault/folders.js";
+import type { FolderRecord } from "@keyhole/vault";
 import { FolderSidebar } from "./FolderSidebar.js";
 
 function folder(overrides: Partial<FolderRecord> = {}): FolderRecord {

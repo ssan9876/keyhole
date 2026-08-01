@@ -7,7 +7,8 @@
  * worker. The extension drives the same setting from `chrome.alarms` instead.
  */
 
-export type AutoLockSetting = 1 | 5 | 15 | 30 | 60 | "on-close" | "never";
+export type { AutoLockSetting } from "@keyhole/vault";
+import type { AutoLockSetting } from "@keyhole/vault";
 
 const ACTIVITY_EVENTS = ["pointerdown", "keydown", "focus"] as const;
 
