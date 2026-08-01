@@ -15,7 +15,7 @@ import {
   type PendingGrant,
   type WireCollection,
 } from "./collections.js";
-import { fakeApi, openSession } from "./test-helpers.js";
+import { fakeApi, openSession } from "./testing/test-helpers.js";
 
 // Wraps the real generateCollectionKey so the zeroize-on-failure test below
 // can get its hands on the exact buffer createCollection generated

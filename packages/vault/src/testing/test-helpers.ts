@@ -1,5 +1,5 @@
-import type { ApiClient } from "./api.js";
-import { createSession, type Session } from "./session.js";
+import type { ApiClient } from "../api.js";
+import { createSession, type Session } from "../session.js";
 
 /**
  * Shared test fixtures for src/vault/**.test.ts.

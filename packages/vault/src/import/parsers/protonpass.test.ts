@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NOTICE, only, read } from "./fixture.js";
+import { NOTICE, only, read } from "../../testing/fixture.js";
 import { parseProtonPassJson } from "./protonpass.js";
 
 const FIXTURE = "proton-pass-export.json";

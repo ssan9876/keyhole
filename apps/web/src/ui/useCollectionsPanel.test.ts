@@ -8,7 +8,7 @@ import {
   type PendingGrant,
   type DirectoryEntry,
 } from "@keyhole/vault";
-import { openSession } from "../../../../packages/vault/src/test-helpers.js";
+import { openSession } from "@keyhole/vault/testing";
 import { useCollectionsPanel } from "./useCollectionsPanel.js";
 
 // The round trip this test exists to prove: handleCreateCollection has no

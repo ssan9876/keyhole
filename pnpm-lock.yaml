@@ -17,9 +17,6 @@ importers:
 
   apps/web:
     dependencies:
-      '@keyhole/crypto':
-        specifier: workspace:*
-        version: link:../../packages/crypto
       '@keyhole/vault':
         specifier: workspace:*
         version: link:../../packages/vault

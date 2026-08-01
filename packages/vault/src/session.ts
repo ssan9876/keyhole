@@ -6,8 +6,8 @@ import { zeroize } from "@keyhole/crypto";
  * Everything else receives what it needs as an argument and does not hold it.
  * That is deliberate and load-bearing: design spec 6.3 makes "decrypted keys in
  * memory only" a code-review gate, and a gate is only checkable if there is one
- * place to look. This module has no serializer, no storage call for anything but
- * the email, and nothing that could reach one.
+ * place to look. This module has no serializer, no storage call of any kind,
+ * and nothing that could reach one.
  */
 
 export interface SessionTokens {

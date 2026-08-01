@@ -14,7 +14,7 @@ import {
   renameFolder,
   type WireFolder,
 } from "./folders.js";
-import { fakeApi, sessionWithUserKey } from "./test-helpers.js";
+import { fakeApi, sessionWithUserKey } from "./testing/test-helpers.js";
 
 /**
  * Counts every call the module under test makes to the real `decryptString`,

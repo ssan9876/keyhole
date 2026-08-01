@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { DEFLATED, zipOf } from "../zip-fixture.js";
-import { NOTICE, only, read, readBytes, withRows } from "./fixture.js";
+import { DEFLATED, zipOf } from "../../testing/zip-fixture.js";
+import { NOTICE, only, read, readBytes, withRows } from "../../testing/fixture.js";
 import {
   parseOnePassword1pux,
   parseOnePasswordCsv,

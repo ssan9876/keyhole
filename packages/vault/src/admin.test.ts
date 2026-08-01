@@ -11,7 +11,7 @@ import {
   setUserStatus,
   type AdminUser,
 } from "./admin.js";
-import { fakeApi } from "./test-helpers.js";
+import { fakeApi } from "./testing/test-helpers.js";
 
 function adminUser(over: Partial<AdminUser> = {}): AdminUser {
   return {

@@ -9,7 +9,7 @@ import {
   type CsvColumnMapping,
 } from "./map.js";
 import { blankImportItem, type ImportItem } from "./types.js";
-import { only } from "./parsers/fixture.js";
+import { only } from "../testing/fixture.js";
 
 function row(fields: Partial<ImportItem>, line = 1): ImportItem {
   return { ...blankImportItem(line), ...fields };

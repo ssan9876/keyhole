@@ -11,7 +11,7 @@ import {
   type VaultStore,
   type RecoverySession,
 } from "@keyhole/vault";
-import { fakeApi } from "../../../../packages/vault/src/test-helpers.js";
+import { fakeApi } from "@keyhole/vault/testing";
 import { useRecoverScreen } from "./useRecoverScreen.js";
 
 // recoverAccount and completeRecovery each drive real Argon2id passes at 64

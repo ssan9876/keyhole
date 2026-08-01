@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NOTICE, only, read, withRows } from "./fixture.js";
+import { NOTICE, only, read, withRows } from "../../testing/fixture.js";
 import { parseKeePassCsv } from "./keepass.js";
 
 const KEEPASS_1X = "keepass2-export.csv";

@@ -2,9 +2,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
-import { fakeApi, openSession } from "../../../../packages/vault/src/test-helpers.js";
 import type { ItemRecord, LoginItem, CollectionSummary, VaultState, VaultStore } from "@keyhole/vault";
-import { DEFLATED, zipOf } from "../../../../packages/vault/src/import/zip-fixture.js";
+import { DEFLATED, fakeApi, openSession, zipOf } from "@keyhole/vault/testing";
 import { useImportPanel } from "./useImportPanel.js";
 
 /**

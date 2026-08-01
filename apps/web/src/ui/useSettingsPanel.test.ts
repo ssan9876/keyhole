@@ -8,7 +8,7 @@ import {
   type VaultState,
   type VaultStore,
 } from "@keyhole/vault";
-import { fakeApi, openSession } from "../../../../packages/vault/src/test-helpers.js";
+import { fakeApi, openSession } from "@keyhole/vault/testing";
 import { useSettingsPanel } from "./useSettingsPanel.js";
 
 // changeMasterPassword and regenerateRecoveryCode each drive a real Argon2id

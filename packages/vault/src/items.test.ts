@@ -14,7 +14,7 @@ import {
   updateItem,
   type WireItem,
 } from "./items.js";
-import { fakeApi, sessionWithCollectionKeys, sessionWithUserKey } from "./test-helpers.js";
+import { fakeApi, sessionWithCollectionKeys, sessionWithUserKey } from "./testing/test-helpers.js";
 
 const LOGIN: LoginItem = {
   type: "login",

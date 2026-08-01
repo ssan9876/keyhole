@@ -16,7 +16,7 @@ import {
 } from "@keyhole/crypto";
 import { NetworkError, type ApiClient } from "./api.js";
 import { changeMasterPassword, regenerateRecoveryCode } from "./account.js";
-import { fakeApi, openSession } from "./test-helpers.js";
+import { fakeApi, openSession } from "./testing/test-helpers.js";
 
 /**
  * Every blob `regenerateRecoveryCode` made, in call order.

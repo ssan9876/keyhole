@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { toBase64 } from "@keyhole/crypto";
 import { EMAIL_STORAGE_KEY } from "./preferences.js";
 import { createSession } from "./session.js";
-import { openSession } from "./test-helpers.js";
+import { openSession } from "./testing/test-helpers.js";
 
 const USER = { id: "u1", email: "a@b.c", name: "A", role: "user" };
 const TOKENS = { accessToken: "access", refreshToken: "refresh" };

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { DEFLATED, STORED, zipOf } from "./zip-fixture.js";
+import { DEFLATED, STORED, zipOf } from "../testing/zip-fixture.js";
 import { isZipProblem, openZip, type ZipArchive } from "./zip.js";
 
 /**

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { expect } from "vitest";
-import type { ImportItem, ImportResult } from "../types.js";
+import type { ImportItem, ImportResult } from "../import/types.js";
 
 /**
  * What every parser test needs to reach a fixture and read one item out of a

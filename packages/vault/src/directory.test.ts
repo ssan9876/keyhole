@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { generateKeyPair, publicKeyFingerprint, toBase64 } from "@keyhole/crypto";
 import { loadDirectory } from "./directory.js";
-import { fakeApi } from "./test-helpers.js";
+import { fakeApi } from "./testing/test-helpers.js";
 
 describe("loadDirectory", () => {
   it("computes each entry's fingerprint from its public key and email", async () => {

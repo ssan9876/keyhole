@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NOTICE, only, read } from "./fixture.js";
+import { NOTICE, only, read } from "../../testing/fixture.js";
 import { parseKeeperCsv, parseKeeperJson } from "./keeper.js";
 
 const CSV = "keeper-export.csv";

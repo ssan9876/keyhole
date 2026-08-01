@@ -12,7 +12,7 @@ import type { ApiClient } from "./api.js";
 import { createVaultStore } from "./store.js";
 import type { WireFolder } from "./folders.js";
 import type { WireItem } from "./items.js";
-import { fakeApi, openSession, sessionWithUserKey } from "./test-helpers.js";
+import { fakeApi, openSession, sessionWithUserKey } from "./testing/test-helpers.js";
 
 const LOGIN: LoginItem = {
   type: "login",

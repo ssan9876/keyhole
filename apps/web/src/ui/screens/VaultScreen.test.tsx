@@ -24,7 +24,7 @@ import {
   type ItemRecord,
   type WireItem,
 } from "@keyhole/vault";
-import { fakeApi, openSession } from "../../../../../packages/vault/src/test-helpers.js";
+import { fakeApi, openSession } from "@keyhole/vault/testing";
 import { VaultList, VaultScreen, filterByFolder } from "./VaultScreen.js";
 
 // Task 3 moved items.js and folders.js into the shared @keyhole/vault package,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { NOTICE, only, read, withRows } from "./fixture.js";
+import { NOTICE, only, read, withRows } from "../../testing/fixture.js";
 import { parseDashlaneCsv, parseDashlaneJson } from "./dashlane.js";
 
 const CSV = "dashlane-credentials.csv";

@@ -73,4 +73,19 @@ describe("auto-lock", () => {
     createPreferences(store).writeAutoLock("never");
     expect(store.get(AUTO_LOCK_STORAGE_KEY)).toBe("never");
   });
+
+  it("writes only the auto-lock key, and no other", () => {
+    const store = fakeStore();
+    const writes: Array<{ key: string; value: string }> = [];
+    const spyStore: PreferenceStore = {
+      get: store.get,
+      set: (key, value) => {
+        writes.push({ key, value });
+        store.set(key, value);
+      },
+      remove: store.remove,
+    };
+    createPreferences(spyStore).writeAutoLock("never");
+    expect(writes).toEqual([{ key: AUTO_LOCK_STORAGE_KEY, value: "never" }]);
+  });
 });

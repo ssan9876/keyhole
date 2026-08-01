@@ -1,7 +1,7 @@
 import { decryptItem, toBase64, utf8Encode, type ItemPlaintext } from "@keyhole/crypto";
 import { describe, expect, it } from "vitest";
 import { ApiError, NetworkError, type ApiClient } from "../api.js";
-import { openSession, sessionWithCollectionKeys } from "../test-helpers.js";
+import { openSession, sessionWithCollectionKeys } from "../testing/test-helpers.js";
 import { MAX_BODY_BYTES, MAX_ITEMS_PER_REQUEST, uploadItems } from "./upload.js";
 
 /** A password that appears in no fixture, so a hit in a body is this test's. */

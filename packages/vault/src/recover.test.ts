@@ -19,7 +19,7 @@ import {
   type KdfParams,
 } from "@keyhole/crypto";
 import { ApiError, NetworkError, type ApiClient } from "./api.js";
-import { fakeApi } from "./test-helpers.js";
+import { fakeApi } from "./testing/test-helpers.js";
 import { WrongRecoveryCodeError, completeRecovery, recoverAccount } from "./recover.js";
 
 /**
