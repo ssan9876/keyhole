@@ -781,7 +781,7 @@ Expected: PASS. These drive a real browser against a real server and are the onl
 pnpm -r test 2>&1 | grep -E "Tests +[0-9]+ passed"
 ```
 
-Write the per-package numbers into this plan under Task 4, replacing this sentence, so the extension plan has a baseline to gate against.
+Observed totals (2026-07-31, branch `claude/extension-design`): `packages/crypto` 163 passed (14 files), `packages/vault` 562 passed (30 files), `apps/web` 190 passed (24 files) — 915 total, all green. The Vite build and `go build`/`go vet` were also clean. The Playwright e2e run surfaced one real regression from the extraction: `apps/web/e2e/import.spec.ts` still points `FIXTURE` at `apps/web/src/vault/import/fixtures/bitwarden-export.json`, but that fixture moved to `packages/vault/src/import/fixtures/bitwarden-export.json` during the extraction, so the import spec fails with `ENOENT` (11/12 e2e specs passed). This needs a follow-up fix to the e2e spec's fixture path before this plan can be considered fully verified.
 
 - [ ] **Step 5: Commit if anything changed, otherwise confirm clean**
 
