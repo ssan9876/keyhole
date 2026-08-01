@@ -42,6 +42,19 @@ export default tseslint.config(
                 "material.",
             },
           ],
+          // `paths` only matches the package specifier itself. A deep
+          // relative import like `../../../../packages/crypto/src/encoding.js`
+          // reaches the same module without ever writing "@keyhole/crypto",
+          // and would otherwise lint clean straight through this gate.
+          patterns: [
+            {
+              group: ["**/packages/crypto/**"],
+              message:
+                "UI code must not touch crypto directly. Go through " +
+                "@keyhole/vault, which is the only layer allowed to hold key " +
+                "material.",
+            },
+          ],
         },
       ],
     },

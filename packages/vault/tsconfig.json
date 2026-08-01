@@ -1,6 +1,14 @@
 {
+  // This package must run inside an MV3 extension service worker, which has
+  // no DOM: no `window`, no `document`, no `localStorage`. tsconfig.base.json
+  // sets "lib": ["ES2022", "DOM"] for the apps that need it; overriding to
+  // "WebWorker" here is what actually stops `document.querySelector(...)` (or
+  // anything else DOM-shaped) from typechecking in this package, while still
+  // providing fetch, streams, and DecompressionStream, which the service
+  // worker environment does have.
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "lib": ["ES2022", "WebWorker"],
     "types": ["vitest/globals"]
   },
   "include": ["src"]
