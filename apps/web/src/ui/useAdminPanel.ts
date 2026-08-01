@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ApiClient } from "../vault/api.js";
 import {
   createUser,
   deleteUser,
@@ -9,12 +8,13 @@ import {
   reissueInvite,
   resetUser,
   setUserStatus,
+  type ApiClient,
   type AdminUser,
   type AuditEntry,
   type CollectionOverview,
   type Invite,
-} from "../vault/admin.js";
-import type { PendingGrant } from "../vault/collections.js";
+  type PendingGrant,
+} from "@keyhole/vault";
 import type { AdminScreenProps } from "./screens/AdminScreen.js";
 
 /** Matches the server's own page size default closely enough for a human

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import type { ApiClient } from "../vault/api.js";
-import { fakeApi } from "../vault/test-helpers.js";
+import type { ApiClient } from "@keyhole/vault";
+import { fakeApi } from "@keyhole/vault/testing";
 import { useAdminPanel } from "./useAdminPanel.js";
 
 function baseUser(over: Record<string, unknown> = {}) {

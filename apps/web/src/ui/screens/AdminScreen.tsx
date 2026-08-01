@@ -1,7 +1,6 @@
 import { useId, useState } from "react";
 import type { FormEvent } from "react";
-import type { AdminUser, AuditEntry, CollectionOverview, Invite } from "../../vault/admin.js";
-import type { PendingGrant } from "../../vault/collections.js";
+import type { AdminUser, AuditEntry, CollectionOverview, Invite, PendingGrant } from "@keyhole/vault";
 import { Button } from "../components/Button.js";
 import { Confirm } from "../components/Confirm.js";
 import { Field } from "../components/Field.js";

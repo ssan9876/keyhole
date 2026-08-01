@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ApiError, NetworkError } from "../../vault/api.js";
-import { WrongRecoveryCodeError } from "../../vault/recover.js";
+import { ApiError, NetworkError, WrongRecoveryCodeError } from "@keyhole/vault";
 import { RecoverScreen, type RecoverScreenProps } from "./RecoverScreen.js";
 
 /**

@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App, inviteTokenFromPath } from "./App.js";
-import type { Session } from "../vault/session.js";
+import type { Session } from "@keyhole/vault";
 
 // Real enrol() drives a Go build's worth of server contract plus an Argon2id
 // pass — that is what the e2e journey is for. This test only needs to reach
@@ -11,7 +11,26 @@ import type { Session } from "../vault/session.js";
 // (session.open) without doing any crypto or hitting the network. Nothing
 // here touches App.tsx's own onFinish body, so it cannot mask a regression in
 // it.
-vi.mock("../vault/enroll.js", () => ({
+// App.tsx now imports enroll, unlock, and the recover.js pair from the single
+// "@keyhole/vault" barrel (Task 3 moved them there), so the three separate
+// vi.mock calls that used to target "../vault/enroll.js", "../vault/unlock.js",
+// and "../vault/recover.js" independently must target that one specifier
+// instead — mocking a since-moved path would silently no-op and let real
+// crypto/network code run. The mock bodies below are unchanged from the three
+// originals; only the module they attach to is now shared, so it spreads
+// importOriginal (as the recover.js mock already did) to leave every other
+// @keyhole/vault export untouched.
+const NEW_RECOVERY_CODE = "AAAAA-BBBBB-CCCCC-DDDDD-EEEEE";
+
+vi.mock("@keyhole/vault", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@keyhole/vault")>()),
+  // Real enrol() drives a Go build's worth of server contract plus an
+  // Argon2id pass — that is what the e2e journey is for. This test only
+  // needs to reach App's own onFinish handler, so the vault-layer enrol() is
+  // replaced with a stub that mimics the one observable side effect App
+  // depends on (session.open) without doing any crypto or hitting the
+  // network. Nothing here touches App.tsx's own onFinish body, so it cannot
+  // mask a regression in it.
   enroll: vi.fn(async (deps: { session: Session }) => {
     deps.session.open({
       tokens: { accessToken: "test-access-token", refreshToken: "test-refresh-token" },
@@ -21,12 +40,9 @@ vi.mock("../vault/enroll.js", () => ({
     });
     return { recoveryCode: "ABCD-EFGH-IJKL-MNOP-QRST", loggedIn: true };
   }),
-}));
-
-// Same reasoning as the enroll.js mock above: the auto-lock wiring test
-// below only needs App to reach an unlocked state, not to drive a real
-// prelogin/login round trip through Argon2id.
-vi.mock("../vault/unlock.js", () => ({
+  // Same reasoning as the enroll mock above: the auto-lock wiring test below
+  // only needs App to reach an unlocked state, not to drive a real
+  // prelogin/login round trip through Argon2id.
   unlock: vi.fn(async (deps: { session: Session }) => {
     deps.session.open({
       tokens: { accessToken: "test-access-token", refreshToken: "test-refresh-token" },
@@ -35,16 +51,10 @@ vi.mock("../vault/unlock.js", () => ({
       privateKey: new Uint8Array(32),
     });
   }),
-}));
-
-const NEW_RECOVERY_CODE = "AAAAA-BBBBB-CCCCC-DDDDD-EEEEE";
-
-// recoverAccount spends one Argon2id pass and completeRecovery two, and
-// recover.test.ts already drives both against real crypto and a real server
-// contract. What the routing test below needs from them is only their shape:
-// a session object to carry, and a new code to display.
-vi.mock("../vault/recover.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../vault/recover.js")>()),
+  // recoverAccount spends one Argon2id pass and completeRecovery two, and
+  // recover.test.ts already drives both against real crypto and a real
+  // server contract. What the routing test below needs from them is only
+  // their shape: a session object to carry, and a new code to display.
   recoverAccount: vi.fn(async (_deps: unknown, input: { email: string }) => ({
     email: input.email,
     userKey: new Uint8Array(32),

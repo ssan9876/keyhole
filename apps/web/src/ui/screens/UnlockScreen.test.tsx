@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { NetworkError } from "../../vault/api.js";
+import { NetworkError } from "@keyhole/vault";
 import { UnlockScreen } from "./UnlockScreen.js";
 
 /**

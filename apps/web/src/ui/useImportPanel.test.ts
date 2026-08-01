@@ -2,12 +2,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
-import { fakeApi, openSession } from "../vault/test-helpers.js";
-import type { ItemRecord } from "../vault/items.js";
-import type { LoginItem } from "../vault/types.js";
-import type { CollectionSummary } from "../vault/collections.js";
-import type { VaultState, VaultStore } from "../vault/store.js";
-import { DEFLATED, zipOf } from "../vault/import/zip-fixture.js";
+import type { ItemRecord, LoginItem, CollectionSummary, VaultState, VaultStore } from "@keyhole/vault";
+import { DEFLATED, fakeApi, openSession, zipOf } from "@keyhole/vault/testing";
 import { useImportPanel } from "./useImportPanel.js";
 
 /**
@@ -17,11 +13,14 @@ import { useImportPanel } from "./useImportPanel.js";
  * parse → dedupe → encrypt-and-upload against a real session.
  */
 
-/** A fixture's text, from the import fixtures directory two levels up. */
+/** A fixture's text, from the import fixtures directory in packages/vault. */
 function fixture(file: string): string {
   const testPath = expect.getState().testPath;
   if (testPath === undefined) throw new Error("vitest reported no test path");
-  return readFileSync(join(dirname(testPath), "..", "vault", "import", "fixtures", file), "utf8");
+  return readFileSync(
+    join(dirname(testPath), "..", "..", "..", "..", "packages", "vault", "src", "import", "fixtures", file),
+    "utf8",
+  );
 }
 
 /**

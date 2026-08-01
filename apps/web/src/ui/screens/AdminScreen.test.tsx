@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { ApiError } from "../../vault/api.js";
-import type { AdminUser, AuditEntry, CollectionOverview } from "../../vault/admin.js";
-import type { PendingGrant } from "../../vault/collections.js";
+import { ApiError, type AdminUser, type AuditEntry, type CollectionOverview, type PendingGrant } from "@keyhole/vault";
 import { AdminScreen, type AdminScreenProps } from "./AdminScreen.js";
 
 const DEFAULT_USERS: AdminUser[] = [

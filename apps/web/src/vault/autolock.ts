@@ -1,30 +1,14 @@
 /**
- * Idle auto-lock. Design spec §3.8.
+ * Idle auto-lock, DOM half.
  *
- * The setting is a preference, not a secret, so it may be persisted — this and
- * `keyhole.email` are the only two values this application writes to storage.
+ * The setting itself lives in `preferences.ts` because the browser extension
+ * shares it. This module does not, and must not, move with it: it listens to
+ * pointer, key, focus, and visibility events, none of which exist in a service
+ * worker. The extension drives the same setting from `chrome.alarms` instead.
  */
 
-export type AutoLockSetting = 1 | 5 | 15 | 30 | 60 | "on-close" | "never";
-
-export const AUTO_LOCK_STORAGE_KEY = "keyhole.autolock";
-export const DEFAULT_AUTO_LOCK: AutoLockSetting = 15;
-
-const SETTINGS: readonly AutoLockSetting[] = [1, 5, 15, 30, 60, "on-close", "never"];
-
-export function readAutoLock(): AutoLockSetting {
-  const raw = localStorage.getItem(AUTO_LOCK_STORAGE_KEY);
-  if (raw === null) return DEFAULT_AUTO_LOCK;
-  const parsed: AutoLockSetting = /^\d+$/.test(raw) ? (Number(raw) as AutoLockSetting) : (raw as AutoLockSetting);
-  // An unrecognized value falls back rather than passing through. A stored "0"
-  // would otherwise mean a zero-length timeout or an unbounded one depending
-  // on how it is read, and either is a worse answer than the default.
-  return SETTINGS.includes(parsed) ? parsed : DEFAULT_AUTO_LOCK;
-}
-
-export function writeAutoLock(setting: AutoLockSetting): void {
-  localStorage.setItem(AUTO_LOCK_STORAGE_KEY, String(setting));
-}
+export type { AutoLockSetting } from "@keyhole/vault";
+import type { AutoLockSetting } from "@keyhole/vault";
 
 const ACTIVITY_EVENTS = ["pointerdown", "keydown", "focus"] as const;
 

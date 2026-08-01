@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { NetworkError } from "../../vault/api.js";
-import type { CollectionSummary, PendingGrant } from "../../vault/collections.js";
-import type { DirectoryEntry } from "../../vault/directory.js";
+import { NetworkError, type CollectionSummary, type PendingGrant, type DirectoryEntry } from "@keyhole/vault";
 import { CollectionsScreen, type CollectionsScreenProps } from "./CollectionsScreen.js";
 
 const DEFAULT_COLLECTIONS: CollectionSummary[] = [

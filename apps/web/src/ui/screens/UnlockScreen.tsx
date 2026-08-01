@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { NetworkError } from "../../vault/api.js";
+import { NetworkError } from "@keyhole/vault";
 import { Button } from "../components/Button.js";
 import { Field } from "../components/Field.js";
 import { Keyhole } from "../components/icons.js";

@@ -1,10 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import type { ApiClient } from "../vault/api.js";
-import type { VaultState, VaultStore } from "../vault/store.js";
-import { fakeApi, openSession } from "../vault/test-helpers.js";
-import { AUTO_LOCK_STORAGE_KEY, DEFAULT_AUTO_LOCK } from "../vault/autolock.js";
-import { changeMasterPassword, regenerateRecoveryCode } from "../vault/account.js";
+import {
+  DEFAULT_AUTO_LOCK,
+  changeMasterPassword,
+  regenerateRecoveryCode,
+  type ApiClient,
+  type VaultState,
+  type VaultStore,
+} from "@keyhole/vault";
+import { fakeApi, openSession } from "@keyhole/vault/testing";
 import { useSettingsPanel } from "./useSettingsPanel.js";
 
 // changeMasterPassword and regenerateRecoveryCode each drive a real Argon2id
@@ -13,8 +17,8 @@ import { useSettingsPanel } from "./useSettingsPanel.js";
 // email and returning whatever the vault layer produced -- so those two are
 // stubbed here; listSessions and revokeSession stay real, since they are
 // plain fetch wrappers with nothing to stub.
-vi.mock("../vault/account.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../vault/account.js")>();
+vi.mock("@keyhole/vault", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@keyhole/vault")>();
   return {
     ...actual,
     changeMasterPassword: vi.fn().mockResolvedValue(undefined),
@@ -61,7 +65,15 @@ describe("useSettingsPanel", () => {
 
     const { result, rerender } = renderHook(
       ({ active }: { active: boolean }) =>
-        useSettingsPanel({ api, session, store, active, autoLock: DEFAULT_AUTO_LOCK, onAutoLockChange: vi.fn() }),
+        useSettingsPanel({
+          api,
+          session,
+          store,
+          active,
+          autoLock: DEFAULT_AUTO_LOCK,
+          onAutoLockChange: vi.fn(),
+          writeAutoLock: vi.fn(),
+        }),
       { initialProps: { active: false } },
     );
 
@@ -85,6 +97,7 @@ describe("useSettingsPanel", () => {
         active: false,
         autoLock: DEFAULT_AUTO_LOCK,
         onAutoLockChange: vi.fn(),
+        writeAutoLock: vi.fn(),
       }),
     );
 
@@ -110,6 +123,7 @@ describe("useSettingsPanel", () => {
         active: false,
         autoLock: DEFAULT_AUTO_LOCK,
         onAutoLockChange: vi.fn(),
+        writeAutoLock: vi.fn(),
       }),
     );
 
@@ -145,7 +159,15 @@ describe("useSettingsPanel", () => {
     });
 
     const { result } = renderHook(() =>
-      useSettingsPanel({ api, session, store, active: true, autoLock: DEFAULT_AUTO_LOCK, onAutoLockChange: vi.fn() }),
+      useSettingsPanel({
+        api,
+        session,
+        store,
+        active: true,
+        autoLock: DEFAULT_AUTO_LOCK,
+        onAutoLockChange: vi.fn(),
+        writeAutoLock: vi.fn(),
+      }),
     );
 
     await waitFor(() => expect(result.current.sessions).toHaveLength(2));
@@ -158,10 +180,11 @@ describe("useSettingsPanel", () => {
     expect(result.current.sessions.map((s) => s.id)).toEqual(["s1"]);
   });
 
-  it("persists a changed auto-lock setting to localStorage and forwards it to the caller's setter", () => {
+  it("persists a changed auto-lock setting via the injected writer and forwards it to the caller's setter", () => {
     const session = openSession();
     const store = fakeStore();
     const onAutoLockChange = vi.fn();
+    const writeAutoLock = vi.fn();
     const { result } = renderHook(() =>
       useSettingsPanel({
         api: fakeApi(),
@@ -170,6 +193,7 @@ describe("useSettingsPanel", () => {
         active: false,
         autoLock: DEFAULT_AUTO_LOCK,
         onAutoLockChange,
+        writeAutoLock,
       }),
     );
 
@@ -178,8 +202,10 @@ describe("useSettingsPanel", () => {
     });
 
     // Written immediately, not left for the caller to persist -- a reload
-    // before any other save must not revert the choice.
-    expect(localStorage.getItem(AUTO_LOCK_STORAGE_KEY)).toBe("30");
+    // before any other save must not revert the choice. Persistence itself
+    // now belongs to the injected writer (preferences.ts owns that), so this
+    // only asserts the hook calls it -- not what it writes or where.
+    expect(writeAutoLock).toHaveBeenCalledWith(30);
     expect(onAutoLockChange).toHaveBeenCalledWith(30);
   });
 
@@ -194,6 +220,7 @@ describe("useSettingsPanel", () => {
         active: false,
         autoLock: DEFAULT_AUTO_LOCK,
         onAutoLockChange: vi.fn(),
+        writeAutoLock: vi.fn(),
       }),
     );
 

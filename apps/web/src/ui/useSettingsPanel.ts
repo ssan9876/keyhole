@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useState } from "react";
-import type { ApiClient } from "../vault/api.js";
-import type { Session } from "../vault/session.js";
-import type { VaultStore } from "../vault/store.js";
 import {
   changeMasterPassword,
   listSessions,
   regenerateRecoveryCode,
   revokeSession,
+  type ApiClient,
+  type Session,
+  type VaultStore,
   type DeviceSession,
-} from "../vault/account.js";
-import { writeAutoLock, type AutoLockSetting } from "../vault/autolock.js";
+  type AutoLockSetting,
+} from "@keyhole/vault";
 import type { SettingsScreenProps } from "./screens/SettingsScreen.js";
 
 /**
@@ -30,6 +30,7 @@ export function useSettingsPanel({
   active,
   autoLock,
   onAutoLockChange,
+  writeAutoLock,
 }: {
   api: ApiClient;
   session: Session;
@@ -43,6 +44,10 @@ export function useSettingsPanel({
    *  choice -- see handleAutoLockChange below -- so App.tsx itself never
    *  needs to import writeAutoLock. */
   onAutoLockChange(setting: AutoLockSetting): void;
+  /** Injected rather than imported, so this hook does not reach a module
+   *  singleton -- the same reason unlock() and enroll() take rememberEmail as
+   *  a dependency instead of importing it. */
+  writeAutoLock(setting: AutoLockSetting): void;
 }): SettingsScreenProps {
   const [sessions, setSessions] = useState<DeviceSession[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -74,7 +79,7 @@ export function useSettingsPanel({
       writeAutoLock(setting);
       onAutoLockChange(setting);
     },
-    [onAutoLockChange],
+    [onAutoLockChange, writeAutoLock],
   );
 
   const handleChangePassword = useCallback(

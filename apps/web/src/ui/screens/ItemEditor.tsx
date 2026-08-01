@@ -1,11 +1,10 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
-// Brief defect fix: routed through vault/types.js rather than
+// Brief defect fix: routed through @keyhole/vault rather than
 // "@keyhole/crypto" directly — eslint.config.js's no-restricted-imports bans
 // that import anywhere under src/ui/**, including type-only imports, as the
 // mechanised form of design spec 6.3's "crypto stays out of the UI" gate.
-import type { ItemPlaintext, LoginItem } from "../../vault/types.js";
-import { generatePassword } from "../../vault/generator.js";
+import { generatePassword, type ItemPlaintext, type LoginItem } from "@keyhole/vault";
 import { Button } from "../components/Button.js";
 import { Field } from "../components/Field.js";
 

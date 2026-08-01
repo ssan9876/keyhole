@@ -1,20 +1,22 @@
 import { useCallback, useEffect, useId, useMemo, useState } from "react";
-// Brief defect fix: routed through vault/types.js rather than
+// Brief defect fix: routed through @keyhole/vault rather than
 // "@keyhole/crypto" directly — see the comment in ItemEditor.tsx for why.
-import type { ItemPlaintext, LoginItem } from "../../vault/types.js";
-import type { ApiClient } from "../../vault/api.js";
-import type { Session } from "../../vault/session.js";
-import type { VaultStore } from "../../vault/store.js";
 import {
   ItemConflictError,
   createItem,
   decryptRecords,
   deleteItem,
   updateItem,
+  DEFAULT_AUTO_LOCK,
+  type ItemPlaintext,
+  type LoginItem,
+  type ApiClient,
+  type Session,
+  type VaultStore,
   type ItemRecord,
-} from "../../vault/items.js";
-import type { CollectionSummary } from "../../vault/collections.js";
-import { DEFAULT_AUTO_LOCK, type AutoLockSetting } from "../../vault/autolock.js";
+  type CollectionSummary,
+  type AutoLockSetting,
+} from "@keyhole/vault";
 import { Button } from "../components/Button.js";
 import { Field } from "../components/Field.js";
 import { TabNav } from "../components/TabNav.js";
@@ -249,6 +251,7 @@ export function VaultScreen({
   store,
   autoLock = DEFAULT_AUTO_LOCK,
   onAutoLockChange = () => undefined,
+  writeAutoLock,
 }: {
   api: ApiClient;
   session: Session;
@@ -258,6 +261,14 @@ export function VaultScreen({
    *  default above. App.tsx is the only real caller that supplies these. */
   autoLock?: AutoLockSetting;
   onAutoLockChange?(setting: AutoLockSetting): void;
+  /**
+   * Required, unlike the two props above: a silent no-op default here would
+   * mean any future caller that forgets this prop compiles cleanly while
+   * every auto-lock change a user makes is quietly dropped on the floor
+   * instead of persisted. useSettingsPanel.ts's own `writeAutoLock` is
+   * required for the same reason -- this prop only forwards to it.
+   */
+  writeAutoLock(setting: AutoLockSetting): void;
 }) {
   const state = useVaultState(store);
   const [editing, setEditing] = useState<ItemRecord | "new" | null>(null);
@@ -308,6 +319,7 @@ export function VaultScreen({
     active: activeTab === "settings",
     autoLock,
     onAutoLockChange,
+    writeAutoLock,
   });
 
   // isAdmin folded into `active` itself, not just into whether the tab is

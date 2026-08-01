@@ -6,45 +6,47 @@ import userEvent from "@testing-library/user-event";
 // src/ui/** (no-restricted-imports, the mechanised form of design spec 6.3's
 // "decrypted keys stay out of the UI layer" gate) and the rule fires on
 // type-only imports too, so this test file would fail lint exactly like the
-// implementation would. Routing through vault/types.js — a one-line
+// implementation would. Routing through @keyhole/vault — a one-line
 // re-export — satisfies the gate without weakening it.
-import type { LoginItem } from "../../vault/types.js";
-import { ApiError, type ApiClient } from "../../vault/api.js";
-import { createSession, type Session } from "../../vault/session.js";
-import { createVaultStore, type VaultState, type VaultStore } from "../../vault/store.js";
 import {
+  ApiError,
+  createSession,
+  createVaultStore,
   createItem,
   decryptRecords,
   updateItem,
+  createFolder,
+  type LoginItem,
+  type ApiClient,
+  type Session,
+  type VaultState,
+  type VaultStore,
   type ItemRecord,
   type WireItem,
-} from "../../vault/items.js";
-import { createFolder } from "../../vault/folders.js";
-import { fakeApi, openSession } from "../../vault/test-helpers.js";
+} from "@keyhole/vault";
+import { fakeApi, openSession } from "@keyhole/vault/testing";
 import { VaultList, VaultScreen, filterByFolder } from "./VaultScreen.js";
 
-// Wraps the real createItem/updateItem so the tests that care about the exact
-// arguments VaultScreen passed them -- the collectionId, or the folderId now
-// carried on the plaintext -- can assert on those arguments rather than on a
-// control's appearance (a picker that renders and passes null shares nothing).
-// Every other test in this file still gets the real encryption behaviour: the
-// mock delegates to it, it only adds observability.
-vi.mock("../../vault/items.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../vault/items.js")>();
+// Task 3 moved items.js and folders.js into the shared @keyhole/vault package,
+// so the two vi.mock calls that used to target "../../vault/items.js" and
+// "../../vault/folders.js" independently now target the one barrel both
+// import through. Wraps the real createItem/updateItem so the tests that care
+// about the exact arguments VaultScreen passed them -- the collectionId, or
+// the folderId now carried on the plaintext -- can assert on those arguments
+// rather than on a control's appearance (a picker that renders and passes
+// null shares nothing). Same treatment for createFolder, so "creates a folder
+// with the typed name" can assert on the plaintext name reaching it -- the
+// wire body carries only the encrypted name, so the plaintext is observable
+// nowhere else. Every other export (including decryptFolders, which the
+// store depends on) stays real.
+vi.mock("@keyhole/vault", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@keyhole/vault")>();
   return {
     ...actual,
     createItem: vi.fn(actual.createItem),
     updateItem: vi.fn(actual.updateItem),
+    createFolder: vi.fn(actual.createFolder),
   };
-});
-
-// Same treatment for createFolder, so "creates a folder with the typed name"
-// can assert on the plaintext name reaching it -- the wire body carries only
-// the encrypted name, so the plaintext is observable nowhere else. decryptFolders
-// (which the store depends on) is left real.
-vi.mock("../../vault/folders.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../../vault/folders.js")>();
-  return { ...actual, createFolder: vi.fn(actual.createFolder) };
 });
 
 // Call history only, not implementation: the spies above keep delegating to the
@@ -236,7 +238,7 @@ describe("VaultScreen", () => {
     const store = createVaultStore();
     await store.load({ api, session });
 
-    render(<VaultScreen api={api} session={session} store={store} />);
+    render(<VaultScreen api={api} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByText("Example"));
     await userEvent.clear(screen.getByLabelText(/^name/i));
@@ -298,7 +300,7 @@ describe("VaultScreen collections", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     expect(await screen.findByText("Household login")).toBeInTheDocument();
     // Anchored to the start: the badge text is "Shared · Household", and
@@ -328,7 +330,7 @@ describe("VaultScreen collections", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     expect(screen.getByText("Household login")).toBeInTheDocument();
     expect(screen.getByText("Personal login")).toBeInTheDocument();
@@ -343,7 +345,7 @@ describe("VaultScreen collections", () => {
     const session = openSession(); // role "user", per test-helpers.ts
     const store = fakeStore({ revision: 0, items: [], folders: [], collections: [], status: "ready", error: null });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     expect(screen.queryByRole("button", { name: "Admin" })).not.toBeInTheDocument();
   });
@@ -390,7 +392,7 @@ describe("VaultScreen collections", () => {
       },
     };
 
-    render(<VaultScreen api={api} session={session} store={store} />);
+    render(<VaultScreen api={api} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByRole("button", { name: /add.*item/i }));
     await userEvent.type(screen.getByLabelText(/^name/i), "New login");
@@ -421,7 +423,7 @@ describe("VaultScreen collections", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByText(LOGIN.name));
     // Nothing shown yet: the picker still matches the item's own collection.
@@ -457,7 +459,7 @@ describe("VaultScreen undecryptable items", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByText(/couldn.t decrypt/i));
 
@@ -482,7 +484,7 @@ describe("VaultScreen undecryptable items", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByText("Example"));
 
@@ -523,7 +525,7 @@ describe("VaultScreen folder assignment (editor)", () => {
       },
     });
 
-    render(<VaultScreen api={api} session={session} store={store} />);
+    render(<VaultScreen api={api} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByRole("button", { name: /add.*item/i }));
     await userEvent.type(screen.getByLabelText(/^name/i), "New login");
@@ -580,7 +582,7 @@ describe("VaultScreen folder assignment (editor)", () => {
       },
     });
 
-    render(<VaultScreen api={api} session={session} store={store} />);
+    render(<VaultScreen api={api} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByText("Example"));
     // The current assignment is shown, but as an un-selectable option.
@@ -611,7 +613,7 @@ describe("VaultScreen folder assignment (editor)", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByText("Example"));
 
@@ -664,7 +666,7 @@ describe("VaultScreen folder sidebar", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     expect(screen.getByText("Work login")).toBeInTheDocument();
     expect(screen.getByText("Loose login")).toBeInTheDocument();
@@ -693,7 +695,7 @@ describe("VaultScreen folder sidebar", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     // Never hidden: All items shows it.
     expect(screen.getByText("Orphan login")).toBeInTheDocument();
@@ -720,7 +722,7 @@ describe("VaultScreen folder sidebar", () => {
       error: null,
     });
 
-    render(<VaultScreen api={fakeApi()} session={session} store={store} />);
+    render(<VaultScreen api={fakeApi()} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.click(screen.getByRole("button", { name: "Personal" }));
     expect(screen.getByText("Loose login")).toBeInTheDocument();
@@ -746,7 +748,7 @@ describe("VaultScreen folder sidebar", () => {
       post: async () => ({ id: "f9", encryptedName: "opaque", revision: 1, deletedAt: null }),
     });
 
-    render(<VaultScreen api={api} session={session} store={store} />);
+    render(<VaultScreen api={api} session={session} store={store} writeAutoLock={() => undefined} />);
 
     await userEvent.type(screen.getByLabelText("New folder name"), "Travel");
     await userEvent.click(screen.getByRole("button", { name: "Add folder" }));

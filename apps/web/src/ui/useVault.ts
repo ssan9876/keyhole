@@ -1,6 +1,5 @@
 import { useSyncExternalStore } from "react";
-import type { Session, SessionUser } from "../vault/session.js";
-import type { VaultState, VaultStore } from "../vault/store.js";
+import type { Session, SessionUser, VaultState, VaultStore } from "@keyhole/vault";
 
 /**
  * The bridge between the framework-free core and React.

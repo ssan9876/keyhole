@@ -2,13 +2,10 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    // The whole of src, not just the UI layer. `src/vault/` holds the parsing,
-    // crypto-adjacent, and network code — the half of this app where a mistake
-    // costs a password rather than a misaligned button — and until this object
-    // existed `eslint .` applied *no rule at all* to any of it: the single
-    // config below matched only `src/ui/**`, so `src/vault/**` and `main.tsx`
-    // were linted by nothing. `src/vault/import/` is about to grow ten format
-    // parsers whose only other gates are `tsc` and their own tests.
+    // The whole of src, not just the UI layer. Until this object existed
+    // `eslint .` applied *no rule at all* to `src/ui/**`'s neighbours: the
+    // single config below matched only `src/ui/**`, so `src/sw/`, `src/platform/`,
+    // and `main.tsx` were linted by nothing.
     files: ["src/**/*.{ts,tsx}"],
     // Without this, ESLint has no TypeScript/JSX-aware parser for these files:
     // it falls back to the default parser and every file fails with a parse
@@ -28,17 +25,11 @@ export default tseslint.config(
     },
   },
   {
-    // Deliberately *narrower* than the object above, and it must stay that way.
-    // `src/vault/` is the layer that is supposed to import `@keyhole/crypto`;
-    // widening this rule to all of src would ban the design rather than protect
-    // it, and the only way to satisfy it would be to move key handling
-    // somewhere worse.
+    // Narrower than the object above, and it must stay that way. The vault
+    // layer now lives in packages/vault, which is the layer allowed to import
+    // crypto; this ban applies to the UI only.
     files: ["src/ui/**/*.{ts,tsx}"],
     rules: {
-      // Design spec 6.3 calls the memory-only rule "a code-review gate, not a
-      // guideline". This is that gate, mechanised: if the UI cannot reach the
-      // crypto package, it cannot hold a key by accident, and a violation fails
-      // the build instead of depending on a reviewer noticing.
       "no-restricted-imports": [
         "error",
         {
@@ -46,8 +37,22 @@ export default tseslint.config(
             {
               name: "@keyhole/crypto",
               message:
-                "UI code must not touch crypto directly. Go through src/vault/, " +
-                "which is the only layer allowed to hold key material.",
+                "UI code must not touch crypto directly. Go through " +
+                "@keyhole/vault, which is the only layer allowed to hold key " +
+                "material.",
+            },
+          ],
+          // `paths` only matches the package specifier itself. A deep
+          // relative import like `../../../../packages/crypto/src/encoding.js`
+          // reaches the same module without ever writing "@keyhole/crypto",
+          // and would otherwise lint clean straight through this gate.
+          patterns: [
+            {
+              group: ["**/packages/crypto/**"],
+              message:
+                "UI code must not touch crypto directly. Go through " +
+                "@keyhole/vault, which is the only layer allowed to hold key " +
+                "material.",
             },
           ],
         },

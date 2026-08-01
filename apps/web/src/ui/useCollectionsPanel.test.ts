@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
-import type { ApiClient } from "../vault/api.js";
-import type { VaultState, VaultStore } from "../vault/store.js";
-import { openSession } from "../vault/test-helpers.js";
-import { createCollection, type PendingGrant } from "../vault/collections.js";
-import type { DirectoryEntry } from "../vault/directory.js";
+import {
+  createCollection,
+  type ApiClient,
+  type VaultState,
+  type VaultStore,
+  type PendingGrant,
+  type DirectoryEntry,
+} from "@keyhole/vault";
+import { openSession } from "@keyhole/vault/testing";
 import { useCollectionsPanel } from "./useCollectionsPanel.js";
 
 // The round trip this test exists to prove: handleCreateCollection has no
@@ -15,8 +19,8 @@ import { useCollectionsPanel } from "./useCollectionsPanel.js";
 // report's Concerns section). createCollection is mocked out entirely here
 // -- this test is about the argument that reaches it, not about real sealing,
 // which collections.test.ts already covers with a real key pair.
-vi.mock("../vault/collections.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../vault/collections.js")>();
+vi.mock("@keyhole/vault", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@keyhole/vault")>();
   return {
     ...actual,
     createCollection: vi

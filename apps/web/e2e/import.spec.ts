@@ -20,7 +20,7 @@ const MASTER_PASSWORD = "correct horse battery staple";
 // logins, a note, and a card Keyhole cannot store — so importing it exercises a
 // per-row error in the same journey. No real credential appears in it (see the
 // fixtures README).
-const FIXTURE = join(import.meta.dirname, "../src/vault/import/fixtures/bitwarden-export.json");
+const FIXTURE = join(import.meta.dirname, "../../../packages/vault/src/import/fixtures/bitwarden-export.json");
 
 // The item whose password makes the whole trip. This exact string coming back
 // out of a fresh unlock is the assertion this file exists for: it can only be
