@@ -21,6 +21,8 @@
 - **Clipboard copies clear after 20 seconds.**
 - **Excluded surfaces:** `file://`, `chrome://`, `edge://`, `https://chrome.google.com/webstore`, `https://chromewebstore.google.com`, and the extension's own pages.
 - **No remote code.** The MV3 CSP forbids it; no dependency may be fetched at runtime.
+- **The service worker has no DOM.** No `window`, no `document`, no `localStorage`, no `sessionStorage`. This is gated by ESLint in Task 1, not left to convention — `packages/vault` shipped with the same property maintained only by a docstring, and its final review found nothing would have stopped a contributor breaking it.
+- **Do NOT add `WebWorker` to the extension's tsconfig `lib`.** This package is genuinely mixed: the popup and content script need `DOM`, the service worker must not use it. TypeScript cannot express both — listing `DOM` and `WebWorker` together produces duplicate-declaration errors. `packages/vault` uses `lib: ["ES2022", "WebWorker"]` because it is uniformly DOM-free; do not copy that here. Inherit `DOM` from `tsconfig.base.json` and let the ESLint rule above carry the worker's constraint instead.
 - TypeScript is strict per `tsconfig.base.json`: `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `verbatimModuleSyntax`. Type-only imports must use `import type`.
 - Relative imports carry a `.js` extension.
 - The unit-test total from the extraction plan's Task 4 is the floor. It must never drop.
@@ -163,6 +165,50 @@ export default tseslint.config(
                 "over the message protocol.",
             },
           ],
+          // Name-only bans are trivially defeated by a deep relative path.
+          // apps/web shipped with exactly that hole.
+          patterns: [
+            {
+              group: ["**/packages/crypto/**"],
+              message:
+                "Only src/offscreen may touch crypto, by any path. Everything " +
+                "else asks it over the message protocol.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    // The service worker runs with no DOM at all. Nothing in the type system
+    // catches this: tsconfig inherits `lib: DOM` (which the popup and content
+    // script genuinely need), and @types/node declares `localStorage`
+    // globally, so even a WebWorker lib would miss it. packages/vault learned
+    // this the expensive way — it held the same property by docstring alone
+    // until a review pointed out nothing enforced it.
+    //
+    // Scoped to the worker only. The offscreen document is a real page and
+    // has a DOM; the popup and content script obviously do.
+    files: ["src/worker/**/*.ts"],
+    ignores: ["src/worker/**/*.test.ts"],
+    rules: {
+      "no-restricted-globals": [
+        "error",
+        {
+          name: "localStorage",
+          message: "A service worker has no localStorage. Use chrome.storage.",
+        },
+        {
+          name: "sessionStorage",
+          message: "A service worker has no sessionStorage.",
+        },
+        {
+          name: "document",
+          message: "A service worker has no DOM. Ask the offscreen document or a tab.",
+        },
+        {
+          name: "window",
+          message: "A service worker has no window. Use `self` if you need the global.",
         },
       ],
     },
@@ -343,6 +389,26 @@ pnpm install && pnpm --filter @keyhole/extension test && pnpm --filter @keyhole/
 ```
 
 Expected: 4 tests pass; `apps/extension/dist/` contains `manifest.json`, `service-worker.js`, `content.js`, and the popup and offscreen HTML.
+
+- [ ] **Step 9a: Prove both ESLint gates fire**
+
+A gate nobody has seen fire is not a gate. `packages/vault` shipped a lint config that CI never ran, and the crypto ban in `apps/web` had a deep-relative-path hole that went unnoticed until a review probed it. Verify by hand:
+
+```bash
+printf 'export const x = localStorage.getItem("k");\n' > apps/extension/src/worker/__gate-probe.ts
+printf 'import { zeroize } from "../../../../packages/crypto/src/memory.js";\nexport const y = zeroize;\n' > apps/extension/src/popup/__crypto-probe.ts
+pnpm --filter @keyhole/extension lint
+```
+
+Expected: FAIL twice — `no-restricted-globals` on `__gate-probe.ts`, and `no-restricted-imports` on `__crypto-probe.ts` matching the `patterns` group rather than the `paths` name. If the second does not fire, the `patterns` entry is wrong and the ban is name-only.
+
+Then remove both:
+
+```bash
+rm apps/extension/src/worker/__gate-probe.ts apps/extension/src/popup/__crypto-probe.ts
+```
+
+Record the exact error output for both in your report.
 
 - [ ] **Step 10: Load it in Chrome by hand**
 
@@ -3249,7 +3315,9 @@ export default defineConfig({
 4. Submit the form manually with a new password and assert the toolbar badge appears.
 5. Reopen the popup and assert it lands on the save screen.
 
-Reuse `apps/web/e2e/server.ts` to stand up the Go server and seed an account, rather than writing a second harness.
+Reuse `apps/web/e2e/server.ts` to stand up the Go server and seed an account, rather than writing a second harness. If you need vault fixtures or builders, `@keyhole/vault/testing` is a real subpath export — use it rather than reaching in by relative path, which is the fragility the extraction plan removed.
+
+Note: this suite runs a Vite build first, which empties `internal/webui/dist` and deletes the tracked `placeholder.html` stub that `go:embed` needs. Restore it with `git checkout -- internal/webui/dist/placeholder.html` before committing, and do not commit the deletion.
 
 - [ ] **Step 3: Run it**
 
